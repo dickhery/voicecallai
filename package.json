@@ -1,0 +1,32 @@
+{
+  "name": "voicecall-ai",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=7.0.0",
+    "npm": "please use pnpm"
+  },
+  "scripts": {
+    "build": "mops build && pnpm bindgen && pnpm --dir src/frontend build",
+    "build:ic": "icp build",
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "check": "pnpm -r --if-present run check",
+    "fix": "pnpm -r --if-present run fix",
+    "server:dev": "pnpm --dir src/server dev",
+    "server:start": "pnpm --dir src/server start",
+    "configure:frontend:local": "node scripts/configure-frontend-env.mjs local",
+    "configure:frontend:ic": "node scripts/configure-frontend-env.mjs ic",
+    "deploy:local": "icp deploy",
+    "deploy:ic": "icp deploy -e ic",
+    "deploy:ic:backend": "icp deploy -e ic backend",
+    "deploy:ic:frontend": "icp deploy -e ic frontend",
+    "bindgen": "pnpm --dir src/frontend bindgen",
+    "mops:check": "mops check"
+  },
+  "devDependencies": {
+    "@noble/curves": "1.9.7",
+    "@noble/hashes": "1.8.0",
+    "ic-mops": "2.18.0",
+    "sharp": "^0.34.4"
+  }
+}

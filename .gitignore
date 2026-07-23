@@ -1,0 +1,14 @@
+node_modules/
+**/node_modules/
+.DS_Store
+
+.env
+*.local
+
+.icp/cache/
+.mops/
+**/.backend.buildlock
+src/frontend/src/bindings/
+
+src/frontend/node_modules/.cache/
+src/server/.env

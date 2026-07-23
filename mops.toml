@@ -1,0 +1,36 @@
+[package]
+name = "backend"
+version = "0.1.0"
+
+[build]
+outputDir = "src/backend/dist"
+args = [
+  "--release",
+  "--actor-idl=src/backend/system-idl"
+]
+
+[canisters.backend]
+main = "src/backend/main.mo"
+
+  [canisters.backend.check-stable]
+  path = "src/backend/deployed/backend.most"
+
+[toolchain]
+moc = "1.9.0"
+lintoko = "0.10.0"
+
+[lint]
+extends = true
+
+[moc]
+args = [
+  "--actor-idl=src/backend/system-idl",
+  "--implicit-package=core",
+  "-no-check-ir",
+  "-E=M0236,M0235,M0223,M0237",
+  "-A=M0198"
+]
+
+[dependencies]
+core = "2.2.0"
+caffeineai-authorization = "0.1.1"
