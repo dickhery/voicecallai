@@ -14,6 +14,7 @@
     "fix": "pnpm -r --if-present run fix",
     "server:dev": "pnpm --dir src/server dev",
     "server:start": "pnpm --dir src/server start",
+    "server:check-identity": "pnpm --dir src/server check:identity",
     "configure:frontend:local": "node scripts/configure-frontend-env.mjs local",
     "configure:frontend:ic": "node scripts/configure-frontend-env.mjs ic",
     "deploy:local": "icp deploy",

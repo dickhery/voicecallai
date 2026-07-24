@@ -247,8 +247,9 @@ export default function LoginPage({
                   : "Sign in with Internet Identity"}
               </Button>
               <p className="text-xs text-muted-foreground/60 text-center mt-4 leading-relaxed">
-                The first user to sign in becomes the app administrator. Admin
-                setup unlocks xAI and Twilio integrations.
+                New accounts are registered as users. The identity that deploys
+                the backend is the initial administrator and can promote other
+                users.
               </p>
             </>
           )}

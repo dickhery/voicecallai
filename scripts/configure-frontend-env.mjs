@@ -80,13 +80,14 @@ function resolveVoiceServerUrl(targetMode, existingEnvironment) {
     serverEnvironment.HOSTNAME && !isPlaceholder(serverEnvironment.HOSTNAME)
       ? normalizeUrl(serverEnvironment.HOSTNAME)
       : "";
-  const fallback = targetMode === "local" ? "http://localhost:3000" : "";
+  const configuredFallback =
+    targetMode === "local"
+      ? "http://localhost:3000"
+      : fromServerHost || existingEnvironment.voice_server_url || "";
   const url = normalizeUrl(
     getArg("voice-server-url") ||
       process.env.VOICE_SERVER_URL ||
-      fromServerHost ||
-      existingEnvironment.voice_server_url ||
-      fallback,
+      configuredFallback,
     targetMode === "local" ? "http" : "https",
   );
 

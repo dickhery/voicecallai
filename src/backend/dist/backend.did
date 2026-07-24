@@ -206,6 +206,93 @@ type BillingMutationResult =
    err: text;
    ok: bool;
  };
+type Backend =
+ service {
+   _initializeAccessControl: () -> ();
+   adminAddPromoMinutes: (user: principal, minutes: nat) ->
+    (BillingMutationResult);
+   adminGetSystemLogs: (limit: nat) -> (vec SystemLog) query;
+   adminListAllCalls: () -> (vec CallRecordPublic) query;
+   adminListUserCalls: (userId: principal) -> (vec CallRecordPublic) query;
+   assignCallerUserRole: (user: principal, role: UserRole) -> ();
+   cancelCallReservation: (reservationId: text, reason: text) ->
+    (BillingMutationResult);
+   cancelCallReservationByCallSidForServer: (callSid: text, reason: text) ->
+    (BillingMutationResult);
+   createAnsweringPreset: (input: AnsweringPresetInput) ->
+    (AnsweringPresetMutationResult);
+   createPreset: (input: CallPresetInput) -> (CallPreset);
+   createPurchaseIntent: (packageId: text) -> (CreatePurchaseIntentResult);
+   creditPaidSeconds: (stripeSessionId: text, purchaseIntentId: text, user:
+    principal, seconds: nat, mode: StripeMode) -> (BillingMutationResult);
+   deleteAnsweringPreset: (id: PresetId) -> (bool);
+   deletePreset: (id: PresetId) -> (bool);
+   duplicatePreset: (id: PresetId) -> (opt CallPreset);
+   extendCallReservationForServer: (reservationId: text) ->
+    (ReserveCallResult);
+   finishAnsweringLiveSessionForServer: (sessionId: text) -> (bool);
+   finishCallAndDebit: (reservationId: text, usedSeconds: nat, callSid:
+    opt text, transcript: opt text) -> (BillingMutationResult);
+   finishCallByCallSidForServer: (callSid: text, usedSeconds: nat,
+    transcript: opt text) -> (BillingMutationResult);
+   getAdminConfig: () ->
+    (record {
+       hasTwilioAuth: bool;
+       hasXaiKey: bool;
+       twilioAccountSid: text;
+       twilioFromNumber: text;
+       twilioPhoneNumbers: vec TwilioLine;
+     }) query;
+   getAnsweringPreset: (id: PresetId) -> (opt AnsweringPreset) query;
+   getAnsweringPresetForServer: (webhookSecret: text, phoneNumber: text) ->
+    (opt AnsweringPreset) query;
+   getBillingPackages: () -> (vec BillingPackage) query;
+   getCallRecord: (id: CallId) -> (opt CallRecordPublic) query;
+   getCallerUserRole: () -> (UserRole) query;
+   getMyBillingStatus: () -> (BillingStatus) query;
+   getPreset: (id: PresetId) -> (opt CallPreset) query;
+   getPresetForServer: (id: PresetId) -> (opt CallPreset) query;
+   getPurchaseIntentForServer: (purchaseIntentId: text) ->
+    (opt PurchaseIntentPublic) query;
+   getTwilioLineNumbersForServer: () -> (vec text) query;
+   initiateCall: (input: InitiateCallInput) -> (InitiateCallResult);
+   isCallerAdmin: () -> (bool) query;
+   listMyAnsweringLiveSessions: () -> (vec AnsweringLiveSession) query;
+   listMyAnsweringPresets: () -> (vec AnsweringPreset) query;
+   listMyCalls: () -> (vec CallRecordPublic) query;
+   listMyPresets: () -> (vec CallPreset) query;
+   listOpenCallReservationsForServer: (limit: nat) ->
+    (vec CallReservationPublic) query;
+   markReservationStarted: (reservationId: text, callSid: text) ->
+    (BillingMutationResult);
+   registerAnsweringLiveSessionForServer: (session: AnsweringLiveSession) ->
+    (bool);
+   removeTwilioLine: (phoneNumber: text) -> (TwilioLineMutationResult);
+   reserveCall: (input: InitiateCallInput) -> (ReserveCallResult);
+   reserveIncomingAnsweringCall: (webhookSecret: text, callerPhone: text,
+    twilioToNumber: text, callSid: text) -> (ReserveCallResult);
+   setAdminConfig: (xaiApiKey: text, twilioAccountSid: text, twilioAuthToken:
+    text, twilioFromNumber: text) -> ();
+   setAnsweringPresetEnabled: (id: PresetId, enabled: bool) ->
+    (AnsweringPresetMutationResult);
+   setTwilioLine: (input: TwilioLineInput) -> (TwilioLineMutationResult);
+   setTwilioLineEnabled: (phoneNumber: text, enabled: bool) ->
+    (TwilioLineMutationResult);
+   twilioWebhook: (callSid: text, callStatus: text) -> (text);
+   updateAnsweringPreset: (id: PresetId, input: AnsweringPresetInput) ->
+    (AnsweringPresetMutationResult);
+   updateAnsweringPresetInstructions: (id: PresetId, systemPrompt: text) ->
+    (AnsweringPresetMutationResult);
+   updateCallStatus: (callId: CallId, status: CallStatus, transcript:
+    opt text) -> (bool);
+   updatePreset: (id: PresetId, input: CallPresetInput) -> (opt CallPreset);
+   updatePresetInstructions: (id: PresetId, systemPrompt: text) ->
+    (CallPresetMutationResult);
+   verifyAnsweringPresetForServer: (webhookSecret: text, phoneNumber:
+    text) -> (AnsweringPresetMutationResult);
+   verifyCallReservation: (reservationId: text, callToken: text) ->
+    (ReserveCallResult);
+ };
 type AudioFormat = 
  variant {
    pcm;
@@ -277,89 +364,4 @@ type AnsweringCaptureOptions =
    recordAudio: bool;
    saveTranscript: bool;
  };
-service : {
-  _initializeAccessControl: () -> ();
-  adminAddPromoMinutes: (user: principal, minutes: nat) ->
-   (BillingMutationResult);
-  adminGetSystemLogs: (limit: nat) -> (vec SystemLog) query;
-  adminListAllCalls: () -> (vec CallRecordPublic) query;
-  adminListUserCalls: (userId: principal) -> (vec CallRecordPublic) query;
-  assignCallerUserRole: (user: principal, role: UserRole) -> ();
-  cancelCallReservation: (reservationId: text, reason: text) ->
-   (BillingMutationResult);
-  cancelCallReservationByCallSidForServer: (callSid: text, reason: text) ->
-   (BillingMutationResult);
-  createAnsweringPreset: (input: AnsweringPresetInput) ->
-   (AnsweringPresetMutationResult);
-  createPreset: (input: CallPresetInput) -> (CallPreset);
-  createPurchaseIntent: (packageId: text) -> (CreatePurchaseIntentResult);
-  creditPaidSeconds: (stripeSessionId: text, purchaseIntentId: text, user:
-   principal, seconds: nat, mode: StripeMode) -> (BillingMutationResult);
-  deleteAnsweringPreset: (id: PresetId) -> (bool);
-  deletePreset: (id: PresetId) -> (bool);
-  duplicatePreset: (id: PresetId) -> (opt CallPreset);
-  extendCallReservationForServer: (reservationId: text) ->
-   (ReserveCallResult);
-  finishAnsweringLiveSessionForServer: (sessionId: text) -> (bool);
-  finishCallAndDebit: (reservationId: text, usedSeconds: nat, callSid:
-   opt text, transcript: opt text) -> (BillingMutationResult);
-  finishCallByCallSidForServer: (callSid: text, usedSeconds: nat, transcript:
-   opt text) -> (BillingMutationResult);
-  getAdminConfig: () ->
-   (record {
-      hasTwilioAuth: bool;
-      hasXaiKey: bool;
-      twilioAccountSid: text;
-      twilioFromNumber: text;
-      twilioPhoneNumbers: vec TwilioLine;
-    }) query;
-  getAnsweringPreset: (id: PresetId) -> (opt AnsweringPreset) query;
-  getAnsweringPresetForServer: (webhookSecret: text, phoneNumber: text) ->
-   (opt AnsweringPreset) query;
-  getBillingPackages: () -> (vec BillingPackage) query;
-  getCallRecord: (id: CallId) -> (opt CallRecordPublic) query;
-  getCallerUserRole: () -> (UserRole) query;
-  getMyBillingStatus: () -> (BillingStatus) query;
-  getPreset: (id: PresetId) -> (opt CallPreset) query;
-  getPresetForServer: (id: PresetId) -> (opt CallPreset) query;
-  getPurchaseIntentForServer: (purchaseIntentId: text) ->
-   (opt PurchaseIntentPublic) query;
-  getTwilioLineNumbersForServer: () -> (vec text) query;
-  initiateCall: (input: InitiateCallInput) -> (InitiateCallResult);
-  isCallerAdmin: () -> (bool) query;
-  listMyAnsweringLiveSessions: () -> (vec AnsweringLiveSession) query;
-  listMyAnsweringPresets: () -> (vec AnsweringPreset) query;
-  listMyCalls: () -> (vec CallRecordPublic) query;
-  listMyPresets: () -> (vec CallPreset) query;
-  listOpenCallReservationsForServer: (limit: nat) ->
-   (vec CallReservationPublic) query;
-  markReservationStarted: (reservationId: text, callSid: text) ->
-   (BillingMutationResult);
-  registerAnsweringLiveSessionForServer: (session: AnsweringLiveSession) ->
-   (bool);
-  removeTwilioLine: (phoneNumber: text) -> (TwilioLineMutationResult);
-  reserveCall: (input: InitiateCallInput) -> (ReserveCallResult);
-  reserveIncomingAnsweringCall: (webhookSecret: text, callerPhone: text,
-   twilioToNumber: text, callSid: text) -> (ReserveCallResult);
-  setAdminConfig: (xaiApiKey: text, twilioAccountSid: text, twilioAuthToken:
-   text, twilioFromNumber: text) -> ();
-  setAnsweringPresetEnabled: (id: PresetId, enabled: bool) ->
-   (AnsweringPresetMutationResult);
-  setTwilioLine: (input: TwilioLineInput) -> (TwilioLineMutationResult);
-  setTwilioLineEnabled: (phoneNumber: text, enabled: bool) ->
-   (TwilioLineMutationResult);
-  twilioWebhook: (callSid: text, callStatus: text) -> (text);
-  updateAnsweringPreset: (id: PresetId, input: AnsweringPresetInput) ->
-   (AnsweringPresetMutationResult);
-  updateAnsweringPresetInstructions: (id: PresetId, systemPrompt: text) ->
-   (AnsweringPresetMutationResult);
-  updateCallStatus: (callId: CallId, status: CallStatus, transcript:
-   opt text) -> (bool);
-  updatePreset: (id: PresetId, input: CallPresetInput) -> (opt CallPreset);
-  updatePresetInstructions: (id: PresetId, systemPrompt: text) ->
-   (CallPresetMutationResult);
-  verifyAnsweringPresetForServer: (webhookSecret: text, phoneNumber: 
-   text) -> (AnsweringPresetMutationResult);
-  verifyCallReservation: (reservationId: text, callToken: text) ->
-   (ReserveCallResult);
-}
+service : () -> Backend

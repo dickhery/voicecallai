@@ -15,6 +15,11 @@ import Common "../types/common";
 
 module {
   private let MAX_AI_INSTRUCTIONS_CHARS : Nat = 8000;
+  private let MAX_PRESET_NAME_CHARS : Nat = 80;
+  private let MAX_CALL_PRESETS_PER_USER : Nat = 30;
+  private let MAX_ANSWERING_PRESETS_PER_USER : Nat = 10;
+  private let MAX_TWILIO_LINES : Nat = 25;
+  private let MAX_TWILIO_LINE_NAME_CHARS : Nat = 60;
 
   public type State = {
     adminConfig : Types.AdminConfig;
@@ -44,6 +49,12 @@ module {
       presets = Map.empty<Common.PresetId, Types.StoredCallPreset>();
       nextPresetId = { var value = 1 };
     };
+  };
+
+  public func clearLegacyServiceSecrets(state : State) {
+    state.adminConfig.xaiApiKey := "";
+    state.adminConfig.twilioAccountSid := "";
+    state.adminConfig.twilioAuthToken := "";
   };
 
   public func initVoiceIdState() : VoiceIdState {
@@ -79,7 +90,7 @@ module {
     code >= 49 and code <= 57;
   };
 
-  private func isE164(phoneNumber : Text) : Bool {
+  public func isE164(phoneNumber : Text) : Bool {
     let chars = phoneNumber.toArray();
     let size = chars.size();
     if (size < 3 or size > 16) {
@@ -233,6 +244,9 @@ module {
     if (name == "") {
       Runtime.trap("Preset name is required.");
     };
+    if (name.toArray().size() > MAX_PRESET_NAME_CHARS) {
+      Runtime.trap("Preset name must be 80 characters or fewer.");
+    };
     let prompt = switch (sanitizeInstructions(input.systemPrompt, "AI instructions are required.")) {
       case (#err(message)) { Runtime.trap(message) };
       case (#ok(value)) { value };
@@ -275,9 +289,13 @@ module {
     if (not isE164(input.phoneNumber)) {
       return #err("Phone number must be E.164 format, for example +15551234567.");
     };
+    let name = input.name.trim(#char ' ');
+    if (name.toArray().size() > MAX_TWILIO_LINE_NAME_CHARS) {
+      return #err("Twilio line name must be 60 characters or fewer.");
+    };
     #ok({
       phoneNumber = input.phoneNumber;
-      name = if (input.name == "") { input.phoneNumber } else { input.name };
+      name = if (name == "") { input.phoneNumber } else { name };
       enabled = input.enabled;
     });
   };
@@ -313,6 +331,9 @@ module {
     let name = input.name.trim(#char ' ');
     if (name == "") {
       return #err("Preset name is required.");
+    };
+    if (name.toArray().size() > MAX_PRESET_NAME_CHARS) {
+      return #err("Preset name must be 80 characters or fewer.");
     };
     let prompt = switch (sanitizeInstructions(input.systemPrompt, "AI answering instructions are required.")) {
       case (#err(message)) { return #err(message) };
@@ -364,6 +385,29 @@ module {
     null;
   };
 
+  private func countCallPresetsForOwner(state : State, owner : Principal) : Nat {
+    var count = 0;
+    for (preset in state.presets.values()) {
+      if (Principal.equal(preset.ownerId, owner)) {
+        count += 1;
+      };
+    };
+    count;
+  };
+
+  private func countAnsweringPresetsForOwner(
+    state : AnsweringState,
+    owner : Principal,
+  ) : Nat {
+    var count = 0;
+    for (preset in state.presets.values()) {
+      if (Principal.equal(preset.ownerId, owner)) {
+        count += 1;
+      };
+    };
+    count;
+  };
+
   public func listTwilioLines(
     state : State,
     twilioLineState : TwilioLineState,
@@ -402,11 +446,11 @@ module {
     hasTwilioAuth : Bool;
   } {
     {
-      twilioAccountSid = state.adminConfig.twilioAccountSid;
+      twilioAccountSid = "";
       twilioFromNumber = state.adminConfig.twilioFromNumber;
       twilioPhoneNumbers = listTwilioLines(state, twilioLineState);
-      hasXaiKey = state.adminConfig.xaiApiKey != "";
-      hasTwilioAuth = state.adminConfig.twilioAuthToken != "";
+      hasXaiKey = false;
+      hasTwilioAuth = false;
     };
   };
 
@@ -418,15 +462,10 @@ module {
     twilioAuthToken : Text,
     twilioFromNumber : Text,
   ) {
-    // Empty string means "keep existing value" — prevents partial saves from wiping other fields
-    if (xaiApiKey != "") {
-      state.adminConfig.xaiApiKey := xaiApiKey;
-    };
-    if (twilioAccountSid != "") {
-      state.adminConfig.twilioAccountSid := twilioAccountSid;
-    };
-    if (twilioAuthToken != "") {
-      state.adminConfig.twilioAuthToken := twilioAuthToken;
+    if (xaiApiKey != "" or twilioAccountSid != "" or twilioAuthToken != "") {
+      Runtime.trap(
+        "Service secrets must be configured in src/server/.env, never stored on-chain.",
+      );
     };
     if (twilioFromNumber != "") {
       state.adminConfig.twilioFromNumber := twilioFromNumber;
@@ -448,6 +487,12 @@ module {
     switch (sanitizeLineInput(input)) {
       case (#err(message)) { #err(message) };
       case (#ok(line)) {
+        if (
+          twilioLineState.get(line.phoneNumber) == null and
+          listTwilioLines(state, twilioLineState).size() >= MAX_TWILIO_LINES
+        ) {
+          return #err("A maximum of 25 Twilio lines can be configured.");
+        };
         twilioLineState.add(line.phoneNumber, line);
         if (state.adminConfig.twilioFromNumber == "") {
           state.adminConfig.twilioFromNumber := line.phoneNumber;
@@ -512,7 +557,8 @@ module {
   };
 
   public func getXaiApiKey(state : State) : Text {
-    state.adminConfig.xaiApiKey;
+    ignore state;
+    "";
   };
 
   public func getTwilioCredentials(state : State) : {
@@ -520,10 +566,11 @@ module {
     authToken : Text;
     fromNumber : Text;
   } {
+    ignore state;
     {
-      accountSid = state.adminConfig.twilioAccountSid;
-      authToken = state.adminConfig.twilioAuthToken;
-      fromNumber = state.adminConfig.twilioFromNumber;
+      accountSid = "";
+      authToken = "";
+      fromNumber = "";
     };
   };
 
@@ -534,6 +581,9 @@ module {
     owner : Principal,
     input : Types.CallPresetInput,
   ) : Types.CallPreset {
+    if (countCallPresetsForOwner(state, owner) >= MAX_CALL_PRESETS_PER_USER) {
+      Runtime.trap("A maximum of 30 call presets can be stored per user.");
+    };
     let cleanInput = requireCallPresetInput(input);
     let id = state.nextPresetId.value;
     state.nextPresetId.value += 1;
@@ -663,6 +713,9 @@ module {
     switch (state.presets.get(id)) {
       case null { null };
       case (?existing) {
+        if (countCallPresetsForOwner(state, caller) >= MAX_CALL_PRESETS_PER_USER) {
+          Runtime.trap("A maximum of 30 call presets can be stored per user.");
+        };
         let newId = state.nextPresetId.value;
         state.nextPresetId.value += 1;
         let copy : Types.StoredCallPreset = withStoredPresetDefaults({
@@ -689,6 +742,12 @@ module {
     owner : Principal,
     input : Types.AnsweringPresetInput,
   ) : Types.AnsweringPresetMutationResult {
+    if (
+      countAnsweringPresetsForOwner(state, owner) >=
+      MAX_ANSWERING_PRESETS_PER_USER
+    ) {
+      return #err("A maximum of 10 answering presets can be stored per user.");
+    };
     switch (getExistingPendingAnsweringPreset(state, owner)) {
       case (?_) {
         return #err("Finish verifying your pending Twilio number before creating another answering preset.");
@@ -943,6 +1002,12 @@ module {
         voiceIds.remove(id);
         state.presetIdByWebhookSecret.remove(existing.webhookSecret);
         state.presetIdByPhoneNumber.remove(existing.phoneNumber);
+        switch (state.presetIdsByOwner.get(existing.ownerId)) {
+          case null {};
+          case (?ids) {
+            ids.retain(func(presetId) { presetId != id });
+          };
+        };
         true;
       };
     };

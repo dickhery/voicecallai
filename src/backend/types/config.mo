@@ -177,7 +177,8 @@ module {
     #err : Text;
   };
 
-  // Admin-stored service credentials
+  // Legacy stable shape. Service secrets are scrubbed and must live only in the
+  // external voice server environment; the phone number is not secret.
   public type AdminConfig = {
     var xaiApiKey : Text;
     var twilioAccountSid : Text;

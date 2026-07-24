@@ -12,6 +12,8 @@ module {
   private let RESERVATION_CHUNK_SECONDS : Nat = 900;
   private let MAX_RESERVATION_SECONDS : Nat = 14_400;
   private let BILLING_INCREMENT_SECONDS : Nat = 60;
+  private let MAX_OPEN_RESERVATION_RESULTS : Nat = 100;
+  private let MAX_PROMO_MINUTES_PER_GRANT : Nat = 100_000;
 
   public type State = {
     balances : Map.Map<Principal, Nat>;
@@ -147,6 +149,21 @@ module {
     switch (getPackage(packageId)) {
       case null { #err("Unknown phone time package") };
       case (?pkg) {
+        let pendingKey = "pending_by_user:" # user.toText();
+        switch (state.purchaseIntents.get(pendingKey)) {
+          case (?existing) {
+            switch (existing.status) {
+              case (#pending) {
+                if (existing.packageId == pkg.id and existing.mode == mode) {
+                  return #ok(toPurchaseIntentPublic(existing));
+                };
+                existing.status := #canceled;
+              };
+              case _ {};
+            };
+          };
+          case null {};
+        };
         let id = "pi_" # state.nextPurchaseIntentId.value.toText();
         state.nextPurchaseIntentId.value += 1;
         let intent : Types.PurchaseIntent = {
@@ -162,6 +179,7 @@ module {
           var paidAt = null;
         };
         state.purchaseIntents.add(id, intent);
+        state.purchaseIntents.add(pendingKey, intent);
         #ok(toPurchaseIntentPublic(intent));
       };
     };
@@ -205,9 +223,10 @@ module {
     state : State,
     limit : Nat,
   ) : [Types.CallReservationPublic] {
+    let safeLimit = Nat.min(limit, MAX_OPEN_RESERVATION_RESULTS);
     let results = List.empty<Types.CallReservationPublic>();
     for (reservation in state.callReservations.values()) {
-      if (results.size() >= limit) {
+      if (results.size() >= safeLimit) {
         return results.toArray();
       };
       switch (reservation.status) {
@@ -290,6 +309,9 @@ module {
     if (minutes == 0) {
       return #err("Promo minutes must be greater than zero");
     };
+    if (minutes > MAX_PROMO_MINUTES_PER_GRANT) {
+      return #err("Promo minutes must be 100000 or fewer per grant");
+    };
 
     let seconds = minutes * 60;
     let current = getBalance(state, user);
@@ -362,7 +384,10 @@ module {
           return #err("No prepaid phone time is available to extend this call.");
         };
 
-        let remainingReservationCapacity = MAX_RESERVATION_SECONDS - reservation.allowedSeconds;
+        let remainingReservationCapacity = Nat.sub(
+          MAX_RESERVATION_SECONDS,
+          reservation.allowedSeconds,
+        );
         let additionalSeconds = Nat.min(
           available,
           Nat.min(RESERVATION_CHUNK_SECONDS, remainingReservationCapacity),
@@ -511,7 +536,7 @@ module {
         releaseReservedSeconds(state, reservation.user, reservation.allowedSeconds);
         let currentBalance = getBalance(state, reservation.user);
         let newBalance = if (currentBalance > billedSeconds) {
-          currentBalance - billedSeconds;
+          Nat.sub(currentBalance, billedSeconds);
         } else {
           0;
         };
@@ -572,7 +597,7 @@ module {
     seconds : Nat,
   ) {
     let current = getReservedSeconds(state, user);
-    let updated = if (current > seconds) { current - seconds } else { 0 };
+    let updated = if (current > seconds) { Nat.sub(current, seconds) } else { 0 };
     state.reservedSecondsByUser.add(user, updated);
   };
 

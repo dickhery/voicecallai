@@ -21,7 +21,6 @@ import {
   useAssignUserRole,
   useGetAdminConfig,
   useRemoveTwilioLine,
-  useSetAdminConfig,
   useSetTwilioLine,
   useSetTwilioLineEnabled,
 } from "@/hooks/use-backend";
@@ -31,8 +30,6 @@ import { useQuery } from "@tanstack/react-query";
 import {
   CheckCircle,
   CreditCard,
-  Eye,
-  EyeOff,
   Gift,
   KeyRound,
   Loader2,
@@ -45,43 +42,6 @@ import {
 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
-
-function InputWithReveal({
-  id,
-  placeholder,
-  value,
-  onChange,
-  "data-ocid": dataOcid,
-}: {
-  id: string;
-  placeholder: string;
-  value: string;
-  onChange: (v: string) => void;
-  "data-ocid"?: string;
-}) {
-  const [show, setShow] = useState(false);
-  return (
-    <div className="relative">
-      <Input
-        id={id}
-        type={show ? "text" : "password"}
-        placeholder={placeholder}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        data-ocid={dataOcid}
-        className="pr-9 font-mono text-sm"
-      />
-      <button
-        type="button"
-        onClick={() => setShow(!show)}
-        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-        aria-label={show ? "Hide" : "Show"}
-      >
-        {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-      </button>
-    </div>
-  );
-}
 
 const E164_REGEX = /^\+[1-9]\d{1,14}$/;
 
@@ -114,9 +74,8 @@ function StatusBadge({
 }
 
 export default function AdminDashboardPage() {
-  const { data: config, isLoading: configLoading } = useGetAdminConfig();
+  const { data: config } = useGetAdminConfig();
   const { data: allCalls, isLoading: callsLoading } = useAdminListAllCalls();
-  const setConfig = useSetAdminConfig();
   const setTwilioLine = useSetTwilioLine();
   const removeTwilioLine = useRemoveTwilioLine();
   const setTwilioLineEnabled = useSetTwilioLineEnabled();
@@ -128,99 +87,12 @@ export default function AdminDashboardPage() {
     retry: false,
   });
 
-  // xAI section state
-  const [xaiKey, setXaiKey] = useState("");
-  const [xaiSaving, setXaiSaving] = useState(false);
-
-  // Twilio section state
-  const [twilioSid, setTwilioSid] = useState("");
-  const [twilioToken, setTwilioToken] = useState("");
-  const [twilioFrom, setTwilioFrom] = useState("");
-  const [twilioSaving, setTwilioSaving] = useState(false);
-  const [twilioTesting, setTwilioTesting] = useState(false);
-  const [fromError, setFromError] = useState("");
   const [twilioLinePhone, setTwilioLinePhone] = useState("");
   const [twilioLineLabel, setTwilioLineLabel] = useState("");
   const [twilioLineError, setTwilioLineError] = useState("");
 
   const [promoUserId, setPromoUserId] = useState("");
   const [promoMinutes, setPromoMinutes] = useState("");
-
-  const handleSaveXai = async () => {
-    if (!xaiKey.trim()) {
-      toast.error("Enter an xAI API key");
-      return;
-    }
-    setXaiSaving(true);
-    try {
-      await setConfig.mutateAsync({
-        xaiApiKey: xaiKey,
-        // Pass empty strings for Twilio — backend treats empty as "keep existing"
-        twilioAccountSid: "",
-        twilioAuthToken: "",
-        twilioFromNumber: "",
-      });
-      toast.success("xAI API key saved successfully");
-      setXaiKey("");
-    } catch {
-      toast.error("Failed to save xAI configuration");
-    } finally {
-      setXaiSaving(false);
-    }
-  };
-
-  const handleSaveTwilio = async () => {
-    if (!twilioSid.trim() && !twilioToken.trim() && !twilioFrom.trim()) {
-      toast.error("Enter at least one Twilio field to update");
-      return;
-    }
-    if (twilioFrom.trim() && !E164_REGEX.test(twilioFrom.trim())) {
-      setFromError("Must be in E.164 format: +12025551234");
-      return;
-    }
-    setFromError("");
-    setTwilioSaving(true);
-    try {
-      await setConfig.mutateAsync({
-        // Pass empty string for xAI — backend treats empty as "keep existing"
-        xaiApiKey: "",
-        twilioAccountSid: twilioSid,
-        twilioAuthToken: twilioToken,
-        twilioFromNumber: twilioFrom,
-      });
-      toast.success("Twilio credentials saved successfully");
-      setTwilioToken("");
-    } catch {
-      toast.error("Failed to save Twilio configuration");
-    } finally {
-      setTwilioSaving(false);
-    }
-  };
-
-  const handleTestTwilio = async () => {
-    setTwilioTesting(true);
-    // Simulate connection test — real implementation would call a test endpoint
-    await new Promise((r) => setTimeout(r, 1500));
-    if (config?.hasTwilioAuth) {
-      toast.success("Twilio connection verified", {
-        description: "Credentials are valid and API is reachable",
-      });
-    } else {
-      toast.error("Twilio not configured", {
-        description: "Save credentials before testing the connection",
-      });
-    }
-    setTwilioTesting(false);
-  };
-
-  const validateFrom = (v: string) => {
-    setTwilioFrom(v);
-    if (v && !E164_REGEX.test(v)) {
-      setFromError("Must be in E.164 format: +12025551234");
-    } else {
-      setFromError("");
-    }
-  };
 
   const handleAddTwilioLine = async (event: FormEvent) => {
     event.preventDefault();
@@ -382,7 +254,7 @@ export default function AdminDashboardPage() {
 
           {/* Integration cards */}
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-            {/* xAI config */}
+            {/* xAI bridge status */}
             <Card
               className="bg-card border-border"
               data-ocid="admin.xai_config.card"
@@ -393,46 +265,57 @@ export default function AdminDashboardPage() {
                     <KeyRound className="w-4 h-4 text-primary" />
                     xAI Configuration
                   </CardTitle>
-                  {configLoading ? (
+                  {voiceServerQuery.isLoading ? (
                     <Skeleton className="h-5 w-20" />
                   ) : (
-                    <StatusBadge configured={config?.hasXaiKey ?? false} />
+                    <StatusBadge
+                      configured={voiceServerQuery.data?.xaiConfigured ?? false}
+                    />
                   )}
                 </div>
                 <CardDescription>
-                  xAI Voice API key for AI-powered conversations
+                  Secure status from the external voice bridge
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-1.5">
                   <Label
-                    htmlFor="xai-key"
+                    htmlFor="xai-model"
                     className="text-xs font-medium text-muted-foreground"
                   >
-                    {config?.hasXaiKey ? "Update API Key" : "API Key"}
+                    Voice model
                   </Label>
-                  <InputWithReveal
-                    id="xai-key"
+                  <Input
+                    id="xai-model"
+                    readOnly
+                    value={voiceServerQuery.data?.model ?? ""}
                     placeholder={
-                      config?.hasXaiKey
-                        ? "Enter new key to replace..."
-                        : "xai-..."
+                      voiceServerQuery.isError
+                        ? "Voice server unavailable"
+                        : "Checking voice server…"
                     }
-                    value={xaiKey}
-                    onChange={setXaiKey}
-                    data-ocid="admin.xai_key.input"
+                    className="font-mono text-sm"
                   />
                 </div>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  API keys are never stored in the IC canister. Set{" "}
+                  <code className="text-foreground">XAI_API_KEY</code> in{" "}
+                  <code className="text-foreground">src/server/.env</code>, then
+                  restart the voice server.
+                </p>
                 <Button
-                  onClick={handleSaveXai}
-                  disabled={xaiSaving || !xaiKey.trim()}
+                  variant="outline"
+                  onClick={() => void voiceServerQuery.refetch()}
+                  disabled={voiceServerQuery.isFetching}
                   data-ocid="admin.xai.save_button"
                   className="w-full gap-2"
                 >
-                  {xaiSaving ? (
+                  {voiceServerQuery.isFetching ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : null}
-                  {xaiSaving ? "Saving..." : "Save API Key"}
+                  ) : (
+                    <Radio className="w-4 h-4" />
+                  )}
+                  Refresh bridge status
                 </Button>
               </CardContent>
             </Card>
@@ -448,78 +331,30 @@ export default function AdminDashboardPage() {
                     <Phone className="w-4 h-4 text-primary" />
                     Twilio Configuration
                   </CardTitle>
-                  {configLoading ? (
+                  {voiceServerQuery.isLoading ? (
                     <Skeleton className="h-5 w-20" />
                   ) : (
-                    <StatusBadge configured={config?.hasTwilioAuth ?? false} />
+                    <StatusBadge
+                      configured={
+                        voiceServerQuery.data?.twilioConfigured ?? false
+                      }
+                    />
                   )}
                 </div>
                 <CardDescription>
-                  Twilio credentials for outbound phone calls
+                  Credentials stay on the bridge; line routing stays on-chain
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label
-                    htmlFor="twilio-sid"
-                    className="text-xs font-medium text-muted-foreground"
-                  >
-                    Account SID
-                  </Label>
-                  <Input
-                    id="twilio-sid"
-                    placeholder={config?.twilioAccountSid || "AC..."}
-                    value={twilioSid}
-                    onChange={(e) => setTwilioSid(e.target.value)}
-                    data-ocid="admin.twilio_sid.input"
-                    className="font-mono text-sm"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label
-                    htmlFor="twilio-token"
-                    className="text-xs font-medium text-muted-foreground"
-                  >
-                    Auth Token
-                  </Label>
-                  <InputWithReveal
-                    id="twilio-token"
-                    placeholder="Enter auth token..."
-                    value={twilioToken}
-                    onChange={setTwilioToken}
-                    data-ocid="admin.twilio_token.input"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label
-                    htmlFor="twilio-from"
-                    className="text-xs font-medium text-muted-foreground"
-                  >
-                    From Number
-                  </Label>
-                  <Input
-                    id="twilio-from"
-                    placeholder={config?.twilioFromNumber || "+12025551234"}
-                    value={twilioFrom}
-                    onChange={(e) => validateFrom(e.target.value)}
-                    data-ocid="admin.twilio_from.input"
-                    className={`font-mono text-sm ${
-                      fromError
-                        ? "border-destructive focus-visible:ring-destructive"
-                        : ""
-                    }`}
-                  />
-                  {fromError && (
-                    <p
-                      className="text-xs text-destructive"
-                      data-ocid="admin.twilio_from.field_error"
-                    >
-                      {fromError}
-                    </p>
-                  )}
-                </div>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Set{" "}
+                  <code className="text-foreground">TWILIO_ACCOUNT_SID</code>{" "}
+                  and <code className="text-foreground">TWILIO_AUTH_TOKEN</code>{" "}
+                  in <code className="text-foreground">src/server/.env</code>.
+                  Add only non-secret phone-number routing below.
+                </p>
                 <div
-                  className="space-y-3 border-t border-border pt-4"
+                  className="space-y-3"
                   data-ocid="admin.twilio_lines.section"
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -627,33 +462,20 @@ export default function AdminDashboardPage() {
                     </Button>
                   </form>
                 </div>
-                <div className="flex gap-2 pt-1">
-                  <Button
-                    onClick={handleSaveTwilio}
-                    disabled={twilioSaving}
-                    data-ocid="admin.twilio.save_button"
-                    className="flex-1 gap-2"
-                  >
-                    {twilioSaving ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : null}
-                    {twilioSaving ? "Saving..." : "Save Credentials"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={handleTestTwilio}
-                    disabled={twilioTesting}
-                    data-ocid="admin.twilio.test_button"
-                    className="flex-1 gap-2"
-                  >
-                    {twilioTesting ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Radio className="w-4 h-4" />
-                    )}
-                    {twilioTesting ? "Testing..." : "Test Connection"}
-                  </Button>
-                </div>
+                <Button
+                  variant="outline"
+                  onClick={() => void voiceServerQuery.refetch()}
+                  disabled={voiceServerQuery.isFetching}
+                  data-ocid="admin.twilio.test_button"
+                  className="w-full gap-2"
+                >
+                  {voiceServerQuery.isFetching ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Radio className="w-4 h-4" />
+                  )}
+                  Refresh bridge status
+                </Button>
               </CardContent>
             </Card>
 

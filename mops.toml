@@ -9,6 +9,9 @@ args = [
   "--actor-idl=src/backend/system-idl"
 ]
 
+[deployed]
+dir = "src/backend/deployed"
+
 [canisters.backend]
 main = "src/backend/main.mo"
 

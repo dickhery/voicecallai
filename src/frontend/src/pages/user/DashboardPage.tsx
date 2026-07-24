@@ -675,8 +675,13 @@ export default function DashboardPage() {
     trimmedInstructionDraft.length <= MAX_AI_INSTRUCTIONS_CHARS &&
     trimmedInstructionDraft !== instructionEditorPreset.systemPrompt.trim();
 
-  const bridgeOk = healthQuery.data?.ok === true;
-  const bridgeDown = healthQuery.isError || healthQuery.data?.ok === false;
+  const bridgeUnreachable =
+    healthQuery.isError || healthQuery.data?.ok === false;
+  const bridgeNeedsSetup =
+    healthQuery.data?.ok === true && healthQuery.data?.ready === false;
+  const bridgeOk =
+    healthQuery.data?.ok === true && healthQuery.data?.ready !== false;
+  const bridgeDown = bridgeUnreachable || bridgeNeedsSetup;
 
   useEffect(() => {
     setRecentPhones(loadRecentPhones());
@@ -930,7 +935,7 @@ export default function DashboardPage() {
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 Checking voice bridge…
               </>
-            ) : bridgeDown ? (
+            ) : bridgeUnreachable ? (
               <>
                 <WifiOff className="w-3.5 h-3.5" />
                 Voice bridge is unreachable. Calls and checkout may fail until
@@ -942,6 +947,21 @@ export default function DashboardPage() {
                   onClick={() => void healthQuery.refetch()}
                 >
                   Retry
+                </Button>
+              </>
+            ) : bridgeNeedsSetup ? (
+              <>
+                <WifiOff className="w-3.5 h-3.5" />
+                Voice bridge needs setup:{" "}
+                {healthQuery.data?.setupIssues?.[0] ??
+                  "complete the server environment configuration."}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 ml-auto"
+                  onClick={() => void healthQuery.refetch()}
+                >
+                  Recheck
                 </Button>
               </>
             ) : (
@@ -1400,9 +1420,11 @@ export default function DashboardPage() {
                         ? "Connecting..."
                         : availableSeconds <= 0
                           ? "Add Phone Time"
-                          : bridgeDown
-                            ? "Bridge Offline"
-                            : "Start Call"}
+                          : bridgeNeedsSetup
+                            ? "Bridge Needs Setup"
+                            : bridgeUnreachable
+                              ? "Bridge Offline"
+                              : "Start Call"}
                 </Button>
               </CardContent>
             </Card>

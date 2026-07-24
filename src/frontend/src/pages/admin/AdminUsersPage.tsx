@@ -459,8 +459,8 @@ export default function AdminUsersPage() {
           <div className="rounded-xl border border-border bg-muted/20 p-4">
             <p className="text-xs text-muted-foreground leading-relaxed">
               <strong className="text-foreground">How it works:</strong> The
-              first user to log in automatically becomes admin. Use this panel
-              to promote other users to admin or demote them to user/guest
+              backend deployment identity is the initial administrator. Use this
+              panel to promote other users to admin or demote them to user/guest
               roles. Click any user row above to view their full call history.
             </p>
           </div>

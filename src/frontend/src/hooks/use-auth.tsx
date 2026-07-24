@@ -27,11 +27,13 @@ export function useAuth() {
   });
 
   const handleLogin = () => {
-    login();
+    void login().catch(() => {
+      // The provider records the error state; keep the event handler rejection contained.
+    });
   };
 
   const handleLogout = () => {
-    clear();
+    void clear();
     queryClient.clear();
   };
 

@@ -2,6 +2,7 @@ import type { CallPreset } from "@/types";
 
 interface RuntimeEnv {
   voice_server_url?: string;
+  ii_derivation_origin?: string;
 }
 
 export interface VoiceServerTranscriptEntry {
@@ -38,6 +39,10 @@ export interface CallCaptureOptions {
 
 export interface VoiceServerHealth {
   ok: boolean;
+  ready?: boolean;
+  setupIssues?: string[];
+  serverVersion?: string;
+  startedAt?: string;
   publicHost?: string;
   twilioConfigured: boolean;
   twilioLines?: {
@@ -51,6 +56,7 @@ export interface VoiceServerHealth {
     requestOriginAllowed: boolean;
   };
   xaiConfigured: boolean;
+  answeringBridgeConfigured?: boolean;
   billingConfigured?: boolean;
   backendCanisterId?: string;
   backendHost?: string;
@@ -134,7 +140,7 @@ export async function getVoiceServerUrl(): Promise<string> {
 
   if (!url || url === "undefined") {
     throw new Error(
-      "Voice server URL is not configured. Set voice_server_url in src/frontend/env.json.",
+      "Voice server URL is not configured. Run pnpm configure:frontend:local or pnpm configure:frontend:ic.",
     );
   }
 

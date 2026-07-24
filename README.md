@@ -53,7 +53,21 @@ References:
 - Twilio Media Streams overview: https://www.twilio.com/docs/voice/media-streams
 - Twilio Stream TwiML: https://www.twilio.com/docs/voice/twiml/stream
 - Twilio WebSocket message format: https://www.twilio.com/docs/voice/media-streams/websocket-messages
-- xAI Voice Agent API: https://docs.x.ai/developers/model-capabilities/audio/voice-agent
+- xAI Speech-to-Speech: https://docs.x.ai/developers/model-capabilities/audio/speech-to-speech
+- xAI Text-to-Speech: https://docs.x.ai/developers/model-capabilities/audio/text-to-speech
+- xAI Speech-to-Text: https://docs.x.ai/developers/model-capabilities/audio/speech-to-text
+
+## Security Boundary
+
+The IC canister stores application state only. Never put xAI, Twilio, Stripe,
+recording-access, or server-identity secrets in canister arguments, stable
+state, `src/frontend/public/env.json`, or frontend source. Put them only in
+`src/server/.env` (or the secret store used by the deployed Node service).
+
+The backend retains its former credential fields solely for stable-upgrade
+compatibility. On install or upgrade it clears those legacy secret values, and
+the admin UI reports bridge configuration without displaying or accepting
+credentials.
 
 ## Project Layout
 
@@ -250,10 +264,25 @@ node src\server\scripts\create-ic-server-identity.mjs
 Copy the printed `ICP_SERVER_IDENTITY_JSON=...` line into `src\server\.env`. Copy the printed principal too; after the backend is deployed, your admin identity must grant that principal admin access:
 
 ```powershell
-icp canister call -e ic backend assignCallerUserRole '(principal "SERVER_PRINCIPAL_HERE", variant { admin })'
+pnpm server:check-identity
 ```
 
-You can also do this from the app: open **Admin Dashboard**, find **Payment Server**, and click **Authorize Server**. This grants the Node voice server permission to read purchase intents, credit phone time after Stripe webhooks, and read the enabled Twilio line list.
+This prints the real principal derived from `ICP_SERVER_IDENTITY_JSON`, an exact
+CLI command, and the current authorization status. Do not copy placeholder text
+such as `SERVER_PRINCIPAL` into a Candid argument.
+
+The grant must be made by an identity that is already an app admin. The safest
+path is to sign in with the existing browser admin, open **Admin > Users**,
+paste the printed server principal, select **Admin**, and click **Assign Role**.
+After the updated voice server is running, **Admin Dashboard > Payment Server >
+Authorize Server** performs the same grant. This permission lets the Node
+server read purchase intents, credit phone time after Stripe webhooks, and read
+the enabled Twilio line list.
+
+If you prefer the printed CLI command, first verify that the CLI identity is
+already registered as an app admin. A controller or deployment identity is not
+automatically equivalent to an existing Internet Identity admin after an
+upgrade.
 
 `TWILIO_PHONE_NUMBER` remains supported as a single-line fallback. For multiple outbound lines, set `TWILIO_PHONE_NUMBERS` or add numbers in **Admin Dashboard > Twilio Configuration > Outbound Lines**. Each enabled number is treated as one outbound line; when every line is busy, new paid call reservations wait in FIFO order until a line is released.
 
@@ -330,11 +359,15 @@ Expected:
 
 ```text
 ok                : True
+ready             : True
 publicHost        : your-tunnel-host
 cors.requestOriginAllowed: True
 twilioConfigured  : True
 xaiConfigured     : True
 ```
+
+If `ready` is false, read `setupIssues`; it lists missing environment variable
+names without exposing their values.
 
 From the MacBook, test the public CORS path after the Windows server is restarted:
 
@@ -381,11 +414,8 @@ Invoke-WebRequest `
   -UseBasicParsing
 ```
 
-The JSON should include:
-
-```text
-serverVersion: 2026-06-03-cors-stream-status
-```
+The JSON should include a non-empty `serverVersion`, `backendCanisterId`,
+`icpServerPrincipal`, and `model`.
 
 ## Configure the Frontend
 
@@ -428,6 +458,18 @@ The deploy output prints the frontend URL, normally:
 ```text
 http://frontend.local.localhost:8000/
 ```
+
+On a fresh backend install, the identity that runs `icp deploy` is atomically
+registered as the initial admin. Browser users are always registered as normal
+users, so there is no first-login race. After signing into the frontend, copy
+the User ID from Settings and promote it with the same deployment identity:
+
+```powershell
+icp canister call -e local backend assignCallerUserRole '(principal "BROWSER_USER_ID", variant { admin })'
+```
+
+An upgrade preserves the existing role assignments and does not replace an
+already-assigned admin.
 
 To use a local voice server instead of the configured public bridge, run this
 before deploying:
@@ -478,9 +520,8 @@ icp canister status -e ic frontend
 
 Use `-n ic` for token and cycle commands. Without `-n ic`, `icp cycles balance` can show your local network balance, which is why the first balance in your transcript looked much larger than the balance available for mainnet canister creation.
 
-Configure the public voice bridge and confirm that
-`src/frontend/public/.ic-assets.json5` allows the same origin in both
-`connect-src` and `media-src`:
+Configure the public voice bridge. The frontend build generates a matching
+`dist/.ic-assets.json5` policy automatically:
 
 ```powershell
 pnpm configure:frontend:ic -- --voice-server-url https://voicecall.richardhery.com
@@ -493,6 +534,17 @@ For the existing canisters, keep
 ```powershell
 pnpm deploy:ic
 ```
+
+For a brand-new mainnet deployment, sign into the deployed frontend once, copy
+the User ID from Settings, then use the identity that performed the deployment:
+
+```powershell
+icp canister call -e ic backend assignCallerUserRole '(principal "BROWSER_USER_ID", variant { admin })'
+```
+
+After that browser admin signs in again, it can authorize the Node server from
+**Admin Dashboard > Payment Server**. Existing installations keep their current
+admin during an upgrade.
 
 Never use a reinstall mode on the backend; that would erase canister state. If
 only one canister changed, deploy only that canister to avoid unnecessary
@@ -507,13 +559,18 @@ After a successful backend deployment, promote the just-deployed stable type
 signature so future upgrades are checked against it:
 
 ```powershell
-pnpm exec mops deployed --dir src/backend/deployed backend
+pnpm exec mops deployed backend --dir src/backend/deployed
 ```
 
 Review and commit the updated snapshot. The project deliberately leaves
 compute allocation and memory allocation at `0`, uses the default 30-day
 freezing threshold, minifies frontend assets, and lets the asset sync upload
 only changed files. These defaults avoid reserved compute/memory cycle burn.
+The backend also caps per-user preset counts, retains at most 200 finalized
+call-history records per user, bounds query responses and system logs, reuses a
+user's pending purchase intent, and validates cheap inputs before requesting
+randomness. Real-time xAI/Twilio traffic stays on the Node bridge, so it does
+not consume HTTPS-outcall cycles.
 
 Open the existing deployment at:
 
@@ -633,13 +690,17 @@ The `/media` WebSocket bridges Twilio audio to xAI and sends xAI audio back to T
 
 ## CSP Notes
 
-The IC asset canister serves a strict Content Security Policy from:
+The frontend build generates the IC asset canister's strict Content Security
+Policy at:
 
 ```text
-src/frontend/public/.ic-assets.json5
+src/frontend/dist/.ic-assets.json5
 ```
 
-If `voice_server_url` changes, add the new origin to both `connect-src` and `media-src` before redeploying the frontend. The build checks this now, so a mismatched CSP fails locally instead of letting the deployed browser block `/health`, `/initiate-call`, live monitoring, or recording playback.
+The policy is derived from `src/frontend/public/env.json`, includes the voice
+server in `connect-src` and `media-src`, disables raw asset access, and enables
+SPA aliases. Re-run the frontend build after changing `voice_server_url`; do
+not hand-edit the generated file.
 
 ## CORS Notes
 

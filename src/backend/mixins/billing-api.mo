@@ -136,7 +136,9 @@ mixin (
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
     };
-    let callToken = await randomCallToken();
+    if (not ConfigLib.isE164(input.recipientPhone)) {
+      return #err("Phone number must be E.164 format, for example +15551234567.");
+    };
     switch (ConfigLib.getPreset(configState, callPresetVoiceIds, input.presetId)) {
       case null { return #err("Preset not found") };
       case (?preset) {
@@ -151,6 +153,7 @@ mixin (
       return #err("You need prepaid phone time before starting a call.");
     };
 
+    let callToken = await randomCallToken();
     let callRecord = CallsLib.createCallRecord(
       callsState,
       caller,
@@ -197,7 +200,6 @@ mixin (
     if (not AccessControl.isAdmin(accessControlState, caller)) {
       Runtime.trap("Unauthorized: server admin only");
     };
-    let callToken = await randomCallToken();
     switch (ConfigLib.getAnsweringPresetForIncoming(answeringState, answeringPresetVoiceIds, webhookSecret, twilioToNumber)) {
       case (#err(message)) { return #err(message) };
       case (#ok(preset)) {
@@ -206,6 +208,7 @@ mixin (
           return #err("No prepaid phone time is available for this answering preset.");
         };
 
+        let callToken = await randomCallToken();
         let callPresetId = preset.id + ANSWERING_PRESET_ID_OFFSET;
         let callRecord = CallsLib.createCallRecord(
           callsState,

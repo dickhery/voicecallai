@@ -13,7 +13,8 @@ mixin (
   answeringState : ConfigLib.AnsweringState,
   answeringPresetVoiceIds : ConfigLib.VoiceIdState,
 ) {
-  // Admin: view current service config (masked secrets)
+  // Admin: view non-secret line routing. Service-secret flags remain in the
+  // response only for Candid compatibility and are always false.
   public query ({ caller }) func getAdminConfig() : async {
     twilioAccountSid : Text;
     twilioFromNumber : Text;
@@ -27,7 +28,8 @@ mixin (
     ConfigLib.getAdminConfig(configState, twilioLineState);
   };
 
-  // Admin: update all service credentials at once
+  // Legacy Candid endpoint. Secret arguments are rejected; only the public
+  // fallback phone number remains accepted for upgrade compatibility.
   public shared ({ caller }) func setAdminConfig(
     xaiApiKey : Text,
     twilioAccountSid : Text,

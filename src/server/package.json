@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "check:identity": "node scripts/check-ic-server-identity.mjs"
   },
   "dependencies": {
     "@dfinity/agent": "~3.3.1",

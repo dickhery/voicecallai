@@ -8,6 +8,7 @@
       "node_modules/**",
       "build/**",
       "*.config.js",
+      "src/bindings/**",
       "src/declarations/**",
       "src/config.ts"
     ]

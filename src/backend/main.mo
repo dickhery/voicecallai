@@ -7,13 +7,17 @@ import ConfigApi "mixins/config-api";
 import CallsApi "mixins/calls-api";
 import BillingApi "mixins/billing-api";
 
-persistent actor {
-  // Authorization state (first authenticated user becomes admin)
+shared ({ caller = installer }) persistent actor class Backend() {
+  // Capture the installer atomically so a public login cannot front-run admin setup.
   let accessControlState = AccessControl.initState();
+  if (not accessControlState.adminAssigned) {
+    AccessControl.initialize(accessControlState, installer);
+  };
   include MixinAuthorization(accessControlState);
 
   // Domain state
   let configState = ConfigLib.initState();
+  ConfigLib.clearLegacyServiceSecrets(configState);
   let callPresetVoiceIds = ConfigLib.initVoiceIdState();
   let twilioLineState = ConfigLib.initTwilioLineState();
   let answeringState = ConfigLib.initAnsweringState();

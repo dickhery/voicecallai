@@ -22,7 +22,11 @@ import {
 
 const PORT = Number(process.env.PORT || 3000);
 const XAI_MODEL = process.env.XAI_MODEL || "grok-voice-latest";
+const XAI_TTS_URL = "https://api.x.ai/v1/tts";
 const XAI_TTS_VOICES_URL = "https://api.x.ai/v1/tts/voices";
+const XAI_VOICE_LIBRARY_CACHE_MS = Number(
+  process.env.XAI_VOICE_LIBRARY_CACHE_MS || 15 * 60 * 1000,
+);
 const XAI_DEFAULT_REASONING_EFFORT = String(
   process.env.XAI_DEFAULT_REASONING_EFFORT || "high",
 )
@@ -86,7 +90,7 @@ const VOICE_PREVIEW_RATE_LIMIT_WINDOW_MS = Number(
 const VOICE_PREVIEW_RATE_LIMIT_MAX = Number(
   process.env.VOICE_PREVIEW_RATE_LIMIT_MAX || 12,
 );
-const SERVER_VERSION = "2026-07-23-agent-presets-voice-session";
+const SERVER_VERSION = "2026-07-23-secure-setup-health";
 const VOICE_SESSION_START = "[[vc:session]]";
 const VOICE_SESSION_END = "[[/vc:session]]";
 const SERVER_STARTED_AT = new Date().toISOString();
@@ -376,6 +380,11 @@ let backendReconcileProcessing = false;
 let lastBackendReconcileAt = 0;
 let lineConfigCache = {
   numbers: null,
+  fetchedAt: 0,
+  pending: null,
+};
+let xaiVoiceLibraryCache = {
+  value: null,
   fetchedAt: 0,
   pending: null,
 };
@@ -985,20 +994,46 @@ async function fetchXaiVoiceLibrary() {
     return { source: "fallback", voices: DEFAULT_XAI_VOICES };
   }
 
-  const response = await fetch(XAI_TTS_VOICES_URL, {
-    headers: { Authorization: `Bearer ${process.env.XAI_API_KEY}` },
-  });
-  if (!response.ok) {
-    throw new Error(`xAI voice list failed (${response.status})`);
+  const now = Date.now();
+  if (
+    xaiVoiceLibraryCache.value &&
+    now - xaiVoiceLibraryCache.fetchedAt <
+      Math.max(60_000, XAI_VOICE_LIBRARY_CACHE_MS)
+  ) {
+    return xaiVoiceLibraryCache.value;
   }
-  const payload = await response.json();
-  const voices = Array.isArray(payload?.voices)
-    ? payload.voices.map(normalizeXaiVoice).filter(Boolean)
-    : [];
-  return {
-    source: "xai",
-    voices: voices.length > 0 ? voices : DEFAULT_XAI_VOICES,
-  };
+  if (xaiVoiceLibraryCache.pending) {
+    return xaiVoiceLibraryCache.pending;
+  }
+
+  xaiVoiceLibraryCache.pending = (async () => {
+    const response = await fetch(XAI_TTS_VOICES_URL, {
+      headers: { Authorization: `Bearer ${process.env.XAI_API_KEY}` },
+    });
+    if (!response.ok) {
+      throw new Error(`xAI voice list failed (${response.status})`);
+    }
+    const payload = await response.json();
+    const voices = Array.isArray(payload?.voices)
+      ? payload.voices.map(normalizeXaiVoice).filter(Boolean)
+      : [];
+    const result = {
+      source: "xai",
+      voices: voices.length > 0 ? voices : DEFAULT_XAI_VOICES,
+    };
+    xaiVoiceLibraryCache = {
+      value: result,
+      fetchedAt: Date.now(),
+      pending: null,
+    };
+    return result;
+  })();
+
+  try {
+    return await xaiVoiceLibraryCache.pending;
+  } finally {
+    xaiVoiceLibraryCache.pending = null;
+  }
 }
 
 function toPlainPreset(input = {}) {
@@ -1422,23 +1457,6 @@ function writePcmWavHeader(buffer, sampleCount, channelCount = 1) {
   buffer.writeUInt32LE(dataSize, 40);
 }
 
-function buildPcmWavFromMuLaw(chunks) {
-  const totalSamples = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const dataSize = totalSamples * 2;
-  const buffer = Buffer.alloc(44 + dataSize);
-  writePcmWavHeader(buffer, totalSamples, 1);
-
-  let offset = 44;
-  for (const chunk of chunks) {
-    for (const value of chunk) {
-      const sample = Math.max(-32768, Math.min(32767, decodeMuLawByte(value)));
-      buffer.writeInt16LE(sample, offset);
-      offset += 2;
-    }
-  }
-  return buffer;
-}
-
 function clampPcmSample(value) {
   return Math.max(-32768, Math.min(32767, Math.round(value)));
 }
@@ -1575,134 +1593,73 @@ function assertVoicePreviewRateLimit(req) {
   existing.count += 1;
 }
 
-function buildVoicePreviewSessionUpdate(voiceId) {
-  return {
-    type: "session.update",
-    session: {
-      voice: voiceId,
-      instructions: buildSafeInstructions(
-        [
-          "You are generating a short voice sample for a user choosing an AI phone voice.",
-          "Read the sample text naturally, clearly, and conversationally.",
-          "Do not add extra words before or after the sample.",
-        ].join(" "),
-      ),
-      turn_detection: {
-        type: "server_vad",
-        threshold: 0.5,
-        silence_duration_ms: 500,
-        prefix_padding_ms: 200,
-      },
-      audio: {
-        input: { format: { type: "audio/pcmu" } },
-        output: { format: { type: "audio/pcmu" } },
-      },
-      tools: [],
-    },
-  };
-}
-
-function generateVoicePreviewAudio({ voiceId, text }) {
+async function generateVoicePreviewAudio({ voiceId, text }) {
   requireXaiConfig();
-  return new Promise((resolve, reject) => {
-    const audioChunks = [];
-    let settled = false;
-    let previewRequested = false;
-    const ws = new WebSocket(
-      `wss://api.x.ai/v1/realtime?model=${encodeURIComponent(XAI_MODEL)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.XAI_API_KEY}`,
-        },
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    clamp(VOICE_PREVIEW_TIMEOUT_MS, 3_000, 20_000),
+  );
+  timeout.unref?.();
+
+  try {
+    const response = await fetch(XAI_TTS_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.XAI_API_KEY}`,
       },
-    );
+      body: JSON.stringify({
+        text,
+        voice_id: voiceId,
+        language: "en",
+        output_format: {
+          codec: "wav",
+          sample_rate: 24_000,
+        },
+        speed: 1,
+        text_normalization: true,
+      }),
+      signal: controller.signal,
+    });
 
-    let timeout = null;
-    const settle = (error, wavBuffer) => {
-      if (settled) return;
-      settled = true;
-      if (timeout) clearTimeout(timeout);
-      if (
-        ws.readyState === WebSocket.OPEN ||
-        ws.readyState === WebSocket.CONNECTING
-      ) {
-        ws.close();
-      }
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(wavBuffer);
-    };
-
-    timeout = setTimeout(() => {
-      settle(new Error("Voice preview timed out."));
-    }, clamp(VOICE_PREVIEW_TIMEOUT_MS, 3_000, 20_000));
-    timeout.unref?.();
-
-    const requestPreviewAudio = () => {
-      if (previewRequested || !isWebSocketOpen(ws)) return;
-      previewRequested = true;
-      ws.send(
-        JSON.stringify({
-          type: "conversation.item.create",
-          item: {
-            type: "message",
-            role: "user",
-            content: [{ type: "input_text", text }],
-          },
-        }),
+    if (!response.ok) {
+      const detail = String(await response.text().catch(() => ""))
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 200);
+      const error = new Error(
+        `xAI voice preview failed (${response.status})${
+          detail ? `: ${detail}` : ""
+        }`,
       );
-      ws.send(JSON.stringify({ type: "response.create" }));
-    };
+      error.statusCode =
+        response.status === 400 || response.status === 404
+          ? 400
+          : response.status === 429
+            ? 429
+            : 502;
+      throw error;
+    }
 
-    ws.on("open", () => {
-      ws.send(JSON.stringify(buildVoicePreviewSessionUpdate(voiceId)));
-      const fallbackTimer = setTimeout(requestPreviewAudio, 350);
-      fallbackTimer.unref?.();
-    });
-
-    ws.on("message", (raw) => {
-      let event;
-      try {
-        event = JSON.parse(raw.toString());
-      } catch {
-        return;
-      }
-
-      if (event.type === "session.updated") {
-        requestPreviewAudio();
-        return;
-      }
-
-      if (event.type === "response.output_audio.delta" && event.delta) {
-        audioChunks.push(Buffer.from(event.delta, "base64"));
-        return;
-      }
-
-      if (event.type === "response.done") {
-        if (audioChunks.length === 0) {
-          settle(new Error("Voice preview returned no audio."));
-          return;
-        }
-        settle(null, buildPcmWavFromMuLaw(audioChunks));
-        return;
-      }
-
-      if (event.type === "error") {
-        settle(
-          new Error(
-            event.error?.message || event.message || "Voice preview failed.",
-          ),
-        );
-      }
-    });
-
-    ws.on("error", (error) => settle(error));
-    ws.on("close", () => {
-      if (!settled) settle(new Error("Voice preview connection closed."));
-    });
-  });
+    const wavBuffer = Buffer.from(await response.arrayBuffer());
+    if (
+      wavBuffer.length < 44 ||
+      wavBuffer.subarray(0, 4).toString("ascii") !== "RIFF"
+    ) {
+      throw new Error("xAI voice preview returned invalid WAV audio.");
+    }
+    return wavBuffer;
+  } catch (error) {
+    if (error.name === "AbortError") {
+      const timeoutError = new Error("Voice preview timed out.");
+      timeoutError.statusCode = 504;
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function getBridgeRecordingAccessSecret() {
@@ -2969,15 +2926,52 @@ app.get("/health", async (req, res) => {
     queued: getQueuedSessionIds().length,
     error: error.message,
   }));
+  const publicHost = getPublicHost();
+  const icpServerPrincipal = getIcpServerPrincipalText();
+  const xaiConfigured = Boolean(process.env.XAI_API_KEY);
+  const twilioConfigured = Boolean(
+    process.env.TWILIO_ACCOUNT_SID &&
+      process.env.TWILIO_AUTH_TOKEN &&
+      linePool.numbers.length > 0,
+  );
+  const backendConfigured = Boolean(
+    process.env.BACKEND_CANISTER_ID && icpServerPrincipal,
+  );
+  const setupIssues = [];
+  if (!xaiConfigured) setupIssues.push("Set XAI_API_KEY on the voice server.");
+  if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) {
+    setupIssues.push("Set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN.");
+  } else if (linePool.numbers.length === 0) {
+    setupIssues.push("Configure at least one Twilio phone number.");
+  }
+  if (!process.env.BACKEND_CANISTER_ID) {
+    setupIssues.push("Set BACKEND_CANISTER_ID.");
+  }
+  if (!icpServerPrincipal) {
+    setupIssues.push("Set ICP_SERVER_IDENTITY_JSON.");
+  }
+  if (!publicHost) setupIssues.push("Set HOSTNAME to the public voice server host.");
+  if (linePool.error) {
+    setupIssues.push("Twilio line lookup failed; check the voice server logs.");
+  }
+
   res.json({
     ok: true,
+    ready:
+      setupIssues.length === 0 &&
+      xaiConfigured &&
+      twilioConfigured &&
+      backendConfigured &&
+      Boolean(publicHost),
+    setupIssues,
     serverVersion: SERVER_VERSION,
     startedAt: SERVER_STARTED_AT,
-    twilioConfigured: Boolean(
-      process.env.TWILIO_ACCOUNT_SID &&
-        process.env.TWILIO_AUTH_TOKEN &&
-        linePool.numbers.length > 0,
-    ),
+    publicHost: publicHost || null,
+    model: XAI_MODEL,
+    backendCanisterId: process.env.BACKEND_CANISTER_ID || null,
+    backendHost: process.env.BACKEND_HOST || "https://icp-api.io",
+    icpServerPrincipal: icpServerPrincipal || null,
+    twilioConfigured,
     twilioLines: {
       configured: linePool.numbers.length,
       active: linePool.active.length,
@@ -2987,12 +2981,9 @@ app.get("/health", async (req, res) => {
     cors: {
       requestOriginAllowed: isOriginAllowed(req.get("origin")),
     },
-    xaiConfigured: Boolean(process.env.XAI_API_KEY),
+    xaiConfigured,
     answeringBridgeConfigured: Boolean(
-      process.env.XAI_API_KEY &&
-        process.env.BACKEND_CANISTER_ID &&
-        (process.env.ICP_SERVER_IDENTITY_JSON || process.env.ICP_SERVER_IDENTITY_SECRET_KEY) &&
-        getPublicHost(),
+      xaiConfigured && backendConfigured && publicHost
     ),
     billingConfigured: Boolean(
       process.env.BACKEND_CANISTER_ID &&
@@ -4743,6 +4734,11 @@ async function runSessionCleanup() {
     for (const [recordingId, recording] of bridgeRecordings.entries()) {
       if (recording.expiresAt < now) {
         bridgeRecordings.delete(recordingId);
+      }
+    }
+    for (const [key, limit] of voicePreviewRateLimits.entries()) {
+      if (limit.resetAt <= now) {
+        voicePreviewRateLimits.delete(key);
       }
     }
     if (now - lastBackendReconcileAt >= BACKEND_CALL_RECONCILE_INTERVAL_MS) {

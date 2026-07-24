@@ -13,6 +13,14 @@ import Types "../types/calls";
 import Common "../types/common";
 
 module {
+  private let MAX_USER_CALL_HISTORY_RESULTS : Nat = 200;
+  private let MAX_STORED_CALLS_PER_USER : Nat = 200;
+  private let MAX_ADMIN_CALL_RESULTS : Nat = 500;
+  private let MAX_SYSTEM_LOGS : Nat = 600;
+  private let SYSTEM_LOGS_AFTER_PRUNE : Nat = 400;
+  private let MAX_SYSTEM_LOG_RESULTS : Nat = 500;
+  private let MAX_SYSTEM_LOG_MESSAGE_CHARS : Nat = 500;
+
   public type State = {
     callRecords : Map.Map<Common.CallId, Types.CallRecord>;
     userCallIndex : Map.Map<Principal, List.List<Common.CallId>>;
@@ -53,6 +61,46 @@ module {
     };
   };
 
+  private func pruneFinalizedCallsForUser(
+    state : State,
+    ids : List.List<Common.CallId>,
+  ) {
+    if (ids.size() < MAX_STORED_CALLS_PER_USER) {
+      return;
+    };
+    var remainingToRemove = Nat.sub(
+      ids.size(),
+      Nat.sub(MAX_STORED_CALLS_PER_USER, 1),
+    );
+    ids.retain(func(id) {
+      if (remainingToRemove == 0) {
+        return true;
+      };
+      switch (state.callRecords.get(id)) {
+        case null {
+          remainingToRemove := Nat.sub(remainingToRemove, 1);
+          false;
+        };
+        case (?record) {
+          switch (record.status) {
+            case (#completed) {
+              state.callRecords.remove(id);
+              remainingToRemove := Nat.sub(remainingToRemove, 1);
+              false;
+            };
+            case (#failed) {
+              state.callRecords.remove(id);
+              remainingToRemove := Nat.sub(remainingToRemove, 1);
+              false;
+            };
+            case (#pending) { true };
+            case (#inProgress) { true };
+          };
+        };
+      };
+    });
+  };
+
   public func createCallRecord(
     state : State,
     userId : Principal,
@@ -79,7 +127,10 @@ module {
         userList.add(id);
         state.userCallIndex.add(userId, userList);
       };
-      case (?userList) { userList.add(id) };
+      case (?userList) {
+        pruneFinalizedCallsForUser(state, userList);
+        userList.add(id);
+      };
     };
     record;
   };
@@ -135,12 +186,18 @@ module {
       case null { [] };
       case (?ids) {
         let buf = List.empty<Types.CallRecordPublic>();
-        ids.forEach(func(cid) {
+        let total = ids.size();
+        let start = if (total > MAX_USER_CALL_HISTORY_RESULTS) {
+          Nat.sub(total, MAX_USER_CALL_HISTORY_RESULTS);
+        } else {
+          0;
+        };
+        for (cid in ids.sliceToArray(start, total).values()) {
           switch (state.callRecords.get(cid)) {
             case null {};
             case (?r) { buf.add(toPublic(r)) };
           };
-        });
+        };
         buf.toArray().sort(compareCallsNewestFirst);
       };
     };
@@ -149,7 +206,8 @@ module {
   public func listAllCalls(state : State) : [Types.CallRecordPublic] {
     let buf = List.empty<Types.CallRecordPublic>();
     state.callRecords.forEach(func(_k, r) { buf.add(toPublic(r)) });
-    buf.toArray().sort(compareCallsNewestFirst);
+    let sorted = buf.toArray().sort(compareCallsNewestFirst);
+    sorted.sliceToArray(0, Nat.min(sorted.size(), MAX_ADMIN_CALL_RESULTS));
   };
 
   public func addSystemLog(
@@ -158,18 +216,34 @@ module {
     message : Text,
     callId : ?Nat,
   ) {
+    if (state.systemLogs.size() >= MAX_SYSTEM_LOGS) {
+      let discard = Nat.sub(state.systemLogs.size(), SYSTEM_LOGS_AFTER_PRUNE);
+      var index = 0;
+      state.systemLogs.retain(func(_entry) {
+        let keep = index >= discard;
+        index += 1;
+        keep;
+      });
+    };
+    let chars = message.toArray();
+    let cleanMessage = if (chars.size() > MAX_SYSTEM_LOG_MESSAGE_CHARS) {
+      Text.fromArray(chars.sliceToArray(0, MAX_SYSTEM_LOG_MESSAGE_CHARS));
+    } else {
+      message;
+    };
     let entry : Types.SystemLog = {
       timestamp = Time.now();
       level;
-      message;
+      message = cleanMessage;
       callId;
     };
     state.systemLogs.add(entry);
   };
 
   public func getSystemLogs(state : State, limit : Nat) : [Types.SystemLog] {
+    let safeLimit = Nat.min(limit, MAX_SYSTEM_LOG_RESULTS);
     let total = state.systemLogs.size();
-    let start : Nat = if (total > limit) { total - limit } else { 0 };
+    let start : Nat = if (total > safeLimit) { total - safeLimit } else { 0 };
     state.systemLogs.sliceToArray(start, total).reverse();
   };
 
