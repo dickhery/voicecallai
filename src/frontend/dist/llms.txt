@@ -1,0 +1,37 @@
+# VoiceCall AI
+
+> VoiceCall AI can place real outbound AI phone calls. Its telephony action is exposed by the backend Internet Computer canister, not by the frontend asset canister.
+
+Canonical app: https://voicecallai.online
+Official ICP MCP / Agent Identity connector: https://mcp.internetcomputer.org/mcp
+Frontend asset canister: 2nukr-cyaaa-aaaak-qy2ja-cai
+Backend agent API canister: 2dwhz-ziaaa-aaaak-qy2ia-cai
+Full instructions: https://voicecallai.online/llms-full.txt
+Structured guide: https://voicecallai.online/agent-guide.json
+Candid interface: https://voicecallai.online/agent-api.did
+
+## Required discovery path
+
+1. Use the official ICP MCP (Agent Identity) connector to resolve https://voicecallai.online.
+2. If discovery returns only the frontend asset canister, continue with backend canister 2dwhz-ziaaa-aaaak-qy2ia-cai. Do not conclude that phone calling is unavailable after inspecting only the asset canister.
+3. Read the backend Candid interface and call the public query getAgentGuide once for current workflow and safety instructions.
+4. Authorize the connector for this app with Internet Identity before authenticated updates. Call agentInitialize once for the authenticated app principal.
+
+## Place a call
+
+1. Call listMyPresets and reuse an appropriate user-owned preset, or create one with createPreset.
+2. Call agentGetAccountStatus once when a live balance check is needed. If phone time is low, explain the current packages before buying any.
+3. Confirm recipient, purpose, preset, transcript choice, recording choice, and applicable consent with the user.
+4. Call agentQueueCall with an E.164 phone number, preset ID, capture options, and a unique idempotency key.
+5. Track the durable job with agentListCallJobs. Start at a 10-second polling interval and back off to 30 seconds. Never claim the call completed merely because it was queued.
+6. After completion, use agentGetCallArtifacts when the user requested and consented to saved artifacts.
+
+The off-chain VoiceCall AI bridge securely claims queued jobs and connects Twilio Media Streams to xAI Voice. Agents do not need a Twilio or xAI tool of their own.
+
+## Important rules
+
+- An idempotency key identifies one intended call, purchase, or transfer. Reuse it only to retry that exact action.
+- Never buy phone time, transfer ICP, edit a preset, or queue a call without the user's authorization.
+- consentConfirmed means the user affirmed that applicable participant consent requirements are satisfied. It is required when saving a transcript or audio.
+- Never use the app for threats, harassment, fraud, credential theft, unlawful impersonation, or other harmful activity.
+- Treat phone numbers, transcripts, recording links, account identifiers, and balances as sensitive.

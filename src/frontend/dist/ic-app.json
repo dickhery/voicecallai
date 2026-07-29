@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0",
+  "kind": "internet_computer_application",
+  "name": "VoiceCall AI",
+  "canonical_origin": "https://voicecallai.online",
+  "description": "Certified web app with a backend Candid API for authenticated AI phone-call workflows.",
+  "frontend_canister_id": "2nukr-cyaaa-aaaak-qy2ja-cai",
+  "backend_canister_id": "2dwhz-ziaaa-aaaak-qy2ia-cai",
+  "canister_ids": [
+    "2nukr-cyaaa-aaaak-qy2ja-cai",
+    "2dwhz-ziaaa-aaaak-qy2ia-cai"
+  ],
+  "canisters": {
+    "frontend": {
+      "canister_id": "2nukr-cyaaa-aaaak-qy2ja-cai",
+      "role": "certified_assets"
+    },
+    "backend": {
+      "canister_id": "2dwhz-ziaaa-aaaak-qy2ia-cai",
+      "role": "agent_api",
+      "candid_url": "https://voicecallai.online/agent-api.did",
+      "first_method": "getAgentGuide"
+    }
+  },
+  "agent_api": {
+    "canister_id": "2dwhz-ziaaa-aaaak-qy2ia-cai",
+    "guide_method": "getAgentGuide",
+    "candid_url": "https://voicecallai.online/agent-api.did",
+    "mcp_url": "https://mcp.internetcomputer.org/mcp"
+  },
+  "instructions": {
+    "concise": "https://voicecallai.online/llms.txt",
+    "complete": "https://voicecallai.online/llms-full.txt",
+    "candid": "https://voicecallai.online/agent-api.did"
+  }
+}

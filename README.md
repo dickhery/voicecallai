@@ -140,6 +140,23 @@ ICP MCP connector:
 https://mcp.internetcomputer.org/mcp
 ```
 
+The production frontend also exposes small, cacheable discovery documents so
+an agent can find the backend without mistaking the asset canister for the
+whole application:
+
+```text
+https://voicecallai.online/llms.txt
+https://voicecallai.online/llms-full.txt
+https://voicecallai.online/agent-guide.json
+https://voicecallai.online/.well-known/ic-app.json
+https://voicecallai.online/agent-api.did
+```
+
+The frontend build generates these from the committed mainnet canister mapping
+and the built backend Candid interface. It also assigns explicit text or JSON
+content types and cross-origin read access, avoiding the SPA fallback that
+previously returned `index.html` at discovery paths.
+
 The beta Internet Identity test connector is:
 
 ```text
@@ -177,8 +194,9 @@ can be moved with `agentTransferIcp`. Purchases and transfers require an
 idempotency key so an MCP client can safely retry an uncertain result without
 paying twice.
 
-The voice server polls only a bounded public job list, performs an update call
-only when it claims or finalizes a real job, and reuses the existing paid-call
+The voice server polls only a bounded public job list, exponentially backs off
+from 10 to 30 seconds while that list is empty, performs an update call only
+when it claims or finalizes a real job, and reuses the existing paid-call
 reservation and reconciliation flow. Audio remains on the voice server/Twilio;
 the canister stores only bounded call metadata, transcript text, and signed
 links. This keeps stable storage and cycle usage conservative.
@@ -570,7 +588,7 @@ Select the intended identity and verify both the account and existing canister
 cycle balances:
 
 ```powershell
-icp identity list
+icp identities list
 icp identity default <your-identity-name>
 icp identity principal
 icp token balance -n ic
@@ -620,6 +638,7 @@ Verify the public guide and pricing surface:
 ```powershell
 icp canister call -e ic backend getAgentGuide '()'
 icp canister call -e ic backend getAgentPricing '()'
+pnpm verify:agent-discovery -- https://voicecallai.online
 ```
 
 Then connect an AI client through the official ICP MCP URL, authorize it with

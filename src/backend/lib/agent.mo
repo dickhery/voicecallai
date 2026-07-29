@@ -198,19 +198,21 @@ module {
   public func guide(state : State) : AgentTypes.AgentGuide {
     {
       appName = "VoiceCall AI";
-      apiVersion = "2026-07-agent-v1";
-      summary = "Configure AI phone agents, fund prepaid phone time with ICP, queue outbound calls, manage answering presets, and retrieve call transcripts or recording links through ICP MCP.";
+      apiVersion = "2026-07-agent-v2";
+      summary = "Place real outbound AI phone calls, configure voice presets, fund prepaid phone time with ICP, manage answering presets, and retrieve approved call transcripts or recording links through ICP MCP.";
       productionMcpUrl = "https://mcp.internetcomputer.org/mcp";
       authentication = [
-        "Authorize the official ICP MCP connector with Internet Identity and grant Actions and questions when you want the agent to place calls or move ICP.",
+        "VoiceCall AI's telephony action is on this backend canister. The frontend canister only serves assets; do not conclude phone calling is unavailable after inspecting only that canister.",
+        "Authorize the official ICP MCP / Agent Identity connector with Internet Identity and grant Actions and questions when you want the agent to place calls or move ICP.",
         "Resolve this app, obtain the app-specific principal, then call agentInitialize once. The principal is the account boundary for presets, phone time, call history, and the in-app ICP deposit subaccount.",
         "Internet Identity grants expire. Re-authorize the connector when an authenticated call reports an expired delegation.",
       ];
       firstActions = [
-        "Call getAgentGuide before planning work.",
+        "Read https://voicecallai.online/llms.txt. If app discovery returns only the frontend asset canister, use the declared backend canister and its Candid interface.",
+        "Call getAgentGuide once before planning work, then cache it for the current task.",
         "Call agentInitialize with a short agent or workspace name.",
-        "Call agentGetAccountStatus to check ICP, ledger fee, phone-time balance, and current ICP pricing.",
         "Call listMyPresets and listMyCalls before creating duplicates.",
+        "Call agentGetAccountStatus only when a current ICP, ledger-fee, phone-time, or pricing check is relevant.",
       ];
       requiredCallInformation = [
         "Recipient phone number in E.164 format, such as +15551234567.",
@@ -219,10 +221,10 @@ module {
         "A unique idempotencyKey for every intended purchase, transfer, or call. Reuse the same key only when retrying that same action.",
       ];
       callWorkflow = [
-        "Check agentGetAccountStatus. If available phone time is low, tell the user the exact ICP package prices before purchasing.",
-        "Create or select a call preset, then call agentQueueCall. The off-chain voice bridge securely claims the queued job and places the Twilio call.",
-        "Poll agentListCallJobs or getCallRecord for status. Use agentGetCallArtifacts after completion for the transcript and a signed audio URL when recording was enabled.",
-        "Never claim a call was placed until the job is dispatched or the call record is in progress/completed.",
+        "Check agentGetAccountStatus once when a live balance is needed. If available phone time is low, tell the user the exact ICP package prices before purchasing.",
+        "Create or select a call preset, confirm the recipient, purpose, preset, capture choices, and consent, then call agentQueueCall. Agents do not need separate Twilio or xAI tools: the off-chain voice bridge securely claims the job and places the call.",
+        "Poll agentListCallJobs after about 10 seconds, then back off to 20 and 30 seconds while waiting. Use agentGetCallArtifacts after completion for the transcript and a signed audio URL when capture was enabled.",
+        "Report queued, dispatched, in-progress, or completed according to returned state. Never claim a call was placed or completed without supporting job or call-record state.",
       ];
       paymentWorkflow = [
         "Fund depositAccount from agentGetAccountIdentity using an ICRC-1 ICP transfer. The deposit subaccount is controlled by this canister and isolated by app principal.",

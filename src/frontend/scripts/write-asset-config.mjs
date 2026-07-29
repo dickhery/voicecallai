@@ -34,6 +34,10 @@ const mediaSources = [
   voiceOrigin,
 ];
 const unique = (values) => [...new Set(values)].join(" ");
+const machineReadableHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Cache-Control": "public, max-age=300",
+};
 const csp = [
   "default-src 'self'",
   `connect-src ${unique(connectSources)}`,
@@ -74,6 +78,49 @@ const assetConfig = [
       "Content-Type": "application/json",
     },
     ignore: false,
+  },
+  {
+    match: ".well-known/ic-app.json",
+    headers: {
+      ...machineReadableHeaders,
+      "Content-Type": "application/json; charset=utf-8",
+    },
+    ignore: false,
+  },
+  {
+    match: "ic-app.json",
+    headers: {
+      ...machineReadableHeaders,
+      "Content-Type": "application/json; charset=utf-8",
+    },
+  },
+  {
+    match: "agent-guide.json",
+    headers: {
+      ...machineReadableHeaders,
+      "Content-Type": "application/json; charset=utf-8",
+    },
+  },
+  {
+    match: "llms*.txt",
+    headers: {
+      ...machineReadableHeaders,
+      "Content-Type": "text/plain; charset=utf-8",
+    },
+  },
+  {
+    match: "agent-api.did",
+    headers: {
+      ...machineReadableHeaders,
+      "Content-Type": "text/plain; charset=utf-8",
+    },
+  },
+  {
+    match: "robots.txt",
+    headers: {
+      ...machineReadableHeaders,
+      "Content-Type": "text/plain; charset=utf-8",
+    },
   },
   {
     match: "assets/**/*",

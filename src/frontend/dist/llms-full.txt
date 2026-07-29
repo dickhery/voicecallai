@@ -1,0 +1,55 @@
+# VoiceCall AI — complete agent instructions
+
+VoiceCall AI is an Internet Computer application with a Motoko backend, a certified asset frontend, and an off-chain voice bridge. The backend canister exposes the agent workflow. The frontend canister only serves the human web application and these discovery files.
+
+## Stable production identifiers
+
+- App origin: https://voicecallai.online
+- Official ICP MCP / Agent Identity connector: https://mcp.internetcomputer.org/mcp
+- Frontend canister: 2nukr-cyaaa-aaaak-qy2ja-cai
+- Backend canister: 2dwhz-ziaaa-aaaak-qy2ia-cai
+- Backend Candid: https://voicecallai.online/agent-api.did
+- Structured discovery: https://voicecallai.online/.well-known/ic-app.json
+
+If an app-resolution tool finds only 2nukr-cyaaa-aaaak-qy2ja-cai, target 2dwhz-ziaaa-aaaak-qy2ia-cai explicitly, obtain its Candid metadata, and call getAgentGuide. The absence of a dialing method on the asset canister does not mean that VoiceCall AI lacks telephony.
+
+## Authentication
+
+getAgentGuide and getAgentPricing are public queries. All account-scoped reads and all updates require a non-anonymous Internet Identity principal derived for https://voicecallai.online. In an MCP client, enable Internet Identity AI access, trust https://mcp.internetcomputer.org/mcp, and authorize Actions and questions. Re-authorize when a delegation expires.
+
+Command-line agents may use a fresh linked identity:
+
+icp identity link web <fresh-session-name> --app voicecallai.online
+
+Always specify that linked identity and the mainnet environment on later calls. Never silently switch identities.
+
+## Minimal workflow
+
+1. Call getAgentGuide once and cache it for the task.
+2. Call agentInitialize with a short client or workspace name.
+3. Call listMyPresets and listMyCalls before creating duplicates.
+4. Use agentGetAccountStatus only when a current ICP or phone-time balance is relevant. Do not repeatedly refresh it.
+5. If a preset is needed, call createPreset with user-approved instructions. The voice bridge treats the preset as private source material and asks xAI Voice to speak naturally rather than read it verbatim.
+6. Confirm the exact recipient in E.164 format, call purpose, preset, transcript choice, recording choice, and consent status.
+7. Generate one unique idempotency key for this intended call and call agentQueueCall.
+8. Read agentListCallJobs after about 10 seconds. Back off to 20 and then 30 seconds while waiting. Use listMyCalls or getCallRecord for the resulting call record.
+9. Say "queued", "dispatched", "in progress", or "completed" according to returned state. Do not report a successful live call without supporting state.
+10. Call agentGetCallArtifacts only after completion and only when the user is authorized to see the artifacts.
+
+## Funding phone time with ICP
+
+Use agentGetAccountIdentity to obtain the exact ICRC-1 depositAccount; never guess it. If the cached quote is stale, call agentRefreshIcpPricing once. A real refresh uses the Exchange Rate Canister and is globally rate-limited and cached for six hours. Call agentPurchasePhoneTime only after the user chooses a package and authorizes payment. Use agentTransferIcp to move unspent ICP. Purchases and transfers require their own idempotency keys.
+
+## Capture and consent
+
+The agentQueueCall captureOptions record controls saveTranscript, recordAudio, and consentConfirmed. When either capture option is true, consentConfirmed must be true and must reflect the user's assertion that applicable participant consent requirements are satisfied. Do not infer consent from silence. When both capture options are false, do not request artifacts later.
+
+## Architecture and cost behavior
+
+agentQueueCall reserves prepaid seconds and creates a bounded durable job. The off-chain voice bridge polls for pending jobs, claims a job with its server identity, places the Twilio call, and connects the call to xAI's grok-voice-latest realtime model. xAI, Twilio, Stripe, and recording secrets never reside in the frontend or canister.
+
+Static discovery files and public canister queries are intentionally small. Avoid rapid status polling and avoid calling agentRefreshIcpPricing while the current quote is fresh. This keeps canister cycle use conservative.
+
+## Safety
+
+Obtain user approval before external effects. Do not use VoiceCall AI for threats, harassment, fraud, credential theft, unlawful impersonation, or other harmful activity. Protect phone numbers, transcripts, signed recording links, balances, principals, and deposit accounts.

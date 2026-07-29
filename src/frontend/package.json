@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/validate-env.mjs && vite build && node scripts/write-asset-config.mjs",
+    "build": "node scripts/validate-env.mjs && vite build && node scripts/write-agent-discovery.mjs && node scripts/write-asset-config.mjs",
     "bindgen": "icp-bindgen --did-file ../backend/dist/backend.did --out-dir ./src/bindings --actor-interface-file --force",
     "typecheck": "tsc --noEmit",
     "check": "biome check src",

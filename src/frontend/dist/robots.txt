@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+# AI usage instructions
+# https://voicecallai.online/llms.txt

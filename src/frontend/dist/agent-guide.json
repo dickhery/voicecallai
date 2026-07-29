@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "name": "VoiceCall AI",
+  "canonical_origin": "https://voicecallai.online",
+  "summary": "Place and manage real AI phone calls through the VoiceCall AI backend canister and its off-chain xAI Voice/Twilio bridge.",
+  "discovery_warning": "The frontend canister is an asset canister. If it is the only canister initially discovered, continue with the declared backend canister before deciding telephony is unavailable.",
+  "mcp": {
+    "name": "Official Internet Computer MCP / Agent Identity",
+    "url": "https://mcp.internetcomputer.org/mcp",
+    "authentication": "Internet Identity",
+    "required_permission": "Actions and questions"
+  },
+  "canisters": {
+    "frontend": {
+      "canister_id": "2nukr-cyaaa-aaaak-qy2ja-cai",
+      "role": "certified_assets"
+    },
+    "backend": {
+      "canister_id": "2dwhz-ziaaa-aaaak-qy2ia-cai",
+      "role": "agent_api",
+      "candid_url": "https://voicecallai.online/agent-api.did",
+      "first_method": "getAgentGuide"
+    }
+  },
+  "workflow": [
+    "Call getAgentGuide once.",
+    "Authenticate with Internet Identity and call agentInitialize once.",
+    "List existing presets and calls before creating duplicates.",
+    "Check the live account status only when balances are needed.",
+    "Confirm recipient, purpose, preset, capture choices, and consent.",
+    "Call agentQueueCall with an E.164 number and a unique idempotency key.",
+    "Poll agentListCallJobs with backoff and report only returned state.",
+    "Retrieve artifacts after completion only when capture was approved."
+  ],
+  "primary_methods": [
+    "getAgentGuide",
+    "agentInitialize",
+    "agentGetAccountIdentity",
+    "agentGetAccountStatus",
+    "listMyPresets",
+    "createPreset",
+    "agentQueueCall",
+    "agentListCallJobs",
+    "agentGetCallArtifacts"
+  ],
+  "cycle_guidance": [
+    "Read and cache the guide once per task.",
+    "Do not repeatedly call live balance queries.",
+    "Poll job state at 10 seconds, then back off to 20 and 30 seconds.",
+    "Refresh ICP pricing only when the cached quote is stale."
+  ],
+  "instructions": {
+    "concise": "https://voicecallai.online/llms.txt",
+    "complete": "https://voicecallai.online/llms-full.txt",
+    "candid": "https://voicecallai.online/agent-api.did"
+  }
+}

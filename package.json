@@ -9,6 +9,7 @@
   "scripts": {
     "build": "mops build && pnpm bindgen && pnpm --dir src/frontend build",
     "build:ic": "icp build",
+    "verify:agent-discovery": "node scripts/verify-agent-discovery.mjs",
     "typecheck": "pnpm -r --if-present run typecheck",
     "check": "pnpm -r --if-present run check",
     "fix": "pnpm -r --if-present run fix",

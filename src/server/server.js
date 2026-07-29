@@ -73,6 +73,10 @@ const AGENT_CALL_POLL_INTERVAL_MS = Math.max(
   2_000,
   Number(process.env.AGENT_CALL_POLL_INTERVAL_MS || 10_000),
 );
+const AGENT_CALL_IDLE_POLL_INTERVAL_MS = Math.max(
+  AGENT_CALL_POLL_INTERVAL_MS,
+  Number(process.env.AGENT_CALL_IDLE_POLL_INTERVAL_MS || 30_000),
+);
 const AGENT_CALL_POLL_LIMIT = Math.max(
   1,
   Math.min(20, Number(process.env.AGENT_CALL_POLL_LIMIT || 10)),
@@ -4749,15 +4753,15 @@ async function reconcileOpenBackendCallReservations() {
 }
 
 async function dispatchPendingAgentCallJobs() {
-  if (agentCallPollProcessing) return;
-  if (!process.env.BACKEND_CANISTER_ID) return;
+  if (agentCallPollProcessing) return 0;
+  if (!process.env.BACKEND_CANISTER_ID) return 0;
   agentCallPollProcessing = true;
   try {
     const actor = await getBackendActor();
     const jobs = await actor.listPendingAgentCallsForServer(
       BigInt(AGENT_CALL_POLL_LIMIT),
     );
-    if (jobs.length === 0) return;
+    if (jobs.length === 0) return 0;
     const openReservations = (
       await actor.listOpenCallReservationsForServer(200n)
     ).map(normalizeReservation);
@@ -4891,13 +4895,36 @@ async function dispatchPendingAgentCallJobs() {
         });
       }
     }
+    return jobs.length;
   } catch (error) {
     log("warn", "Unable to poll ICP MCP agent call jobs", {
       error: error.message,
     });
+    return 0;
   } finally {
     agentCallPollProcessing = false;
   }
+}
+
+function scheduleAgentCallPoll(delayMs = AGENT_CALL_POLL_INTERVAL_MS) {
+  setTimeout(async () => {
+    let nextDelay = AGENT_CALL_POLL_INTERVAL_MS;
+    try {
+      const pendingJobCount = await dispatchPendingAgentCallJobs();
+      if (pendingJobCount === 0) {
+        nextDelay = Math.min(
+          AGENT_CALL_IDLE_POLL_INTERVAL_MS,
+          Math.max(AGENT_CALL_POLL_INTERVAL_MS, delayMs * 2),
+        );
+      }
+    } catch (error) {
+      log("error", "ICP MCP agent call poll failed", {
+        error: error.message,
+      });
+      nextDelay = AGENT_CALL_IDLE_POLL_INTERVAL_MS;
+    }
+    scheduleAgentCallPoll(nextDelay);
+  }, delayMs).unref();
 }
 
 async function runSessionCleanup() {
@@ -4953,12 +4980,6 @@ setInterval(() => {
   });
 }, SESSION_CLEANUP_INTERVAL_MS).unref();
 
-setInterval(() => {
-  dispatchPendingAgentCallJobs().catch((error) => {
-    log("error", "ICP MCP agent call poll failed", { error: error.message });
-  });
-}, AGENT_CALL_POLL_INTERVAL_MS).unref();
-
 server.listen(PORT, () => {
   const missing = requiredEnv.filter((key) => !process.env[key]);
   if (!process.env.BACKEND_CANISTER_ID) missing.push("BACKEND_CANISTER_ID");
@@ -4972,11 +4993,5 @@ server.listen(PORT, () => {
     health: `http://localhost:${PORT}/health`,
     missingEnv: missing,
   });
-  setTimeout(() => {
-    dispatchPendingAgentCallJobs().catch((error) => {
-      log("warn", "Initial ICP MCP agent call poll failed", {
-        error: error.message,
-      });
-    });
-  }, 1_000).unref();
+  scheduleAgentCallPoll(1_000);
 });

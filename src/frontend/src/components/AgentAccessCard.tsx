@@ -14,6 +14,7 @@ import {
 } from "@/hooks/use-backend";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import {
+  BookOpen,
   Bot,
   CheckCircle2,
   Copy,
@@ -25,6 +26,8 @@ import { toast } from "sonner";
 
 const ICP_MCP_URL = "https://mcp.internetcomputer.org/mcp";
 const II_SETTINGS_URL = "https://id.ai/manage/settings";
+const AGENT_GUIDE_URL = "https://voicecallai.online/llms.txt";
+const AGENT_READY_PROMPT = `Open ${AGENT_GUIDE_URL} first. Use the official Internet Computer MCP (Agent Identity) connector to resolve VoiceCall AI and follow the backend agent API instructions. If you initially find only the frontend asset canister, continue with the backend canister declared in the guide; do not conclude phone calling is unavailable. Call getAgentGuide, authenticate with Internet Identity for voicecallai.online, and confirm the recipient, purpose, preset, recording/transcript choices, and consent with me before calling agentQueueCall.`;
 const E8S_PER_ICP = 100_000_000n;
 
 function formatIcp(e8s: bigint): string {
@@ -183,6 +186,46 @@ export function AgentAccessCard() {
           >
             <Copy className="w-3.5 h-3.5" />
             Copy MCP URL
+          </Button>
+          <Button
+            asChild
+            size="sm"
+            variant="outline"
+            className="gap-2"
+            data-ocid="settings.agent_access.guide_link"
+          >
+            <a href={AGENT_GUIDE_URL} target="_blank" rel="noreferrer">
+              Agent guide
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          </Button>
+        </div>
+
+        <div className="rounded-lg border border-primary/20 bg-primary/[0.035] p-4 space-y-3">
+          <div className="flex items-start gap-2">
+            <BookOpen className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+            <div>
+              <p className="text-xs font-semibold">Agent-ready request</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Start a new AI chat with this prompt so it discovers the backend
+                calling tools instead of stopping at the web frontend.
+              </p>
+            </div>
+          </div>
+          <div className="rounded-md bg-background/70 border border-border px-3 py-2.5">
+            <p className="text-[11px] leading-relaxed text-foreground">
+              {AGENT_READY_PROMPT}
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="h-8 gap-2"
+            onClick={() => copyValue(AGENT_READY_PROMPT, "Agent-ready request")}
+            data-ocid="settings.agent_access.copy_prompt_button"
+          >
+            <Copy className="w-3.5 h-3.5" />
+            Copy request
           </Button>
         </div>
 
