@@ -22,7 +22,8 @@ import {
 } from "./ic-backend.js";
 
 const PORT = Number(process.env.PORT || 3000);
-const XAI_MODEL = process.env.XAI_MODEL || "grok-voice-latest";
+const XAI_MODEL =
+  process.env.XAI_MODEL || "grok-voice-think-fast-2.0";
 const XAI_TTS_URL = "https://api.x.ai/v1/tts";
 const XAI_TTS_VOICES_URL = "https://api.x.ai/v1/tts/voices";
 const XAI_VOICE_LIBRARY_CACHE_MS = Number(
@@ -103,7 +104,7 @@ const VOICE_PREVIEW_RATE_LIMIT_WINDOW_MS = Number(
 const VOICE_PREVIEW_RATE_LIMIT_MAX = Number(
   process.env.VOICE_PREVIEW_RATE_LIMIT_MAX || 12,
 );
-const SERVER_VERSION = "2026-07-28-icp-mcp-agent";
+const SERVER_VERSION = "2026-07-29-think-fast-2-live-listener";
 const VOICE_SESSION_START = "[[vc:session]]";
 const VOICE_SESSION_END = "[[/vc:session]]";
 const SERVER_STARTED_AT = new Date().toISOString();
@@ -268,6 +269,8 @@ function buildAllowedOrigins() {
     process.env.FRONTEND_ORIGIN,
     process.env.FRONTEND_URL,
     process.env.CORS_ALLOWED_ORIGINS,
+    process.env.HOSTNAME,
+    process.env.PUBLIC_URL,
     process.env.PUBLIC_FRONTEND_URL,
     process.env.PUBLIC_APP_URL,
     process.env.APP_URL,
@@ -702,6 +705,185 @@ function getPublicBaseUrl() {
 function getPublicWsUrl() {
   const host = getPublicHost();
   return host ? `wss://${host}/media` : "";
+}
+
+function getPublicLiveAudioUrl(sessionId, listenToken) {
+  const publicBaseUrl = getPublicBaseUrl();
+  if (!publicBaseUrl || !sessionId || !listenToken) return "";
+  const url = new URL(`/live/${encodeURIComponent(sessionId)}`, publicBaseUrl);
+  // Keep the bearer token in the fragment so it is not sent in the HTTP
+  // request, Referer header, reverse-proxy logs, or server access logs.
+  url.hash = listenToken;
+  return url.toString();
+}
+
+function renderLiveAudioPage(sessionId) {
+  const serializedSessionId = JSON.stringify(String(sessionId)).replace(
+    /</g,
+    "\\u003c",
+  );
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>VoiceCall AI — Live Call Audio</title>
+  <style>
+    :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #070b14; color: #f7f8fb; }
+    main { width: min(92vw, 34rem); padding: 2rem; border: 1px solid #25304a; border-radius: 1rem; background: #101726; box-shadow: 0 1.5rem 5rem #0008; }
+    h1 { margin: 0 0 .7rem; font-size: 1.55rem; }
+    p { color: #b8c2d9; line-height: 1.55; }
+    button { width: 100%; margin-top: 1rem; padding: .85rem 1rem; border: 0; border-radius: .7rem; background: #6d5dfc; color: white; font: inherit; font-weight: 700; cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .6; }
+    #status { min-height: 1.5rem; margin-top: 1rem; color: #9de6bf; }
+    .note { font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Live call audio</h1>
+    <p>This is a listen-only stream of the active VoiceCall AI phone call. It cannot steer or end the call.</p>
+    <button id="listen" type="button">Listen live</button>
+    <div id="status" role="status" aria-live="polite">Ready to connect.</div>
+    <p class="note">Audio starts only after you press the button. This page does not save the call.</p>
+  </main>
+  <script>
+    (() => {
+      const sessionId = ${serializedSessionId};
+      const button = document.getElementById("listen");
+      const status = document.getElementById("status");
+      let socket = null;
+      let audioContext = null;
+      let inputNode = null;
+      const nextPlaybackTime = { caller: 0, assistant: 0 };
+      const jitterSeconds = 0.12;
+
+      function setStatus(message, isError = false) {
+        status.textContent = message;
+        status.style.color = isError ? "#ff9d9d" : "#9de6bf";
+      }
+
+      function decodeMuLawSample(value) {
+        const sample = (~value) & 255;
+        const sign = sample & 128;
+        const exponent = (sample >> 4) & 7;
+        const mantissa = sample & 15;
+        let magnitude = ((mantissa << 3) + 132) << exponent;
+        magnitude -= 132;
+        return Math.max(-1, Math.min(1, (sign ? -magnitude : magnitude) / 32768));
+      }
+
+      function play(payload, channel = "assistant") {
+        if (!audioContext || !inputNode || !payload) return;
+        const binary = window.atob(payload);
+        if (!binary.length) return;
+        const buffer = audioContext.createBuffer(1, binary.length, 8000);
+        const samples = buffer.getChannelData(0);
+        for (let index = 0; index < binary.length; index += 1) {
+          const fadeIn = Math.min(1, index / 8);
+          const fadeOut = Math.min(1, (binary.length - index - 1) / 8);
+          samples[index] =
+            decodeMuLawSample(binary.charCodeAt(index)) *
+            Math.min(fadeIn, fadeOut);
+        }
+        const source = audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.connect(inputNode);
+        const queuedAt = nextPlaybackTime[channel] || 0;
+        const startAt = Math.max(
+          audioContext.currentTime + jitterSeconds,
+          queuedAt,
+        );
+        source.start(startAt);
+        nextPlaybackTime[channel] = startAt + buffer.duration;
+      }
+
+      async function listen() {
+        const token = decodeURIComponent(window.location.hash.slice(1));
+        if (!token) {
+          setStatus("This listening link is incomplete.", true);
+          return;
+        }
+        button.disabled = true;
+        button.textContent = "Connecting…";
+        try {
+          const AudioContextClass =
+            window.AudioContext || window.webkitAudioContext;
+          if (!AudioContextClass) throw new Error("Live audio is not supported in this browser.");
+          audioContext = new AudioContextClass();
+          const highpass = audioContext.createBiquadFilter();
+          highpass.type = "highpass";
+          highpass.frequency.value = 80;
+          const lowpass = audioContext.createBiquadFilter();
+          lowpass.type = "lowpass";
+          lowpass.frequency.value = 3600;
+          const compressor = audioContext.createDynamicsCompressor();
+          const gain = audioContext.createGain();
+          gain.gain.value = 0.95;
+          highpass.connect(lowpass);
+          lowpass.connect(compressor);
+          compressor.connect(gain);
+          gain.connect(audioContext.destination);
+          inputNode = highpass;
+          await audioContext.resume();
+
+          const url = new URL(window.location.href);
+          url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+          url.pathname = "/monitor";
+          url.search = "";
+          url.hash = "";
+          url.searchParams.set("sessionId", sessionId);
+          url.searchParams.set("token", token);
+          socket = new WebSocket(url.toString());
+          socket.addEventListener("open", () => {
+            button.textContent = "Listening live";
+            setStatus("Connected. Waiting for call audio…");
+          });
+          socket.addEventListener("message", (event) => {
+            let message;
+            try {
+              message = JSON.parse(String(event.data));
+            } catch {
+              setStatus("Received an invalid live-audio message.", true);
+              socket.close();
+              return;
+            }
+            if (message.type === "audio") {
+              play(message.payload, message.channel || "assistant");
+              setStatus("Listening live.");
+            } else if (message.type === "ended") {
+              setStatus("The call has ended.");
+              button.textContent = "Call ended";
+              socket.close();
+            } else if (message.type === "error") {
+              setStatus(message.error || "Live audio is unavailable.", true);
+              socket.close();
+            }
+          });
+          socket.addEventListener("error", () => {
+            setStatus("Unable to connect to live audio.", true);
+          });
+          socket.addEventListener("close", () => {
+            if (button.textContent !== "Call ended") {
+              setStatus("Live audio is no longer available.", true);
+              button.textContent = "Unavailable";
+            }
+          });
+        } catch (error) {
+          setStatus(error && error.message ? error.message : "Unable to start live audio.", true);
+          button.disabled = false;
+          button.textContent = "Try again";
+        }
+      }
+
+      button.addEventListener("click", () => void listen());
+    })();
+  </script>
+</body>
+</html>`;
 }
 
 function getPublicRecordingStatusUrl(sessionId) {
@@ -1215,7 +1397,11 @@ function normalizeKeyterms(value) {
 
 function buildXaiSessionUpdate(
   preset,
-  { direction = CALL_DIRECTIONS.OUTBOUND, openingOnly = false } = {},
+  {
+    direction = CALL_DIRECTIONS.OUTBOUND,
+    openingOnly = false,
+    enableInputTranscription = false,
+  } = {},
 ) {
   const { cleanPrompt, options: voiceSession } = extractVoiceSessionOptions(
     preset?.systemPrompt,
@@ -1276,6 +1462,7 @@ function buildXaiSessionUpdate(
     format: { type: "audio/pcmu" },
   };
   const transcription = {};
+  if (enableInputTranscription) transcription.model = "grok-transcribe";
   if (languageHint) transcription.language_hint = languageHint;
   if (keyterms.length > 0) transcription.keyterms = keyterms;
   if (Object.keys(transcription).length > 0) {
@@ -1952,6 +2139,14 @@ function getRequestControlToken(req) {
 
 function isSessionControlTokenValid(session, token) {
   return Boolean(session && safeTokenEqual(session.monitorToken, token));
+}
+
+function isSessionListenTokenValid(session, token) {
+  return Boolean(
+    session &&
+      (safeTokenEqual(session.listenToken, token) ||
+        isSessionControlTokenValid(session, token)),
+  );
 }
 
 async function getPurchaseIntentOrThrow(purchaseIntentId) {
@@ -2764,6 +2959,7 @@ function buildCallSessionPayload(session, { includeMonitorToken = false } = {}) 
     callId: session.callId || "",
     direction: session.direction || "",
     transcript: buildLiveTranscriptPayload(session),
+    liveAudioUrl: getPublicLiveAudioUrl(session.id, session.listenToken),
     liveAudio: session.callSid
       ? {
           codec: "audio/pcmu",
@@ -3041,6 +3237,23 @@ app.get("/health", async (req, res) => {
   });
 });
 
+app.get("/live/:sessionId", (req, res) => {
+  const sessionId = String(req.params.sessionId || "");
+  const session = callSessions.get(sessionId);
+  res.set({
+    "Cache-Control": "no-store, max-age=0",
+    "Content-Security-Policy":
+      "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' ws: wss:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+  });
+  if (!session || session.finished) {
+    res.status(404).type("text/plain").send("Live call audio is no longer available.");
+    return;
+  }
+  res.status(200).type("html").send(renderLiveAudioPage(sessionId));
+});
+
 app.get("/xai/voices", async (_req, res) => {
   try {
     const library = await fetchXaiVoiceLibrary();
@@ -3305,6 +3518,7 @@ app.post("/initiate-call", async (req, res) => {
     }
     const sessionId = crypto.randomUUID();
     const monitorToken = crypto.randomBytes(24).toString("base64url");
+    const listenToken = crypto.randomBytes(24).toString("base64url");
     const mediaToken = crypto.randomBytes(32).toString("base64url");
     const publicBaseUrl = getPublicBaseUrl();
     const twimlUrl = new URL("/twiml", publicBaseUrl);
@@ -3317,6 +3531,7 @@ app.post("/initiate-call", async (req, res) => {
     session = {
       id: sessionId,
       monitorToken,
+      listenToken,
       mediaToken,
       callId,
       reservationId,
@@ -3404,6 +3619,7 @@ app.post("/initiate-call", async (req, res) => {
       callSid: call.sid,
       sessionId,
       monitorToken,
+      liveAudioUrl: getPublicLiveAudioUrl(sessionId, listenToken),
       status: call.status,
       allowedSeconds: reservation.allowedSeconds,
       liveAudio: {
@@ -3502,6 +3718,7 @@ app.post("/answering/incoming/:webhookSecret", async (req, res) => {
 
     const sessionId = crypto.randomUUID();
     const monitorToken = crypto.randomBytes(24).toString("base64url");
+    const listenToken = crypto.randomBytes(24).toString("base64url");
     const mediaToken = crypto.randomBytes(32).toString("base64url");
     const publicWsUrl = getPublicWsUrl();
     if (!publicWsUrl) {
@@ -3514,6 +3731,7 @@ app.post("/answering/incoming/:webhookSecret", async (req, res) => {
     session = {
       id: sessionId,
       monitorToken,
+      listenToken,
       mediaToken,
       callId: reservation.callId,
       reservationId: reservation.id,
@@ -4013,7 +4231,7 @@ monitorWss.on("connection", (ws, request) => {
   const sessionId = url.searchParams.get("sessionId") || "";
   const token = url.searchParams.get("token") || "";
   const session = callSessions.get(sessionId);
-  if (!session || session.finished || !isSessionControlTokenValid(session, token)) {
+  if (!session || session.finished || !isSessionListenTokenValid(session, token)) {
     ws.send(JSON.stringify({ type: "error", error: "Live audio is not available." }));
     ws.close(1008, "Invalid live audio session");
     return;
@@ -4033,12 +4251,6 @@ monitorWss.on("connection", (ws, request) => {
 
 mediaWss.on("connection", (twilioWs, request) => {
   let xaiWs = null;
-  let sttWs = null;
-  let sttReady = false;
-  let sttDoneRequested = false;
-  let sttDoneSent = false;
-  const pendingSttAudio = [];
-  const callerTranscriptSegments = [];
   let session = null;
   let streamSid = null;
   let markCounter = 0;
@@ -4049,7 +4261,6 @@ mediaWss.on("connection", (twilioWs, request) => {
     closed = true;
     if (xaiWs && xaiWs.readyState === WebSocket.OPEN) xaiWs.close();
     if (twilioWs.readyState === WebSocket.OPEN) twilioWs.close();
-    finishCallerTranscription();
   }
 
   function sendToTwilio(payload) {
@@ -4095,6 +4306,8 @@ mediaWss.on("connection", (twilioWs, request) => {
         buildXaiSessionUpdate(session.preset, {
           direction: session.direction,
           openingOnly: false,
+          enableInputTranscription:
+            session.saveTranscript && session.permissionConfirmed,
         }),
       ),
     );
@@ -4193,121 +4406,6 @@ mediaWss.on("connection", (twilioWs, request) => {
     }
   }
 
-  function appendCallerTranscript(text) {
-    const cleanText = String(text || "").trim();
-    if (!cleanText) return;
-    if (callerTranscriptSegments[callerTranscriptSegments.length - 1] === cleanText) {
-      return;
-    }
-    callerTranscriptSegments.push(cleanText);
-    appendTranscript(session, "caller", `${cleanText}\n`);
-    if (session?.metrics) {
-      session.metrics.callerTranscriptChars += cleanText.length;
-    }
-  }
-
-  function flushPendingSttAudio() {
-    if (!sttWs || sttWs.readyState !== WebSocket.OPEN || !sttReady) return;
-    while (pendingSttAudio.length > 0) {
-      sttWs.send(pendingSttAudio.shift());
-    }
-  }
-
-  function connectToStt() {
-    if (!session?.saveTranscript || !session.permissionConfirmed) return;
-    session.awaitingCallerTranscript = true;
-    sttWs = new WebSocket(
-      "wss://api.x.ai/v1/stt?sample_rate=8000&encoding=mulaw&language=en&endpointing=500",
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.XAI_API_KEY}`,
-        },
-      },
-    );
-
-    sttWs.on("message", (raw) => {
-      let event;
-      try {
-        event = JSON.parse(raw.toString());
-      } catch {
-        return;
-      }
-
-      if (event.type === "transcript.created") {
-        sttReady = true;
-        flushPendingSttAudio();
-        if (sttDoneRequested) finishCallerTranscription();
-        return;
-      }
-
-      if (event.type === "transcript.partial" && event.text && event.is_final) {
-        appendCallerTranscript(event.text);
-        return;
-      }
-
-      if (event.type === "transcript.done") {
-        if (callerTranscriptSegments.length === 0 && event.text) {
-          appendCallerTranscript(event.text);
-        }
-        session.awaitingCallerTranscript = false;
-        if (sttWs?.readyState === WebSocket.OPEN) sttWs.close();
-        const pendingArtifacts = getPendingCallArtifacts(session);
-        if (session.finishTimer && !pendingArtifacts.recording) {
-          finishPaidSession(session, "xai_stt_completed");
-        }
-        return;
-      }
-
-      if (event.type === "error") {
-        log("error", "xAI STT error", {
-          sessionId: session?.id,
-          error: event.message || event.error?.message || JSON.stringify(event),
-        });
-        session.awaitingCallerTranscript = false;
-      }
-    });
-
-    sttWs.on("error", (error) => {
-      log("error", "xAI STT WebSocket error", {
-        sessionId: session?.id,
-        error: error.message,
-      });
-      if (session) session.awaitingCallerTranscript = false;
-    });
-
-    sttWs.on("close", () => {
-      sttReady = false;
-      if (session?.awaitingCallerTranscript && sttDoneSent) {
-        session.awaitingCallerTranscript = false;
-      }
-    });
-  }
-
-  function sendCallerAudioToStt(payload) {
-    if (!sttWs || sttDoneRequested || sttDoneSent || !payload) return;
-    const frame = Buffer.from(payload, "base64");
-    if (sttWs.readyState === WebSocket.OPEN && sttReady) {
-      sttWs.send(frame);
-      return;
-    }
-    if (pendingSttAudio.length < 250) {
-      pendingSttAudio.push(frame);
-    }
-  }
-
-  function finishCallerTranscription() {
-    if (!sttWs || sttDoneSent) return;
-    sttDoneRequested = true;
-    if (sttWs.readyState === WebSocket.OPEN && sttReady) {
-      sttWs.send(JSON.stringify({ type: "audio.done" }));
-      sttDoneSent = true;
-    } else if (sttWs.readyState === WebSocket.OPEN) {
-      return;
-    } else if (session) {
-      session.awaitingCallerTranscript = false;
-    }
-  }
-
   function connectToXai() {
     if (!session) return;
     xaiWs = new WebSocket(
@@ -4327,6 +4425,8 @@ mediaWss.on("connection", (twilioWs, request) => {
           buildXaiSessionUpdate(session.preset, {
             direction: session.direction,
             openingOnly: true,
+            enableInputTranscription:
+              session.saveTranscript && session.permissionConfirmed,
           }),
         ),
       );
@@ -4446,6 +4546,9 @@ mediaWss.on("connection", (twilioWs, request) => {
       }
 
       if (event.type === "input_audio_buffer.speech_started" && streamSid) {
+        if (session.saveTranscript && session.permissionConfirmed) {
+          session.awaitingCallerTranscript = true;
+        }
         const openingWasPending =
           session.openingTurnSent && !session.fullInstructionsApplied;
         const openingResponseAlreadyStarted =
@@ -4476,11 +4579,16 @@ mediaWss.on("connection", (twilioWs, request) => {
         event.type === "conversation.item.input_audio_transcription.completed" &&
         (event.transcript || event.text)
       ) {
-        const text = event.transcript || event.text;
+        const text = String(event.transcript || event.text).trim();
+        session.awaitingCallerTranscript = false;
         if (session.metrics) {
-          session.metrics.callerTranscriptChars += String(text).length;
+          session.metrics.callerTranscriptChars += text.length;
         }
-        appendTranscript(session, "caller", text);
+        if (text) appendTranscript(session, "caller", `${text}\n`);
+        const pendingArtifacts = getPendingCallArtifacts(session);
+        if (session.finishTimer && !pendingArtifacts.recording) {
+          finishPaidSession(session, "xai_realtime_transcription_completed");
+        }
         return;
       }
 
@@ -4500,6 +4608,7 @@ mediaWss.on("connection", (twilioWs, request) => {
       if (session?.xaiWs === xaiWs) {
         session.xaiWs = null;
         session.xaiResponseInProgress = false;
+        session.awaitingCallerTranscript = false;
       }
     });
 
@@ -4550,7 +4659,6 @@ mediaWss.on("connection", (twilioWs, request) => {
       if (session.metrics) session.metrics.streamStartedAt ||= Date.now();
       startBridgeRecording(session);
       startBillingTimer(session, closeBoth);
-      connectToStt();
       connectToXai();
       return;
     }
@@ -4565,7 +4673,6 @@ mediaWss.on("connection", (twilioWs, request) => {
           "caller",
           parseTwilioMediaTimestamp(data.media.timestamp),
         );
-        sendCallerAudioToStt(data.media.payload);
       }
       if (xaiWs && xaiWs.readyState === WebSocket.OPEN && data.media?.payload) {
         xaiWs.send(
@@ -4599,7 +4706,6 @@ mediaWss.on("connection", (twilioWs, request) => {
           });
         });
       }
-      finishCallerTranscription();
       closeBoth();
       scheduleFinishPaidSession(session, "twilio_media_stop");
     }
@@ -4612,7 +4718,6 @@ mediaWss.on("connection", (twilioWs, request) => {
       const stoppedAt = markBillingActivity(session, "lastStreamEventAt");
       session.billingStoppedAt ||= stoppedAt;
     }
-    finishCallerTranscription();
     scheduleFinishPaidSession(session, "twilio_ws_close");
   });
 
@@ -4783,6 +4888,7 @@ async function dispatchPendingAgentCallJobs() {
           job.id,
           [recoveredCallSid],
           [],
+          [],
         );
         log("info", "Recovered an already-dispatched ICP MCP agent call", {
           jobId: job.id,
@@ -4799,6 +4905,7 @@ async function dispatchPendingAgentCallJobs() {
             job.id,
             cachedDispatch.callSid ? [cachedDispatch.callSid] : [],
             cachedDispatch.sessionId ? [cachedDispatch.sessionId] : [],
+            cachedDispatch.liveAudioUrl ? [cachedDispatch.liveAudioUrl] : [],
           );
           if (acknowledged) {
             agentCallDispatchCache.delete(job.id);
@@ -4845,6 +4952,9 @@ async function dispatchPendingAgentCallJobs() {
         const dispatchSnapshot = {
           callSid: payload.callSid ? String(payload.callSid) : "",
           sessionId: payload.sessionId ? String(payload.sessionId) : "",
+          liveAudioUrl: payload.liveAudioUrl
+            ? String(payload.liveAudioUrl)
+            : "",
         };
         agentCallDispatchCache.set(job.id, dispatchSnapshot);
         try {
@@ -4852,6 +4962,9 @@ async function dispatchPendingAgentCallJobs() {
             job.id,
             dispatchSnapshot.callSid ? [dispatchSnapshot.callSid] : [],
             dispatchSnapshot.sessionId ? [dispatchSnapshot.sessionId] : [],
+            dispatchSnapshot.liveAudioUrl
+              ? [dispatchSnapshot.liveAudioUrl]
+              : [],
           );
           if (completed) {
             agentCallDispatchCache.delete(job.id);

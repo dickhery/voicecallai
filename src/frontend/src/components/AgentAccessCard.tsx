@@ -27,7 +27,7 @@ import { toast } from "sonner";
 const ICP_MCP_URL = "https://mcp.internetcomputer.org/mcp";
 const II_SETTINGS_URL = "https://id.ai/manage/settings";
 const AGENT_GUIDE_URL = "https://voicecallai.online/llms.txt";
-const AGENT_READY_PROMPT = `Open ${AGENT_GUIDE_URL} first. Use the official Internet Computer MCP (Agent Identity) connector to resolve VoiceCall AI and follow the backend agent API instructions. If you initially find only the frontend asset canister, continue with the backend canister declared in the guide; do not conclude phone calling is unavailable. Call getAgentGuide, authenticate with Internet Identity for voicecallai.online, and confirm the recipient, purpose, preset, recording/transcript choices, and consent with me before calling agentQueueCall.`;
+const AGENT_READY_PROMPT = `Open ${AGENT_GUIDE_URL} first. Use the official Internet Computer MCP (Agent Identity) connector to resolve VoiceCall AI and follow the backend agent API instructions. If you initially find only the frontend asset canister, continue with the backend canister declared in the guide; do not conclude phone calling is unavailable. Call getAgentGuide, authenticate with Internet Identity for voicecallai.online, and confirm the recipient, purpose, preset, recording/transcript choices, and consent with me before calling agentQueueCall. If I ask to hear a dispatched call, call agentGetLiveCallLink once and give me its listen-only HTTPS URL.`;
 const E8S_PER_ICP = 100_000_000n;
 
 function formatIcp(e8s: bigint): string {

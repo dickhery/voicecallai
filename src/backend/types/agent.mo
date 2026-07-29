@@ -243,4 +243,12 @@ module {
     audioMimeType : ?Text;
     note : Text;
   };
+
+  public type AgentLiveCallLink = {
+    jobId : Text;
+    callId : Nat;
+    url : Text;
+    expiresAt : Int;
+    note : Text;
+  };
 };

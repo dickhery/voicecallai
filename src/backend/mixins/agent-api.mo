@@ -2,6 +2,7 @@ import Blob "mo:core/Blob";
 import Cycles "mo:core/Cycles";
 import Error "mo:core/Error";
 import Int "mo:core/Int";
+import List "mo:core/List";
 import Map "mo:core/Map";
 import Nat "mo:core/Nat";
 import Nat8 "mo:core/Nat8";
@@ -108,6 +109,7 @@ mixin (
 
   transient let ledgerLocks = Map.empty<Principal, Bool>();
   transient let callLocks = Map.empty<Principal, Bool>();
+  transient let liveCallLinks = Map.empty<Text, AgentTypes.AgentLiveCallLink>();
   transient let pricingRefreshLock = { var active = false };
 
   private let MAX_DISPLAY_NAME_CHARS : Nat = 80;
@@ -115,6 +117,11 @@ mixin (
   private let MAX_TRANSFER_E8S : Nat = 100_000_000_000_000;
   private let PRICING_RETRY_COOLDOWN_NS : Int = 1_800_000_000_000;
   private let MAX_CALL_CAPTURE_ERROR_CHARS : Nat = 500;
+  private transient let MAX_LIVE_AUDIO_URL_CHARS : Nat = 1_000;
+  private transient let MAX_LIVE_CALL_LINKS : Nat = 256;
+  // Covers the four-hour maximum reservation plus dispatch/startup headroom.
+  // The voice server still invalidates the URL immediately when the call ends.
+  private transient let LIVE_AUDIO_LINK_TTL_NS : Int = 15_300_000_000_000;
 
   /// First call for an ICP MCP client. Registers the authenticated app
   /// principal and creates its deterministic in-app ICP deposit account.
@@ -603,6 +610,29 @@ mixin (
     AgentLib.listCallJobsForUser(agentState, caller);
   };
 
+  /// Returns a listen-only HTTPS page for an active MCP-created call. The
+  /// bearer URL is kept only in transient memory, expires quickly, and stops
+  /// working as soon as the off-chain voice session ends.
+  public query ({ caller }) func agentGetLiveCallLink(
+    jobId : Text,
+  ) : async ?AgentTypes.AgentLiveCallLink {
+    requireAgent(caller);
+    switch (AgentLib.getCallJob(agentState, jobId)) {
+      case null { null };
+      case (?job) {
+        if (job.user != caller and not AccessControl.isAdmin(accessControlState, caller)) {
+          return null;
+        };
+        switch (liveCallLinks.get(jobId)) {
+          case (?link) {
+            if (link.expiresAt > Time.now()) { ?link } else { null };
+          };
+          case null { null };
+        };
+      };
+    };
+  };
+
   /// Cancels a queued/claimed MCP call before dispatch and releases reserved
   /// phone time. Dispatched calls must be ended through the voice bridge.
   public shared ({ caller }) func agentCancelQueuedCall(
@@ -612,6 +642,7 @@ mixin (
     switch (AgentLib.cancelCallJob(agentState, jobId, caller)) {
       case null { false };
       case (?reservationId) {
+        liveCallLinks.remove(jobId);
         ignore BillingLib.cancelReservation(
           billingState,
           reservationId,
@@ -674,9 +705,67 @@ mixin (
     jobId : Text,
     callSid : ?Text,
     serverSessionId : ?Text,
+    liveAudioUrl : ?Text,
   ) : async Bool {
     requireServer(caller);
-    AgentLib.completeCallDispatch(agentState, jobId, callSid, serverSessionId);
+    if (not AgentLib.completeCallDispatch(agentState, jobId, callSid, serverSessionId)) {
+      return false;
+    };
+    pruneLiveCallLinks(Time.now());
+    liveCallLinks.remove(jobId);
+    switch (liveAudioUrl) {
+      case (?rawUrl) {
+        let url = rawUrl.trim(#char(' '));
+        if (
+          url != "" and
+          url.toArray().size() <= MAX_LIVE_AUDIO_URL_CHARS and
+          url.startsWith(#text("https://"))
+        ) {
+          switch (AgentLib.getCallJob(agentState, jobId)) {
+            case (?job) {
+              liveCallLinks.add(jobId, {
+                jobId;
+                callId = job.callId;
+                url;
+                expiresAt = Time.now() + LIVE_AUDIO_LINK_TTL_NS;
+                note = "Listen-only live audio. The link stops working when the call ends and may be invalidated by a backend or voice-server upgrade.";
+              });
+            };
+            case null {};
+          };
+        };
+      };
+      case null {};
+    };
+    true;
+  };
+
+  private func pruneLiveCallLinks(now : Int) {
+    let expiredIds = List.empty<Text>();
+    var oldest : ?AgentTypes.AgentLiveCallLink = null;
+    for ((storedJobId, link) in liveCallLinks.entries()) {
+      if (link.expiresAt <= now) {
+        expiredIds.add(storedJobId);
+      } else {
+        switch (oldest) {
+          case null { oldest := ?link };
+          case (?current) {
+            if (link.expiresAt < current.expiresAt) {
+              oldest := ?link;
+            };
+          };
+        };
+      };
+    };
+    for (expiredJobId in expiredIds.values()) {
+      liveCallLinks.remove(expiredJobId);
+    };
+    if (liveCallLinks.size() >= MAX_LIVE_CALL_LINKS) {
+      switch (oldest) {
+        case (?link) { liveCallLinks.remove(link.jobId) };
+        case null {};
+      };
+    };
   };
 
   /// Voice-server failure path. Cancels the reservation and finalizes the
@@ -690,6 +779,7 @@ mixin (
     switch (AgentLib.getCallJob(agentState, jobId)) {
       case null { false };
       case (?job) {
+        liveCallLinks.remove(jobId);
         ignore AgentLib.failCallDispatch(agentState, jobId, cleanMessage);
         ignore BillingLib.cancelReservation(billingState, job.reservationId, cleanMessage);
         ignore CallsLib.updateCallRecord(

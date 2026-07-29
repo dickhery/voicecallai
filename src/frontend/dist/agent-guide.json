@@ -30,6 +30,7 @@
     "Confirm recipient, purpose, preset, capture choices, and consent.",
     "Call agentQueueCall with an E.164 number and a unique idempotency key.",
     "Poll agentListCallJobs with backoff and report only returned state.",
+    "Call agentGetLiveCallLink once for a dispatched job when the user wants to listen.",
     "Retrieve artifacts after completion only when capture was approved."
   ],
   "primary_methods": [
@@ -41,12 +42,14 @@
     "createPreset",
     "agentQueueCall",
     "agentListCallJobs",
+    "agentGetLiveCallLink",
     "agentGetCallArtifacts"
   ],
   "cycle_guidance": [
     "Read and cache the guide once per task.",
     "Do not repeatedly call live balance queries.",
     "Poll job state at 10 seconds, then back off to 20 and 30 seconds.",
+    "Read the transient live call link at most once per dispatched call.",
     "Refresh ICP pricing only when the cached quote is stale."
   ],
   "instructions": {

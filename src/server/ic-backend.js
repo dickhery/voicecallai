@@ -298,7 +298,12 @@ const idlFactory = ({ IDL }) =>
       [],
     ),
     completeAgentCallDispatchForServer: IDL.Func(
-      [IDL.Text, IDL.Opt(IDL.Text), IDL.Opt(IDL.Text)],
+      [
+        IDL.Text,
+        IDL.Opt(IDL.Text),
+        IDL.Opt(IDL.Text),
+        IDL.Opt(IDL.Text),
+      ],
       [IDL.Bool],
       [],
     ),

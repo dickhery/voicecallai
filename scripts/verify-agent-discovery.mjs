@@ -32,6 +32,7 @@ function assertValid(relativePath, body, contentType = "") {
     relativePath === "llms.txt" &&
     (!body.includes("getAgentGuide") ||
       !body.includes("agentQueueCall") ||
+      !body.includes("agentGetLiveCallLink") ||
       !body.includes("Backend agent API canister"))
   ) {
     throw new Error("llms.txt is missing required discovery instructions.");
@@ -44,9 +45,12 @@ function assertValid(relativePath, body, contentType = "") {
   }
   if (
     relativePath === "agent-api.did" &&
-    !body.includes("agentQueueCall")
+    (!body.includes("agentQueueCall") ||
+      !body.includes("agentGetLiveCallLink"))
   ) {
-    throw new Error("agent-api.did does not expose agentQueueCall.");
+    throw new Error(
+      "agent-api.did does not expose the required call and live-listen methods.",
+    );
   }
 }
 

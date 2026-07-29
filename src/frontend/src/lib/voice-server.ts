@@ -25,6 +25,7 @@ export interface VoiceServerCall {
   callId?: string;
   direction?: string;
   transcript?: VoiceServerTranscriptEntry[];
+  liveAudioUrl?: string;
   liveAudio?: {
     codec: "audio/pcmu";
     sampleRate: 8000;

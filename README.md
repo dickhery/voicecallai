@@ -94,15 +94,27 @@ The frontend ships a cycle-friendly catalog of professional and fun agents (`src
 
 ## Grok Voice Session Features
 
-The Node bridge now enables newer Grok Voice Agent session parameters when placing calls:
+The Node bridge is compatible with Grok Voice Think Fast 2.0 and enables the
+current Speech-to-Speech session parameters when placing calls:
 
-- Default model `grok-voice-latest` (override with `XAI_MODEL`)
+- Production default `grok-voice-think-fast-2.0` (override with `XAI_MODEL`)
 - `reasoning.effort` (`high` / `none`)
 - `turn_detection.idle_timeout_ms` for re-engagement after silence
 - `audio.output.speed`
 - `audio.input.transcription.language_hint` and `keyterms`
+- Opted-in saved transcripts use the realtime session's
+  `grok-transcribe` input transcription instead of opening a second STT
+  WebSocket and sending caller audio twice
 - Session resumption (`resumption.enabled`)
 - Optional inbound `force_message` openings for fixed greetings
+
+Think Fast 2.0 is API-compatible with the existing realtime event flow, so no
+preset rewrite is required. xAI announced better telephony/noise transcription,
+tool reliability, conversational dynamics, and time to first audio. The
+versioned model is pinned here so a future `grok-voice-latest` rollover cannot
+change production behavior without staging validation. The model is priced by
+xAI at `$0.08/min` of audio, so review prepaid package margins together with
+Twilio costs before changing package duration or price.
 
 After pulling server changes on the Windows voice host, re-run `scripts/update-voicecall-service.ps1` so live calls pick up the bridge updates.
 
@@ -184,8 +196,11 @@ The agent should discover and call these methods in order:
 6. `agentQueueCall` — reserves time and writes a durable job for the external
    voice server. It requires E.164 phone number, preset ID, capture choices,
    consent confirmation when saving artifacts, and an idempotency key.
-7. `agentListCallJobs`, `listMyCalls`, and `agentGetCallArtifacts` — track
-   dispatch, read transcripts, and retrieve a signed recording link.
+7. `agentListCallJobs` and `listMyCalls` — track dispatch and call state.
+8. `agentGetLiveCallLink` — after dispatch, returns a short-lived,
+   listen-only HTTPS page that the agent can give the authorized user.
+9. `agentGetCallArtifacts` — after completion, returns approved transcripts
+   and a signed recording link.
 
 Every authenticated app principal receives a deterministic ICRC-1 subaccount
 owned by the backend canister. Fund the `depositAccount` returned by
@@ -197,9 +212,11 @@ paying twice.
 The voice server polls only a bounded public job list, exponentially backs off
 from 10 to 30 seconds while that list is empty, performs an update call only
 when it claims or finalizes a real job, and reuses the existing paid-call
-reservation and reconciliation flow. Audio remains on the voice server/Twilio;
-the canister stores only bounded call metadata, transcript text, and signed
-links. This keeps stable storage and cycle usage conservative.
+reservation and reconciliation flow. Audio remains on the voice server/Twilio.
+Listen-only links use a token distinct from the call-control token and are kept
+in transient canister memory, so an upgrade invalidates them and no live token
+is added to stable state. An agent reads the link with one query only when the
+user asks to listen. This keeps stable storage and cycle usage conservative.
 
 The Settings page includes a human-readable setup panel with the connector
 URL, ICP account identifiers, balance checks, and current ICP package prices.
@@ -307,6 +324,7 @@ TWILIO_AUTH_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_PHONE_NUMBER=+13366098857
 TWILIO_PHONE_NUMBERS=+13366098857,+17016077987
 XAI_API_KEY=xai-...
+XAI_MODEL=grok-voice-think-fast-2.0
 HOSTNAME=
 FRONTEND_ORIGIN=https://2nukr-cyaaa-aaaak-qy2ja-cai.icp0.io
 FRONTEND_CANISTER_ID=2nukr-cyaaa-aaaak-qy2ja-cai
@@ -614,6 +632,15 @@ icp canister settings update backend --freezing-threshold 7776000 -e ic
 icp canister settings update backend --add-controller <backup-principal> -e ic
 ```
 
+This release adds the live-listen URL to the voice-server dispatch
+acknowledgement. Stop the voice service just before the canister upgrade so an
+MCP job cannot be claimed while the old and new Candid signatures differ.
+Queued jobs remain durable:
+
+```powershell
+& C:\Tools\nssm\nssm.exe stop VoiceCallAI
+```
+
 Deploy both canisters as an upgrade so canister IDs and state are preserved:
 
 ```powershell
@@ -624,13 +651,15 @@ pnpm exec mops deployed backend
 
 Do not use `--mode reinstall`; reinstall clears all application state.
 
-After deployment, restart the Node voice server with the updated code. Its
+After deployment, pull the same updated revision on the Windows voice host and
+run the service updater. It preserves `src/server/.env`, installs dependencies,
+checks the server, restarts NSSM, and verifies the health endpoint. The
 existing ICP server principal must still have the app's `admin` role because
-that role now also claims and finalizes MCP call jobs:
+that role claims and finalizes MCP call jobs:
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File scripts/update-voicecall-service.ps1
 pnpm server:check-identity
-pnpm server:start
 ```
 
 Verify the public guide and pricing surface:
@@ -638,7 +667,7 @@ Verify the public guide and pricing surface:
 ```powershell
 icp canister call -e ic backend getAgentGuide '()'
 icp canister call -e ic backend getAgentPricing '()'
-pnpm verify:agent-discovery -- https://voicecallai.online
+pnpm verify:agent-discovery https://voicecallai.online
 ```
 
 Then connect an AI client through the official ICP MCP URL, authorize it with

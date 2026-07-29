@@ -34,7 +34,8 @@ Always specify that linked identity and the mainnet environment on later calls. 
 7. Generate one unique idempotency key for this intended call and call agentQueueCall.
 8. Read agentListCallJobs after about 10 seconds. Back off to 20 and then 30 seconds while waiting. Use listMyCalls or getCallRecord for the resulting call record.
 9. Say "queued", "dispatched", "in progress", or "completed" according to returned state. Do not report a successful live call without supporting state.
-10. Call agentGetCallArtifacts only after completion and only when the user is authorized to see the artifacts.
+10. If the user wants to hear a dispatched call, call agentGetLiveCallLink once and present its listen-only HTTPS URL. Treat the link as sensitive and do not poll this method.
+11. Call agentGetCallArtifacts only after completion and only when the user is authorized to see the artifacts.
 
 ## Funding phone time with ICP
 
@@ -46,10 +47,10 @@ The agentQueueCall captureOptions record controls saveTranscript, recordAudio, a
 
 ## Architecture and cost behavior
 
-agentQueueCall reserves prepaid seconds and creates a bounded durable job. The off-chain voice bridge polls for pending jobs, claims a job with its server identity, places the Twilio call, and connects the call to xAI's grok-voice-latest realtime model. xAI, Twilio, Stripe, and recording secrets never reside in the frontend or canister.
+agentQueueCall reserves prepaid seconds and creates a bounded durable job. The off-chain voice bridge polls for pending jobs, claims a job with its server identity, places the Twilio call, and connects the call to xAI's grok-voice-think-fast-2.0 realtime model. Listen-only links live in transient canister memory and audio bytes stay off-chain. xAI, Twilio, Stripe, and recording secrets never reside in the frontend or persistent canister state.
 
 Static discovery files and public canister queries are intentionally small. Avoid rapid status polling and avoid calling agentRefreshIcpPricing while the current quote is fresh. This keeps canister cycle use conservative.
 
 ## Safety
 
-Obtain user approval before external effects. Do not use VoiceCall AI for threats, harassment, fraud, credential theft, unlawful impersonation, or other harmful activity. Protect phone numbers, transcripts, signed recording links, balances, principals, and deposit accounts.
+Obtain user approval before external effects. Share a live-listen link only when the authorized user asks and remind them to follow applicable participant notice or consent rules. Do not use VoiceCall AI for threats, harassment, fraud, credential theft, unlawful impersonation, or other harmful activity. Protect phone numbers, transcripts, live-listen links, signed recording links, balances, principals, and deposit accounts.

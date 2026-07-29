@@ -297,6 +297,7 @@ type Backend =
    agentGetAccountIdentity: () -> (AgentAccount) query;
    agentGetAccountStatus: () -> (AgentAccountStatusResult);
    agentGetCallArtifacts: (callId: nat) -> (opt AgentCallArtifacts) query;
+   agentGetLiveCallLink: (jobId: text) -> (opt AgentLiveCallLink) query;
    agentInitialize: (displayName: text) -> (AgentInitializeResult);
    agentListCallJobs: () -> (vec AgentCallJob) query;
    agentPurchasePhoneTime: (packageId: text, idempotencyKey: text) ->
@@ -312,7 +313,7 @@ type Backend =
     (BillingMutationResult);
    claimAgentCallForServer: (jobId: text) -> (opt AgentCallDispatch);
    completeAgentCallDispatchForServer: (jobId: text, callSid: opt text,
-    serverSessionId: opt text) -> (bool);
+    serverSessionId: opt text, liveAudioUrl: opt text) -> (bool);
    createAnsweringPreset: (input: AnsweringPresetInput) ->
     (AnsweringPresetMutationResult);
    createPreset: (input: CallPresetInput) -> (CallPreset);
@@ -469,6 +470,14 @@ type AgentProfile =
    displayName: text;
    "principal": principal;
    updatedAt: int;
+ };
+type AgentLiveCallLink =
+ record {
+   callId: nat;
+   expiresAt: int;
+   jobId: text;
+   note: text;
+   url: text;
  };
 type AgentInitializeResult = 
  variant {

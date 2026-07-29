@@ -198,8 +198,8 @@ module {
   public func guide(state : State) : AgentTypes.AgentGuide {
     {
       appName = "VoiceCall AI";
-      apiVersion = "2026-07-agent-v2";
-      summary = "Place real outbound AI phone calls, configure voice presets, fund prepaid phone time with ICP, manage answering presets, and retrieve approved call transcripts or recording links through ICP MCP.";
+      apiVersion = "2026-07-agent-v3";
+      summary = "Place real outbound AI phone calls, configure voice presets, fund prepaid phone time with ICP, retrieve a listen-only live call link, manage answering presets, and retrieve approved call transcripts or recording links through ICP MCP.";
       productionMcpUrl = "https://mcp.internetcomputer.org/mcp";
       authentication = [
         "VoiceCall AI's telephony action is on this backend canister. The frontend canister only serves assets; do not conclude phone calling is unavailable after inspecting only that canister.",
@@ -223,7 +223,7 @@ module {
       callWorkflow = [
         "Check agentGetAccountStatus once when a live balance is needed. If available phone time is low, tell the user the exact ICP package prices before purchasing.",
         "Create or select a call preset, confirm the recipient, purpose, preset, capture choices, and consent, then call agentQueueCall. Agents do not need separate Twilio or xAI tools: the off-chain voice bridge securely claims the job and places the call.",
-        "Poll agentListCallJobs after about 10 seconds, then back off to 20 and 30 seconds while waiting. Use agentGetCallArtifacts after completion for the transcript and a signed audio URL when capture was enabled.",
+        "Poll agentListCallJobs after about 10 seconds, then back off to 20 and 30 seconds while waiting. Once a job is dispatched, call agentGetLiveCallLink once if the user wants to hear the call. Use agentGetCallArtifacts after completion for the transcript and a signed audio URL when capture was enabled.",
         "Report queued, dispatched, in-progress, or completed according to returned state. Never claim a call was placed or completed without supporting job or call-record state.",
       ];
       paymentWorkflow = [
@@ -235,8 +235,9 @@ module {
       safetyAndConsent = [
         "Confirm the recipient, purpose, preset, and capture choices with the user before placing a call.",
         "Do not enable transcript or audio capture without the user's confirmation that applicable participant consent requirements are satisfied.",
+        "Only request or share a live-listen link when the authorized user asks, and remind them to satisfy applicable participant notice or consent requirements.",
         "Do not use the app for threats, harassment, fraud, credential theft, unlawful impersonation, or other harmful activity.",
-        "Phone numbers, transcripts, and recording links are sensitive. Reveal them only in the authorized user's chat.",
+        "Phone numbers, transcripts, live-listen links, and recording links are sensitive. Reveal them only in the authorized user's chat.",
       ];
       capabilities = [
         capability("Initialize agent access", "agentInitialize", "Register the authenticated app principal and create its isolated in-app ICP account identity.", true),
@@ -246,6 +247,7 @@ module {
         capability("Transfer ICP", "agentTransferIcp", "Transfer unspent ICP from the in-app subaccount to an ICRC-1 account.", true),
         capability("Manage presets", "createPreset", "Create, list, update, duplicate, and delete outbound call presets.", true),
         capability("Queue a call", "agentQueueCall", "Reserve phone time and queue an idempotent outbound voice-server job.", true),
+        capability("Listen to a live call", "agentGetLiveCallLink", "Return a short-lived, listen-only HTTPS page for an active MCP-created call.", false),
         capability("Call history", "listMyCalls", "Read the authenticated principal's bounded call history.", false),
         capability("Call artifacts", "agentGetCallArtifacts", "Return a completed call's transcript and signed recording URL when available.", false),
         capability("Answering presets", "createAnsweringPreset", "Create, update, enable, and delete inbound AI answering presets.", true),
