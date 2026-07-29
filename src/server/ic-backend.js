@@ -164,6 +164,42 @@ const BillingMutationResult = IDL.Variant({
   err: IDL.Text,
 });
 
+const AgentCallJobStatus = IDL.Variant({
+  queued: IDL.Null,
+  claimed: IDL.Null,
+  dispatched: IDL.Null,
+  failed: IDL.Null,
+  canceled: IDL.Null,
+});
+
+const AgentCallCaptureOptions = IDL.Record({
+  saveTranscript: IDL.Bool,
+  recordAudio: IDL.Bool,
+  consentConfirmed: IDL.Bool,
+});
+
+const AgentCallJob = IDL.Record({
+  id: IDL.Text,
+  user: IDL.Principal,
+  reservationId: IDL.Text,
+  callId: IDL.Nat,
+  recipientPhone: IDL.Text,
+  presetId: IDL.Nat,
+  captureOptions: AgentCallCaptureOptions,
+  createdAt: IDL.Int,
+  expiresAt: IDL.Int,
+  status: AgentCallJobStatus,
+  claimedAt: IDL.Opt(IDL.Int),
+  callSid: IDL.Opt(IDL.Text),
+  serverSessionId: IDL.Opt(IDL.Text),
+  error: IDL.Opt(IDL.Text),
+});
+
+const AgentCallDispatch = IDL.Record({
+  job: AgentCallJob,
+  callToken: IDL.Text,
+});
+
 const idlFactory = ({ IDL }) =>
   IDL.Service({
     getPurchaseIntentForServer: IDL.Func(
@@ -249,6 +285,26 @@ const idlFactory = ({ IDL }) =>
     cancelCallReservationByCallSidForServer: IDL.Func(
       [IDL.Text, IDL.Text],
       [BillingMutationResult],
+      [],
+    ),
+    listPendingAgentCallsForServer: IDL.Func(
+      [IDL.Nat],
+      [IDL.Vec(AgentCallJob)],
+      ["query"],
+    ),
+    claimAgentCallForServer: IDL.Func(
+      [IDL.Text],
+      [IDL.Opt(AgentCallDispatch)],
+      [],
+    ),
+    completeAgentCallDispatchForServer: IDL.Func(
+      [IDL.Text, IDL.Opt(IDL.Text), IDL.Opt(IDL.Text)],
+      [IDL.Bool],
+      [],
+    ),
+    failAgentCallDispatchForServer: IDL.Func(
+      [IDL.Text, IDL.Text],
+      [IDL.Bool],
       [],
     ),
   });
@@ -485,6 +541,30 @@ export function normalizeAnsweringLiveSession(session) {
     callerPhone: session.callerPhone,
     startedAt: session.startedAt,
     allowedSeconds: Number(session.allowedSeconds),
+  };
+}
+
+export function normalizeAgentCallJob(job) {
+  if (!job) return null;
+  return {
+    id: job.id,
+    user: job.user.toText(),
+    reservationId: job.reservationId,
+    callId: job.callId.toString(),
+    recipientPhone: job.recipientPhone,
+    presetId: job.presetId.toString(),
+    captureOptions: {
+      saveTranscript: Boolean(job.captureOptions?.saveTranscript),
+      recordAudio: Boolean(job.captureOptions?.recordAudio),
+      consentConfirmed: Boolean(job.captureOptions?.consentConfirmed),
+    },
+    createdAt: job.createdAt,
+    expiresAt: job.expiresAt,
+    status: variantKey(job.status),
+    claimedAt: unwrapOptional(job.claimedAt),
+    callSid: unwrapOptional(job.callSid),
+    serverSessionId: unwrapOptional(job.serverSessionId),
+    error: unwrapOptional(job.error),
   };
 }
 

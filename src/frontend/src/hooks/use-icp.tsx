@@ -71,6 +71,7 @@ async function registerIdentity(identity: Identity): Promise<void> {
     agentOptions: { ...agentOptions, identity },
   });
   await actor._initializeAccessControl();
+  await actor.agentInitialize("Web app");
 }
 
 export function InternetIdentityProvider({

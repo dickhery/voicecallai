@@ -319,6 +319,24 @@ module {
     #ok(true);
   };
 
+  // Credits phone time after a separately verified non-Stripe payment flow.
+  // Idempotency and payment verification stay in the caller's payment domain.
+  public func creditPhoneSeconds(
+    state : State,
+    user : Principal,
+    seconds : Nat,
+  ) : Types.BillingMutationResult {
+    if (user.isAnonymous()) {
+      return #err("Cannot credit the anonymous user");
+    };
+    if (seconds == 0) {
+      return #err("Phone time credit must be greater than zero");
+    };
+    let current = getBalance(state, user);
+    state.balances.add(user, current + seconds);
+    #ok(true);
+  };
+
   public func createReservation(
     state : State,
     user : Principal,

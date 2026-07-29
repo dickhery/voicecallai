@@ -1,5 +1,7 @@
 import { type CallStatus, createActor } from "@/bindings/backend";
 import type {
+  AgentAccount,
+  AgentAccountStatusResult,
   AnsweringPresetInput,
   AnsweringPresetMutationResult,
   BillingMutationResult,
@@ -7,6 +9,8 @@ import type {
   CallId,
   CallPresetMutationResult,
   CreatePurchaseIntentResult,
+  IcpPricing,
+  IcpPricingResult,
   InitiateCallInput,
   InitiateCallResult,
   PresetId,
@@ -297,6 +301,57 @@ export function useGetMyBillingStatus() {
     },
     enabled: !!actor && !isFetching,
     refetchInterval: 10_000,
+  });
+}
+
+export function useGetAgentAccountIdentity() {
+  const { actor, isFetching } = useBackendActor();
+  return useQuery<AgentAccount | null>({
+    queryKey: ["agentAccountIdentity"],
+    queryFn: async () => {
+      if (!actor) return null;
+      return actor.agentGetAccountIdentity();
+    },
+    enabled: !!actor && !isFetching,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
+export function useGetAgentPricing() {
+  const { actor, isFetching } = useBackendActor();
+  return useQuery<IcpPricing | null>({
+    queryKey: ["agentIcpPricing"],
+    queryFn: async () => {
+      if (!actor) return null;
+      return actor.getAgentPricing();
+    },
+    enabled: !!actor && !isFetching,
+    staleTime: 60_000,
+  });
+}
+
+export function useGetAgentAccountStatus() {
+  const { actor } = useBackendActor();
+  return useMutation<AgentAccountStatusResult, Error, void>({
+    mutationFn: async () => {
+      if (!actor) throw new Error("Actor not available");
+      return actor.agentGetAccountStatus();
+    },
+  });
+}
+
+export function useRefreshAgentIcpPricing() {
+  const { actor } = useBackendActor();
+  const qc = useQueryClient();
+  return useMutation<IcpPricingResult, Error, void>({
+    mutationFn: async () => {
+      if (!actor) throw new Error("Actor not available");
+      return actor.agentRefreshIcpPricing();
+    },
+    onSuccess: () =>
+      qc.invalidateQueries({
+        queryKey: ["agentIcpPricing"],
+      }),
   });
 }
 

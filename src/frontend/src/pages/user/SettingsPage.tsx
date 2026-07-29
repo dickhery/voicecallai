@@ -1,4 +1,5 @@
 import { AudioFormat, SampleRate, Voice } from "@/bindings/backend";
+import { AgentAccessCard } from "@/components/AgentAccessCard";
 import { AgentPresetGallery } from "@/components/AgentPresetGallery";
 import { AppLayout } from "@/components/AppLayout";
 import { NaturalPromptBuilder } from "@/components/NaturalPromptBuilder";
@@ -591,6 +592,8 @@ export default function SettingsPage() {
               Manage your call presets and account
             </p>
           </div>
+
+          <AgentAccessCard />
 
           <AgentPresetGallery
             kind="outbound"

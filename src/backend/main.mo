@@ -3,11 +3,14 @@ import MixinAuthorization "mo:caffeineai-authorization/MixinAuthorization";
 import ConfigLib "lib/config";
 import CallsLib "lib/calls";
 import BillingLib "lib/billing";
+import AgentLib "lib/agent";
 import ConfigApi "mixins/config-api";
 import CallsApi "mixins/calls-api";
 import BillingApi "mixins/billing-api";
+import AgentApi "mixins/agent-api";
+import Principal "mo:core/Principal";
 
-shared ({ caller = installer }) persistent actor class Backend() {
+shared ({ caller = installer }) persistent actor class Backend() = this {
   // Capture the installer atomically so a public login cannot front-run admin setup.
   let accessControlState = AccessControl.initState();
   if (not accessControlState.adminAssigned) {
@@ -25,9 +28,19 @@ shared ({ caller = installer }) persistent actor class Backend() {
   let callsState = CallsLib.initState();
   let answeringLiveState = CallsLib.initAnsweringLiveState();
   let billingState = BillingLib.initState();
+  let agentState = AgentLib.initState();
 
   // Domain mixins
   include ConfigApi(accessControlState, configState, callPresetVoiceIds, twilioLineState, answeringState, answeringPresetVoiceIds);
   include CallsApi(accessControlState, callsState, answeringLiveState, configState, callPresetVoiceIds);
   include BillingApi(accessControlState, billingState, callsState, configState, callPresetVoiceIds, answeringState, answeringPresetVoiceIds);
+  include AgentApi(
+    Principal.fromActor(this),
+    accessControlState,
+    agentState,
+    billingState,
+    callsState,
+    configState,
+    callPresetVoiceIds,
+  );
 };

@@ -10,6 +10,7 @@ import WebSocket, { WebSocketServer } from "ws";
 import {
   getBackendActor,
   getIcpServerPrincipalText,
+  normalizeAgentCallJob,
   normalizeAnsweringPreset,
   normalizeCallPreset,
   normalizePurchaseIntent,
@@ -68,6 +69,14 @@ const BACKEND_CALL_RECONCILE_INTERVAL_MS = Number(
 const BACKEND_CALL_RECONCILE_LIMIT = Number(
   process.env.BACKEND_CALL_RECONCILE_LIMIT || 50,
 );
+const AGENT_CALL_POLL_INTERVAL_MS = Math.max(
+  2_000,
+  Number(process.env.AGENT_CALL_POLL_INTERVAL_MS || 10_000),
+);
+const AGENT_CALL_POLL_LIMIT = Math.max(
+  1,
+  Math.min(20, Number(process.env.AGENT_CALL_POLL_LIMIT || 10)),
+);
 const ORPHANED_TWILIO_CALL_END_MS = Number(
   process.env.ORPHANED_TWILIO_CALL_END_MS || 120_000,
 );
@@ -90,7 +99,7 @@ const VOICE_PREVIEW_RATE_LIMIT_WINDOW_MS = Number(
 const VOICE_PREVIEW_RATE_LIMIT_MAX = Number(
   process.env.VOICE_PREVIEW_RATE_LIMIT_MAX || 12,
 );
-const SERVER_VERSION = "2026-07-23-secure-setup-health";
+const SERVER_VERSION = "2026-07-28-icp-mcp-agent";
 const VOICE_SESSION_START = "[[vc:session]]";
 const VOICE_SESSION_END = "[[/vc:session]]";
 const SERVER_STARTED_AT = new Date().toISOString();
@@ -378,6 +387,8 @@ let queueProcessing = false;
 let sessionCleanupProcessing = false;
 let backendReconcileProcessing = false;
 let lastBackendReconcileAt = 0;
+let agentCallPollProcessing = false;
+const agentCallDispatchCache = new Map();
 let lineConfigCache = {
   numbers: null,
   fetchedAt: 0,
@@ -4707,6 +4718,158 @@ async function reconcileOpenBackendCallReservations() {
   }
 }
 
+async function dispatchPendingAgentCallJobs() {
+  if (agentCallPollProcessing) return;
+  if (!process.env.BACKEND_CANISTER_ID) return;
+  agentCallPollProcessing = true;
+  try {
+    const actor = await getBackendActor();
+    const jobs = await actor.listPendingAgentCallsForServer(
+      BigInt(AGENT_CALL_POLL_LIMIT),
+    );
+    if (jobs.length === 0) return;
+    const openReservations = (
+      await actor.listOpenCallReservationsForServer(200n)
+    ).map(normalizeReservation);
+    const openReservationById = new Map(
+      openReservations.map((reservation) => [reservation.id, reservation]),
+    );
+
+    for (const pendingJob of jobs) {
+      const claimed = unwrapOptional(
+        await actor.claimAgentCallForServer(pendingJob.id),
+      );
+      if (!claimed) continue;
+
+      const job = normalizeAgentCallJob(claimed.job);
+      const recoveredReservation = openReservationById.get(job.reservationId);
+      const recoveredCallSid = getValidCallSid(recoveredReservation?.callSid);
+      if (recoveredCallSid) {
+        await actor.completeAgentCallDispatchForServer(
+          job.id,
+          [recoveredCallSid],
+          [],
+        );
+        log("info", "Recovered an already-dispatched ICP MCP agent call", {
+          jobId: job.id,
+          callId: job.callId,
+          callSid: recoveredCallSid,
+        });
+        continue;
+      }
+
+      const cachedDispatch = agentCallDispatchCache.get(job.id);
+      if (cachedDispatch) {
+        try {
+          const acknowledged = await actor.completeAgentCallDispatchForServer(
+            job.id,
+            cachedDispatch.callSid ? [cachedDispatch.callSid] : [],
+            cachedDispatch.sessionId ? [cachedDispatch.sessionId] : [],
+          );
+          if (acknowledged) {
+            agentCallDispatchCache.delete(job.id);
+            continue;
+          }
+          log("warn", "Backend declined an agent call dispatch acknowledgement", {
+            jobId: job.id,
+          });
+          continue;
+        } catch (error) {
+          log("warn", "Agent call dispatch acknowledgement is still pending", {
+            jobId: job.id,
+            error: error.message,
+          });
+          continue;
+        }
+      }
+
+      try {
+        const response = await fetch(`http://127.0.0.1:${PORT}/initiate-call`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            reservationId: job.reservationId,
+            callToken: claimed.callToken,
+            callId: job.callId,
+            captureOptions: {
+              saveTranscript: job.captureOptions.saveTranscript,
+              recordAudio: job.captureOptions.recordAudio,
+              permissionConfirmed: job.captureOptions.consentConfirmed,
+            },
+          }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.ok) {
+          throw new Error(
+            String(
+              payload.error ||
+                `Voice server rejected the agent call with HTTP ${response.status}.`,
+            ),
+          );
+        }
+
+        const dispatchSnapshot = {
+          callSid: payload.callSid ? String(payload.callSid) : "",
+          sessionId: payload.sessionId ? String(payload.sessionId) : "",
+        };
+        agentCallDispatchCache.set(job.id, dispatchSnapshot);
+        try {
+          const completed = await actor.completeAgentCallDispatchForServer(
+            job.id,
+            dispatchSnapshot.callSid ? [dispatchSnapshot.callSid] : [],
+            dispatchSnapshot.sessionId ? [dispatchSnapshot.sessionId] : [],
+          );
+          if (completed) {
+            agentCallDispatchCache.delete(job.id);
+          }
+        } catch (error) {
+          log("warn", "Agent call was placed but acknowledgement is pending", {
+            jobId: job.id,
+            callId: job.callId,
+            error: error.message,
+          });
+        }
+        log("info", "Dispatched ICP MCP agent call", {
+          jobId: job.id,
+          callId: job.callId,
+          callSid: payload.callSid || null,
+          sessionId: payload.sessionId || null,
+          queued: Boolean(payload.queued),
+        });
+      } catch (error) {
+        const message = String(error?.message || error).slice(0, 500);
+        if (/already active|already started/i.test(message)) {
+          log("warn", "Agent call reservation is already active; awaiting reconciliation", {
+            jobId: job.id,
+            callId: job.callId,
+            error: message,
+          });
+          continue;
+        }
+        try {
+          await actor.failAgentCallDispatchForServer(job.id, message);
+        } catch (backendError) {
+          log("error", "Unable to finalize failed ICP MCP agent call", {
+            jobId: job.id,
+            error: backendError.message,
+          });
+        }
+        log("error", "ICP MCP agent call dispatch failed", {
+          jobId: job.id,
+          callId: job.callId,
+          error: message,
+        });
+      }
+    }
+  } catch (error) {
+    log("warn", "Unable to poll ICP MCP agent call jobs", {
+      error: error.message,
+    });
+  } finally {
+    agentCallPollProcessing = false;
+  }
+}
+
 async function runSessionCleanup() {
   if (sessionCleanupProcessing) return;
   sessionCleanupProcessing = true;
@@ -4760,6 +4923,12 @@ setInterval(() => {
   });
 }, SESSION_CLEANUP_INTERVAL_MS).unref();
 
+setInterval(() => {
+  dispatchPendingAgentCallJobs().catch((error) => {
+    log("error", "ICP MCP agent call poll failed", { error: error.message });
+  });
+}, AGENT_CALL_POLL_INTERVAL_MS).unref();
+
 server.listen(PORT, () => {
   const missing = requiredEnv.filter((key) => !process.env[key]);
   if (!process.env.BACKEND_CANISTER_ID) missing.push("BACKEND_CANISTER_ID");
@@ -4773,4 +4942,11 @@ server.listen(PORT, () => {
     health: `http://localhost:${PORT}/health`,
     missingEnv: missing,
   });
+  setTimeout(() => {
+    dispatchPendingAgentCallJobs().catch((error) => {
+      log("warn", "Initial ICP MCP agent call poll failed", {
+        error: error.message,
+      });
+    });
+  }, 1_000).unref();
 });

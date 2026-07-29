@@ -131,6 +131,62 @@ Payment flow:
 
 Admin users receive Stripe test-mode Checkout Sessions. Non-admin users receive live-mode Checkout Sessions.
 
+## AI Chat Access Through ICP MCP
+
+VoiceCall AI exposes an agent-oriented Candid surface for the official DFINITY
+ICP MCP connector:
+
+```text
+https://mcp.internetcomputer.org/mcp
+```
+
+The beta Internet Identity test connector is:
+
+```text
+https://mcp.beta.id.ai/mcp-beta
+```
+
+Use the production connector for this mainnet app. In Internet Identity,
+enable **AI access**, trust the connector, then add the connector to ChatGPT,
+Claude, or another MCP client. Grant **Actions and questions** when the agent
+needs to buy phone time, transfer ICP, edit presets, or place calls.
+
+The agent should discover and call these methods in order:
+
+1. `getAgentGuide` — public onboarding, consent rules, required call inputs,
+   current packages, and the rest of the agent API.
+2. `agentInitialize` — registers the authenticated app principal. The same
+   Internet Identity app principal is the account boundary for presets, call
+   history, prepaid time, and the in-app ICP deposit account.
+3. `agentGetAccountStatus` — checks deposited ICP, ledger fee, available phone
+   time, low-balance guidance, and cached ICP pricing.
+4. `agentRefreshIcpPricing` — refreshes ICP/USD through the Exchange Rate
+   Canister only when the six-hour cache is stale.
+5. `agentPurchasePhoneTime` — pays from the principal's deposit subaccount and
+   credits the same `$5 / $10 / $20` packages used by Stripe.
+6. `agentQueueCall` — reserves time and writes a durable job for the external
+   voice server. It requires E.164 phone number, preset ID, capture choices,
+   consent confirmation when saving artifacts, and an idempotency key.
+7. `agentListCallJobs`, `listMyCalls`, and `agentGetCallArtifacts` — track
+   dispatch, read transcripts, and retrieve a signed recording link.
+
+Every authenticated app principal receives a deterministic ICRC-1 subaccount
+owned by the backend canister. Fund the `depositAccount` returned by
+`agentGetAccountIdentity`; do not send funds to a guessed address. Unspent ICP
+can be moved with `agentTransferIcp`. Purchases and transfers require an
+idempotency key so an MCP client can safely retry an uncertain result without
+paying twice.
+
+The voice server polls only a bounded public job list, performs an update call
+only when it claims or finalizes a real job, and reuses the existing paid-call
+reservation and reconciliation flow. Audio remains on the voice server/Twilio;
+the canister stores only bounded call metadata, transcript text, and signed
+links. This keeps stable storage and cycle usage conservative.
+
+The Settings page includes a human-readable setup panel with the connector
+URL, ICP account identifiers, balance checks, and current ICP package prices.
+The existing Stripe web checkout remains unchanged.
+
 ## Where To Put Canister IDs
 
 For a new deployment, `icp deploy` writes IDs under:
@@ -505,6 +561,11 @@ pnpm --dir src/frontend build
 pnpm build:ic
 ```
 
+The Motoko stable compatibility check is especially important for this
+upgrade: it verifies that existing roles, Stripe purchase records, phone-time
+balances, presets, and call history remain upgradeable while the new agent
+state is added.
+
 Select the intended identity and verify both the account and existing canister
 cycle balances:
 
@@ -517,6 +578,55 @@ icp cycles balance -n ic
 icp canister status -e ic backend
 icp canister status -e ic frontend
 ```
+
+Check that the backend has enough cycles for upgrades and occasional XRC
+pricing refreshes. One actual XRC refresh attaches exactly one billion cycles
+and the app caches the result for six hours. Failed refreshes have a global
+30-minute cooldown to prevent repeated requests from draining cycles:
+
+```powershell
+icp canister settings show backend -e ic
+```
+
+For a production canister holding balances and payment records, set a 90-day
+freezing threshold and add a backup controller before deployment:
+
+```powershell
+icp canister settings update backend --freezing-threshold 7776000 -e ic
+icp canister settings update backend --add-controller <backup-principal> -e ic
+```
+
+Deploy both canisters as an upgrade so canister IDs and state are preserved:
+
+```powershell
+pnpm configure:frontend:ic -- --voice-server-url https://voicecall.richardhery.com
+icp deploy -e ic
+pnpm exec mops deployed backend
+```
+
+Do not use `--mode reinstall`; reinstall clears all application state.
+
+After deployment, restart the Node voice server with the updated code. Its
+existing ICP server principal must still have the app's `admin` role because
+that role now also claims and finalizes MCP call jobs:
+
+```powershell
+pnpm server:check-identity
+pnpm server:start
+```
+
+Verify the public guide and pricing surface:
+
+```powershell
+icp canister call -e ic backend getAgentGuide '()'
+icp canister call -e ic backend getAgentPricing '()'
+```
+
+Then connect an AI client through the official ICP MCP URL, authorize it with
+Internet Identity, call `agentInitialize`, and fund only the exact
+`depositAccount` returned by `agentGetAccountIdentity`. Refresh pricing once,
+purchase the smallest package in a low-value test, create a harmless test
+preset, and queue a test call to a phone number you control.
 
 Use `-n ic` for token and cycle commands. Without `-n ic`, `icp cycles balance` can show your local network balance, which is why the first balance in your transcript looked much larger than the balance available for mainnet canister creation.
 
@@ -564,8 +674,10 @@ pnpm exec mops deployed backend --dir src/backend/deployed
 
 Review and commit the updated snapshot. The project deliberately leaves
 compute allocation and memory allocation at `0`, uses the default 30-day
-freezing threshold, minifies frontend assets, and lets the asset sync upload
-only changed files. These defaults avoid reserved compute/memory cycle burn.
+freezing threshold only for local development, minifies frontend assets, and
+lets the asset sync upload only changed files. Keep the production backend at
+the 90-day freezing threshold configured above. The zero compute and memory
+allocations avoid reserved-resource cycle burn.
 The backend also caps per-user preset counts, retains at most 200 finalized
 call-history records per user, bounds query responses and system logs, reuses a
 user's pending purchase intent, and validates cheap inputs before requesting
