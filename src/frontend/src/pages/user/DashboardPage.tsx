@@ -53,6 +53,7 @@ import {
   type AgentPresetTemplate,
   agentPresetToCallInput,
   appendVoiceSessionBlock,
+  listAgentPresets,
   stripVoiceSessionBlock,
 } from "@/lib/agent-presets";
 import {
@@ -71,7 +72,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
   AlertTriangle,
+  BookOpen,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Circle,
   Clock,
   Copy,
@@ -86,6 +90,7 @@ import {
   RefreshCw,
   Send,
   Settings2,
+  Sparkles,
   Trash2,
   Volume2,
   VolumeX,
@@ -145,12 +150,14 @@ function StatCard({
   value,
   color,
   loading,
+  detail,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string | number;
   color?: string;
   loading?: boolean;
+  detail?: string;
 }) {
   return (
     <Card className="bg-card border-border">
@@ -163,11 +170,18 @@ function StatCard({
             {loading ? (
               <Skeleton className="h-7 w-16 mt-1" />
             ) : (
-              <p
-                className={`text-2xl font-bold mt-0.5 ${color ?? "text-foreground"}`}
-              >
-                {value}
-              </p>
+              <>
+                <p
+                  className={`text-2xl font-bold mt-0.5 ${color ?? "text-foreground"}`}
+                >
+                  {value}
+                </p>
+                {detail && (
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">
+                    {detail}
+                  </p>
+                )}
+              </>
             )}
           </div>
           <div className="p-2.5 rounded-xl bg-muted/50">{icon}</div>
@@ -611,6 +625,10 @@ export default function DashboardPage() {
   const [capturePermissionConfirmed, setCapturePermissionConfirmed] =
     useState(false);
   const [confirmEndOpen, setConfirmEndOpen] = useState(false);
+  const [presetLibraryOpen, setPresetLibraryOpen] = useState(false);
+  const [presetLibraryView, setPresetLibraryView] = useState<
+    "saved" | "built-in"
+  >("saved");
   const [recentPhones, setRecentPhones] = useState<string[]>([]);
   const billingPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const billingBaselineRef = useRef<number | null>(null);
@@ -654,6 +672,10 @@ export default function DashboardPage() {
     );
   }).length;
   const activePresets = (presets ?? []).length;
+  const builtInAgentCount = useMemo(
+    () => listAgentPresets({ kind: "outbound" }).length,
+    [],
+  );
   const totalBalanceSeconds = Number(billingStatus?.balanceSeconds ?? 0n);
   const availableSeconds = Number(billingStatus?.availableSeconds ?? 0n);
   const reservedSeconds = Number(billingStatus?.reservedSeconds ?? 0n);
@@ -857,6 +879,8 @@ export default function DashboardPage() {
         agentPresetToCallInput(template),
       );
       setSelectedPresetId(created.id.toString());
+      setPresetLibraryView("saved");
+      setPresetLibraryOpen(false);
       toast.success(`Added “${template.name}”`, {
         description: "Preset selected — edit instructions anytime.",
       });
@@ -866,6 +890,16 @@ export default function DashboardPage() {
     } finally {
       setAddingAgentId(null);
     }
+  };
+
+  const openPresetLibrary = (view: "saved" | "built-in") => {
+    setPresetLibraryView(view);
+    setPresetLibraryOpen(true);
+    window.requestAnimationFrame(() => {
+      document
+        .querySelector('[data-ocid="dashboard.presets_card"]')
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
   };
 
   const handleBuyPackage = async (packageId: string) => {
@@ -917,6 +951,46 @@ export default function DashboardPage() {
               <Plus className="w-3.5 h-3.5" />
               New Preset
             </Button>
+          </div>
+
+          <div
+            className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4"
+            data-ocid="dashboard.stats"
+          >
+            <StatCard
+              icon={<Phone className="w-4 h-4 text-primary" />}
+              label="Total Calls"
+              value={totalCalls}
+              loading={callsLoading}
+            />
+            <StatCard
+              icon={<Clock className="w-4 h-4 text-blue-400" />}
+              label="Calls Today"
+              value={callsToday}
+              color="text-blue-400"
+              loading={callsLoading}
+            />
+            <StatCard
+              icon={<Settings2 className="w-4 h-4 text-purple-400" />}
+              label="Active Presets"
+              value={activePresets}
+              color="text-purple-400"
+              loading={presetsLoading}
+            />
+            <StatCard
+              icon={<CreditCard className="w-4 h-4 text-green-400" />}
+              label="Phone Time"
+              value={formatMinutes(billingStatus?.availableSeconds)}
+              detail={
+                reservedSeconds > 0
+                  ? `${formatMinutes(reservedSeconds)} reserved · ${formatMinutes(totalBalanceSeconds)} total`
+                  : `${formatMinutes(totalBalanceSeconds)} total balance`
+              }
+              color={
+                availableSeconds > 0 ? "text-green-400" : "text-destructive"
+              }
+              loading={billingLoading}
+            />
           </div>
 
           {/* Bridge health */}
@@ -1025,53 +1099,9 @@ export default function DashboardPage() {
                 ?.scrollIntoView({ behavior: "smooth" });
             }}
             onCreatePreset={() => {
-              document
-                .querySelector('[data-ocid="dashboard.agent_gallery.card"]')
-                ?.scrollIntoView({ behavior: "smooth" });
+              openPresetLibrary("built-in");
             }}
           />
-
-          <AgentPresetGallery
-            kind="outbound"
-            title="Call agent presets"
-            description="One-click professional agents and silly prank personas. Added agents become editable call presets."
-            actionLabel="Add & select"
-            busyTemplateId={addingAgentId}
-            onUseTemplate={handleUseAgentTemplate}
-            dataOcidPrefix="dashboard.agent_gallery"
-          />
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-            <StatCard
-              icon={<Phone className="w-4 h-4 text-primary" />}
-              label="Total Calls"
-              value={totalCalls}
-              loading={callsLoading}
-            />
-            <StatCard
-              icon={<Clock className="w-4 h-4 text-blue-400" />}
-              label="Calls Today"
-              value={callsToday}
-              color="text-blue-400"
-              loading={callsLoading}
-            />
-            <StatCard
-              icon={<Settings2 className="w-4 h-4 text-purple-400" />}
-              label="Active Presets"
-              value={activePresets}
-              color="text-purple-400"
-              loading={presetsLoading}
-            />
-            <StatCard
-              icon={<CreditCard className="w-4 h-4 text-green-400" />}
-              label="Phone Time"
-              value={formatMinutes(billingStatus?.balanceSeconds)}
-              color={
-                totalBalanceSeconds > 0 ? "text-green-400" : "text-destructive"
-              }
-              loading={billingLoading}
-            />
-          </div>
 
           <Card
             className="bg-card border-border"
@@ -1433,145 +1463,297 @@ export default function DashboardPage() {
               className="lg:col-span-2 bg-card border-border"
               data-ocid="dashboard.presets_card"
             >
-              <CardHeader className="pb-4">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base font-semibold">
-                    My Presets
-                  </CardTitle>
+              <CardHeader className="pb-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-base font-semibold flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-primary" />
+                      Preset Library
+                    </CardTitle>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {activePresets} saved · {builtInAgentCount} built-in
+                      agents
+                    </p>
+                  </div>
                   <Button
-                    variant="outline"
+                    variant={presetLibraryOpen ? "ghost" : "outline"}
                     size="sm"
-                    onClick={() => navigate({ to: "/user/settings" })}
-                    className="gap-1.5 text-xs h-7"
-                    data-ocid="dashboard.presets.new_button"
+                    onClick={() => setPresetLibraryOpen((open) => !open)}
+                    className="gap-1.5 text-xs h-8"
+                    data-ocid="dashboard.presets.toggle_button"
+                    aria-expanded={presetLibraryOpen}
                   >
-                    <Plus className="w-3 h-3" />
-                    New
+                    {presetLibraryOpen ? (
+                      <>
+                        <ChevronUp className="w-3.5 h-3.5" />
+                        Collapse
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="w-3.5 h-3.5" />
+                        Open library
+                      </>
+                    )}
                   </Button>
                 </div>
               </CardHeader>
               <CardContent>
-                {presetsLoading ? (
-                  <div className="space-y-2">
-                    {[1, 2, 3].map((i) => (
-                      <Skeleton key={i} className="h-14 w-full" />
-                    ))}
-                  </div>
-                ) : (presets ?? []).length === 0 ? (
+                {!presetLibraryOpen ? (
                   <div
-                    className="flex flex-col items-center justify-center py-10 text-center"
-                    data-ocid="dashboard.presets.grid_empty_state"
+                    className="rounded-xl border border-border bg-muted/20 p-4"
+                    data-ocid="dashboard.presets.collapsed"
                   >
-                    <Settings2 className="w-8 h-8 text-muted-foreground/40 mb-3" />
-                    <p className="text-sm font-medium text-muted-foreground">
-                      No presets configured
-                    </p>
-                    <p className="text-xs text-muted-foreground/70 mt-1 mb-4">
-                      Create a preset to define voice, prompt, and call behavior
-                    </p>
-                    <Button
-                      size="sm"
-                      onClick={() => navigate({ to: "/user/settings" })}
-                      data-ocid="dashboard.presets.create_button"
-                    >
-                      Create First Preset
-                    </Button>
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                          Ready for this call
+                        </p>
+                        <p className="mt-1 truncate text-sm font-semibold text-foreground">
+                          {selectedPreset?.name ??
+                            (presetsLoading
+                              ? "Loading presets…"
+                              : "Choose a call preset")}
+                        </p>
+                        <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">
+                          {selectedPreset
+                            ? stripVoiceSessionBlock(
+                                selectedPreset.systemPrompt,
+                              ).cleanPrompt
+                            : "Select one of your presets or add a ready-made agent."}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="gap-1.5 text-xs"
+                          onClick={() => openPresetLibrary("saved")}
+                          data-ocid="dashboard.presets.open_saved_button"
+                        >
+                          <Settings2 className="w-3.5 h-3.5" />
+                          My presets
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="gap-1.5 text-xs"
+                          onClick={() => openPresetLibrary("built-in")}
+                          data-ocid="dashboard.presets.open_agents_button"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          Browse agents
+                        </Button>
+                      </div>
+                    </div>
                   </div>
                 ) : (
-                  <div className="space-y-2">
-                    {(presets ?? []).map((preset: CallPreset, idx) => {
-                      const isSelected =
-                        selectedPresetId === preset.id.toString();
-                      return (
-                        <div
-                          key={preset.id.toString()}
-                          data-ocid={`dashboard.preset.item.${idx + 1}`}
-                          className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 transition-smooth ${
-                            isSelected
-                              ? "bg-primary/10 border-primary/40"
-                              : "bg-muted/30 hover:bg-muted/50 border-transparent hover:border-border"
-                          }`}
+                  <div className="space-y-4">
+                    <div
+                      className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3"
+                      role="tablist"
+                      aria-label="Preset library sections"
+                    >
+                      <div className="flex items-center gap-1 rounded-lg bg-muted/40 p-1">
+                        <Button
+                          type="button"
+                          role="tab"
+                          aria-selected={presetLibraryView === "saved"}
+                          variant={
+                            presetLibraryView === "saved"
+                              ? "secondary"
+                              : "ghost"
+                          }
+                          size="sm"
+                          className="h-7 gap-1.5 px-2.5 text-xs"
+                          onClick={() => setPresetLibraryView("saved")}
+                          data-ocid="dashboard.presets.saved_tab"
                         >
-                          <button
-                            type="button"
-                            className="flex flex-1 min-w-0 cursor-pointer items-center gap-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            onClick={() =>
-                              setSelectedPresetId(preset.id.toString())
-                            }
-                            data-ocid={`dashboard.preset.select_button.${idx + 1}`}
+                          <Settings2 className="w-3.5 h-3.5" />
+                          My presets ({activePresets})
+                        </Button>
+                        <Button
+                          type="button"
+                          role="tab"
+                          aria-selected={presetLibraryView === "built-in"}
+                          variant={
+                            presetLibraryView === "built-in"
+                              ? "secondary"
+                              : "ghost"
+                          }
+                          size="sm"
+                          className="h-7 gap-1.5 px-2.5 text-xs"
+                          onClick={() => setPresetLibraryView("built-in")}
+                          data-ocid="dashboard.presets.agents_tab"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          Built-in agents ({builtInAgentCount})
+                        </Button>
+                      </div>
+                      {presetLibraryView === "saved" && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => navigate({ to: "/user/settings" })}
+                          className="gap-1.5 text-xs h-7"
+                          data-ocid="dashboard.presets.new_button"
+                        >
+                          <Plus className="w-3 h-3" />
+                          New custom preset
+                        </Button>
+                      )}
+                    </div>
+
+                    {presetLibraryView === "built-in" ? (
+                      <div className="max-h-[620px] overflow-y-auto pr-1">
+                        <AgentPresetGallery
+                          embedded
+                          kind="outbound"
+                          title="Built-in call agents"
+                          description="Add a polished professional agent or a playful fictional character. Each one becomes an editable preset you own."
+                          actionLabel="Add & select"
+                          busyTemplateId={addingAgentId}
+                          onUseTemplate={handleUseAgentTemplate}
+                          dataOcidPrefix="dashboard.agent_gallery"
+                        />
+                      </div>
+                    ) : presetsLoading ? (
+                      <div className="space-y-2">
+                        {[1, 2, 3].map((i) => (
+                          <Skeleton key={i} className="h-14 w-full" />
+                        ))}
+                      </div>
+                    ) : (presets ?? []).length === 0 ? (
+                      <div
+                        className="flex flex-col items-center justify-center py-10 text-center"
+                        data-ocid="dashboard.presets.grid_empty_state"
+                      >
+                        <Settings2 className="w-8 h-8 text-muted-foreground/40 mb-3" />
+                        <p className="text-sm font-medium text-muted-foreground">
+                          No presets configured
+                        </p>
+                        <p className="text-xs text-muted-foreground/70 mt-1 mb-4">
+                          Add a built-in agent or create your own call setup.
+                        </p>
+                        <div className="flex flex-wrap justify-center gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => setPresetLibraryView("built-in")}
+                            data-ocid="dashboard.presets.browse_empty_button"
                           >
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <p className="text-sm font-medium text-foreground truncate">
-                                  {preset.name}
-                                </p>
-                                {isSelected && (
-                                  <Badge
-                                    variant="outline"
-                                    className="text-xs h-4 px-1 border-primary/40 text-primary shrink-0"
-                                  >
-                                    Selected
-                                  </Badge>
-                                )}
-                              </div>
-                              <p className="text-xs text-muted-foreground truncate">
-                                {getVoiceLabel(preset.voice, preset.voiceId)} ·{" "}
-                                {(() => {
-                                  const prompt = stripVoiceSessionBlock(
-                                    preset.systemPrompt,
-                                  ).cleanPrompt;
-                                  return `${prompt.substring(0, 60)}${prompt.length > 60 ? "..." : ""}`;
-                                })()}
-                              </p>
-                            </div>
-                          </button>
-                          <div className="flex items-center gap-1 shrink-0">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openInstructionEditor(preset);
-                              }}
-                              aria-label="Edit preset instructions"
-                              data-ocid={`dashboard.preset.edit_instructions_button.${idx + 1}`}
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                duplicatePreset.mutate(preset.id);
-                              }}
-                              aria-label="Duplicate preset"
-                              data-ocid={`dashboard.preset.duplicate_button.${idx + 1}`}
-                            >
-                              <Copy className="w-3.5 h-3.5" />
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setDeletePresetId(preset.id);
-                              }}
-                              aria-label="Delete preset"
-                              data-ocid={`dashboard.preset.delete_button.${idx + 1}`}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
-                          </div>
+                            Browse built-in agents
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => navigate({ to: "/user/settings" })}
+                            data-ocid="dashboard.presets.create_button"
+                          >
+                            Create custom preset
+                          </Button>
                         </div>
-                      );
-                    })}
+                      </div>
+                    ) : (
+                      <div className="max-h-[520px] space-y-2 overflow-y-auto pr-1">
+                        {(presets ?? []).map((preset: CallPreset, idx) => {
+                          const isSelected =
+                            selectedPresetId === preset.id.toString();
+                          return (
+                            <div
+                              key={preset.id.toString()}
+                              data-ocid={`dashboard.preset.item.${idx + 1}`}
+                              className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 transition-smooth ${
+                                isSelected
+                                  ? "bg-primary/10 border-primary/40"
+                                  : "bg-muted/30 hover:bg-muted/50 border-transparent hover:border-border"
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                className="flex flex-1 min-w-0 cursor-pointer items-center gap-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                onClick={() => {
+                                  setSelectedPresetId(preset.id.toString());
+                                  setPresetLibraryOpen(false);
+                                }}
+                                data-ocid={`dashboard.preset.select_button.${idx + 1}`}
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <p className="text-sm font-medium text-foreground truncate">
+                                      {preset.name}
+                                    </p>
+                                    {isSelected && (
+                                      <Badge
+                                        variant="outline"
+                                        className="text-xs h-4 px-1 border-primary/40 text-primary shrink-0"
+                                      >
+                                        Selected
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <p className="text-xs text-muted-foreground truncate">
+                                    {getVoiceLabel(
+                                      preset.voice,
+                                      preset.voiceId,
+                                    )}{" "}
+                                    · {(() => {
+                                      const prompt = stripVoiceSessionBlock(
+                                        preset.systemPrompt,
+                                      ).cleanPrompt;
+                                      return `${prompt.substring(0, 60)}${prompt.length > 60 ? "..." : ""}`;
+                                    })()}
+                                  </p>
+                                </div>
+                              </button>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openInstructionEditor(preset);
+                                  }}
+                                  aria-label="Edit preset instructions"
+                                  data-ocid={`dashboard.preset.edit_instructions_button.${idx + 1}`}
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    duplicatePreset.mutate(preset.id);
+                                  }}
+                                  aria-label="Duplicate preset"
+                                  data-ocid={`dashboard.preset.duplicate_button.${idx + 1}`}
+                                >
+                                  <Copy className="w-3.5 h-3.5" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setDeletePresetId(preset.id);
+                                  }}
+                                  aria-label="Delete preset"
+                                  data-ocid={`dashboard.preset.delete_button.${idx + 1}`}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
               </CardContent>

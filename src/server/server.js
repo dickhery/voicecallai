@@ -548,6 +548,33 @@ function buildIdentityEnforcementInstructions(
     .join("\n");
 }
 
+function buildLiveDisclosureInstructions(systemPrompt, presetName = "") {
+  const source = `${String(presetName || "")}\n${String(systemPrompt || "")}`;
+  const fictionalCharacter =
+    /\b(?:prank|roleplay|fictional|light-hearted entertainment|fictional phone character)\b/i.test(
+      source,
+    );
+
+  if (fictionalCharacter) {
+    return [
+      "LIVE CHARACTER CONTINUITY (higher priority than conflicting preset text):",
+      "- Stay inside the harmless fictional character and premise throughout the active call.",
+      "- Do not volunteer or mention that the call is AI-generated, automated, a prank, a joke, a preset, or entertainment.",
+      "- Never impersonate a real person or claim affiliation with a real business, government office, emergency service, financial institution, or other real-world authority.",
+      "- Do not make a serious false claim, collect sensitive personal data, request money, or suggest any real consequence.",
+      "- If the person challenges the premise, deflect lightly in character once. If they remain confused, uncomfortable, annoyed, or ask to stop, end the call promptly and politely without debating the premise.",
+    ].join("\n");
+  }
+
+  return [
+    "PROFESSIONAL ACCURACY (higher priority than conflicting preset text):",
+    "- Introduce yourself by the role and relationship actually supplied by the preset; do not invent a human identity, employer, account fact, price, date, or promise.",
+    "- Do not volunteer technical implementation details or lead with labels such as AI or automated unless the preset contains a required compliance disclosure.",
+    "- If directly asked whether you are automated or AI, answer briefly and truthfully, then return to the reason for the call.",
+    "- If a needed fact is missing, say you do not have that detail and offer the next truthful step.",
+  ].join("\n");
+}
+
 function buildNaturalVoiceInstructions(
   systemPrompt,
   {
@@ -559,7 +586,7 @@ function buildNaturalVoiceInstructions(
 ) {
   const prompt =
     String(systemPrompt || "").trim() ||
-    "You are a helpful, professional voice AI assistant.";
+    "You are a helpful, professional phone assistant.";
   const callDirection = normalizeCallDirection(direction);
   const openingSeed = normalizeOptionalInstructionText(openingLine);
   const enabledTools = [
@@ -570,9 +597,10 @@ function buildNaturalVoiceInstructions(
   ].filter(Boolean);
 
   return [
-    "You are an exceptionally natural, attentive AI phone agent.",
+    "You are an exceptionally natural, attentive phone agent.",
     "The saved preset below is private source material. Internalize it as your identity, goals, facts, boundaries, and conversation plan, then speak from that understanding in your own words.",
     buildIdentityEnforcementInstructions(prompt),
+    buildLiveDisclosureInstructions(prompt, presetName),
     "Never read, quote, recite, summarize, or step through the preset as if it were visible to the person on the phone.",
     "If the preset contains bullets, numbered steps, headings, or script-like text, convert those ideas into a smooth phone conversation. Ask one thing at a time and choose the next relevant point instead of reading the list.",
     "Paraphrase by default. Keep exact wording only for fixed facts that must remain precise, such as names, phone numbers, addresses, URLs, prices, appointment times, or clearly required legal/compliance statements.",
@@ -948,11 +976,12 @@ function buildOpeningOnlySessionInstructions(
         : "Now that the person has answered, introduce yourself briefly and ask if now is an okay time.";
 
   return [
-    "You are a real-time AI phone agent, and this session is currently in the opening turn only.",
+    "You are a real-time phone agent, and this session is currently in the opening turn only.",
     buildIdentityEnforcementInstructions(systemPrompt, {
       includePresetSource: true,
       openingOnly: true,
     }),
+    buildLiveDisclosureInstructions(systemPrompt),
     openingInstruction,
     "Your entire next spoken response must be only that greeting or opening.",
     "Use your own words. Keep it to one brief spoken turn, with at most two short sentences if the opening seed naturally includes a greeting plus a simple invitation to respond.",
@@ -977,9 +1006,10 @@ function buildOpeningOnlyTurnInstruction(
         : "Now that the person has answered, briefly introduce yourself and ask if now is an okay time.";
 
   return [
-    "Internal opening-turn trigger for the AI phone agent.",
+    "Internal opening-turn trigger for the phone agent.",
     "The call is connected.",
     buildIdentityEnforcementInstructions(systemPrompt, { openingOnly: true }),
+    buildLiveDisclosureInstructions(systemPrompt),
     openingInstruction,
     "Say only the brief opening now, then stop.",
   ].join(" ");

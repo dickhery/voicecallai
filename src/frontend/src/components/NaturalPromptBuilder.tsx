@@ -269,7 +269,7 @@ export function NaturalPromptBuilder({
                 placeholder={
                   direction === "inbound"
                     ? "Hi, thanks for calling. How can I help?"
-                    : "Hi, this is the AI assistant calling about your appointment. Is now okay?"
+                    : "Hi, I'm calling on behalf of the scheduling team about your appointment. Is now okay?"
                 }
                 data-ocid={`${dataOcidPrefix}.opening_line.textarea`}
                 className="resize-none text-sm"

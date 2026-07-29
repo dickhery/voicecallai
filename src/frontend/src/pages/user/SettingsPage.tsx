@@ -598,7 +598,7 @@ export default function SettingsPage() {
           <AgentPresetGallery
             kind="outbound"
             title="Start from a ready-made agent"
-            description="Professional call agents and playful prank personas. One click creates an editable preset you own."
+            description="Professional call agents and playful fictional characters. One click creates an editable preset you own."
             actionLabel="Add to my presets"
             busyTemplateId={addingAgentId}
             onUseTemplate={handleUseAgentTemplate}

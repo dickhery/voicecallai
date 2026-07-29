@@ -1,4 +1,4 @@
-type Voice =
+type Voice = 
  variant {
    ara;
    eve;
@@ -6,43 +6,43 @@ type Voice =
    rex;
    sal;
  };
-type UserRole =
+type UserRole = 
  variant {
    admin;
    guest;
    user;
  };
-type TwilioLineMutationResult =
+type TwilioLineMutationResult = 
  variant {
    err: text;
    ok: vec TwilioLine;
  };
-type TwilioLineInput =
+type TwilioLineInput = 
  record {
    enabled: bool;
    name: text;
    phoneNumber: text;
  };
-type TwilioLine =
+type TwilioLine = 
  record {
    enabled: bool;
    name: text;
    phoneNumber: text;
  };
-type TurnDetection =
+type TurnDetection = 
  record {
    prefixPaddingMs: nat;
    serverVad: bool;
    silenceDurationMs: nat;
    threshold: float64;
  };
-type ToolsEnabled =
+type ToolsEnabled = 
  record {
    functionCalling: bool;
    webSearch: bool;
    xSearch: bool;
  };
-type SystemLog =
+type SystemLog = 
  record {
    callId: opt nat;
    level: variant {
@@ -53,12 +53,12 @@ type SystemLog =
    message: text;
    timestamp: int;
  };
-type StripeMode =
+type StripeMode = 
  variant {
    live;
    test;
  };
-type SampleRate =
+type SampleRate = 
  variant {
    hz16000;
    hz22050;
@@ -68,18 +68,18 @@ type SampleRate =
    hz48000;
    hz8000;
  };
-type ReserveCallResult =
+type ReserveCallResult = 
  variant {
    err: text;
    ok: CallReservationPublic;
  };
-type PurchaseIntentStatus =
+type PurchaseIntentStatus = 
  variant {
    canceled;
    paid;
    pending;
  };
-type PurchaseIntentPublic =
+type PurchaseIntentPublic = 
  record {
    amountCents: nat;
    createdAt: int;
@@ -93,7 +93,7 @@ type PurchaseIntentPublic =
    user: principal;
  };
 type PresetId = nat;
-type InitiateCallResult =
+type InitiateCallResult = 
  variant {
    err: text;
    ok: record {
@@ -101,28 +101,28 @@ type InitiateCallResult =
          callSid: text;
        };
  };
-type InitiateCallInput =
+type InitiateCallInput = 
  record {
    presetId: nat;
    recipientPhone: text;
  };
-type IcrcAccount =
+type IcrcAccount = 
  record {
    owner: principal;
    subaccount: opt blob;
  };
-type IcpTransferStatus =
+type IcpTransferStatus = 
  variant {
    completed;
    failed;
    pending;
  };
-type IcpTransferResult =
+type IcpTransferResult = 
  variant {
    err: AgentError;
    ok: IcpTransfer;
  };
-type IcpTransfer =
+type IcpTransfer = 
  record {
    amountE8s: nat;
    blockIndex: opt nat;
@@ -133,18 +133,18 @@ type IcpTransfer =
    to: IcrcAccount;
    user: principal;
  };
-type IcpPurchaseStatus =
+type IcpPurchaseStatus = 
  variant {
    completed;
    failed;
    pending;
  };
-type IcpPurchaseResult =
+type IcpPurchaseResult = 
  variant {
    err: AgentError;
    ok: IcpPurchase;
  };
-type IcpPurchase =
+type IcpPurchase = 
  record {
    amountE8s: nat;
    blockIndex: opt nat;
@@ -156,12 +156,12 @@ type IcpPurchase =
    status: IcpPurchaseStatus;
    user: principal;
  };
-type IcpPricingResult =
+type IcpPricingResult = 
  variant {
    err: text;
    ok: IcpPricing;
  };
-type IcpPricing =
+type IcpPricing = 
  record {
    expiresAt: int;
    isFresh: bool;
@@ -175,7 +175,7 @@ type IcpPricing =
    usdRate: nat64;
    usdRateDecimals: nat32;
  };
-type IcpPhoneTimePackage =
+type IcpPhoneTimePackage = 
  record {
    amountCents: nat;
    id: text;
@@ -183,26 +183,26 @@ type IcpPhoneTimePackage =
    priceE8s: nat;
    seconds: nat;
  };
-type CreatePurchaseIntentResult =
+type CreatePurchaseIntentResult = 
  variant {
    err: text;
    ok: PurchaseIntentPublic;
  };
-type CallStatus =
+type CallStatus = 
  variant {
    completed;
    failed;
    inProgress;
    pending;
  };
-type CallReservationStatus =
+type CallReservationStatus = 
  variant {
    active;
    canceled;
    finished;
    "reserved";
  };
-type CallReservationPublic =
+type CallReservationPublic = 
  record {
    allowedSeconds: nat;
    billedSeconds: opt nat;
@@ -222,7 +222,7 @@ type CallReservationPublic =
    usedSeconds: opt nat;
    user: principal;
  };
-type CallRecordPublic =
+type CallRecordPublic = 
  record {
    callSid: opt text;
    endTime: opt int;
@@ -234,12 +234,12 @@ type CallRecordPublic =
    transcript: opt text;
    userId: principal;
  };
-type CallPresetMutationResult =
+type CallPresetMutationResult = 
  variant {
    err: text;
    ok: CallPreset;
  };
-type CallPresetInput =
+type CallPresetInput = 
  record {
    audioFormat: AudioFormat;
    name: text;
@@ -250,7 +250,7 @@ type CallPresetInput =
    voice: Voice;
    voiceId: opt text;
  };
-type CallPreset =
+type CallPreset = 
  record {
    audioFormat: AudioFormat;
    id: nat;
@@ -264,26 +264,26 @@ type CallPreset =
    voiceId: opt text;
  };
 type CallId = nat;
-type BillingStatus =
+type BillingStatus = 
  record {
    availableSeconds: nat;
    balanceSeconds: nat;
    packages: vec BillingPackage;
    reservedSeconds: nat;
  };
-type BillingPackage =
+type BillingPackage = 
  record {
    amountCents: nat;
    id: text;
    name: text;
    seconds: nat;
  };
-type BillingMutationResult =
+type BillingMutationResult = 
  variant {
    err: text;
    ok: bool;
  };
-type Backend =
+type Backend = 
  service {
    _initializeAccessControl: () -> ();
    adminAddPromoMinutes: (user: principal, minutes: nat) ->
@@ -392,23 +392,23 @@ type Backend =
    verifyCallReservation: (reservationId: text, callToken: text) ->
     (ReserveCallResult);
  };
-type AudioFormat =
+type AudioFormat = 
  variant {
    pcm;
    pcma;
    pcmu;
  };
-type AnsweringPresetStatus =
+type AnsweringPresetStatus = 
  variant {
    pendingVerification;
    verified;
  };
-type AnsweringPresetMutationResult =
+type AnsweringPresetMutationResult = 
  variant {
    err: text;
    ok: AnsweringPreset;
  };
-type AnsweringPresetInput =
+type AnsweringPresetInput = 
  record {
    audioFormat: AudioFormat;
    captureOptions: AnsweringCaptureOptions;
@@ -423,7 +423,7 @@ type AnsweringPresetInput =
    voiceId: opt text;
    webhookSecret: text;
  };
-type AnsweringPreset =
+type AnsweringPreset = 
  record {
    audioFormat: AudioFormat;
    captureOptions: AnsweringCaptureOptions;
@@ -445,7 +445,7 @@ type AnsweringPreset =
    voiceId: opt text;
    webhookSecret: text;
  };
-type AnsweringLiveSession =
+type AnsweringLiveSession = 
  record {
    allowedSeconds: nat;
    answeringPresetId: nat;
@@ -457,25 +457,25 @@ type AnsweringLiveSession =
    startedAt: int;
    userId: principal;
  };
-type AnsweringCaptureOptions =
+type AnsweringCaptureOptions = 
  record {
    consentConfirmed: bool;
    recordAudio: bool;
    saveTranscript: bool;
  };
-type AgentProfile =
+type AgentProfile = 
  record {
    createdAt: int;
    displayName: text;
    "principal": principal;
    updatedAt: int;
  };
-type AgentInitializeResult =
+type AgentInitializeResult = 
  variant {
    err: text;
    ok: AgentProfile;
  };
-type AgentGuide =
+type AgentGuide = 
  record {
    apiVersion: text;
    appName: text;
@@ -490,7 +490,7 @@ type AgentGuide =
    safetyAndConsent: vec text;
    summary: text;
  };
-type AgentError =
+type AgentError = 
  record {
    availablePhoneSeconds: nat;
    code: text;
@@ -498,19 +498,19 @@ type AgentError =
    pricing: vec IcpPhoneTimePackage;
    retryable: bool;
  };
-type AgentCapability =
+type AgentCapability = 
  record {
    description: text;
    methodName: text;
    name: text;
    requiresUpdatePermission: bool;
  };
-type AgentCallResult =
+type AgentCallResult = 
  variant {
    err: AgentError;
    ok: AgentCallJob;
  };
-type AgentCallJobStatus =
+type AgentCallJobStatus = 
  variant {
    canceled;
    claimed;
@@ -518,7 +518,7 @@ type AgentCallJobStatus =
    failed;
    queued;
  };
-type AgentCallJob =
+type AgentCallJob = 
  record {
    callId: nat;
    callSid: opt text;
@@ -535,25 +535,25 @@ type AgentCallJob =
    status: AgentCallJobStatus;
    user: principal;
  };
-type AgentCallInput =
+type AgentCallInput = 
  record {
    captureOptions: AgentCallCaptureOptions;
    idempotencyKey: text;
    presetId: nat;
    recipientPhone: text;
  };
-type AgentCallDispatch =
+type AgentCallDispatch = 
  record {
    callToken: text;
    job: AgentCallJob;
  };
-type AgentCallCaptureOptions =
+type AgentCallCaptureOptions = 
  record {
    consentConfirmed: bool;
    recordAudio: bool;
    saveTranscript: bool;
  };
-type AgentCallArtifacts =
+type AgentCallArtifacts = 
  record {
    audioMimeType: opt text;
    audioUrl: opt text;
@@ -561,12 +561,12 @@ type AgentCallArtifacts =
    note: text;
    transcript: opt text;
  };
-type AgentAccountStatusResult =
+type AgentAccountStatusResult = 
  variant {
    err: text;
    ok: AgentAccountStatus;
  };
-type AgentAccountStatus =
+type AgentAccountStatus = 
  record {
    account: AgentAccount;
    billing: BillingStatus;
@@ -576,7 +576,7 @@ type AgentAccountStatus =
    message: text;
    pricing: IcpPricing;
  };
-type AgentAccount =
+type AgentAccount = 
  record {
    depositAccount: IcrcAccount;
    ledgerCanister: principal;
