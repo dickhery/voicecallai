@@ -184,9 +184,11 @@ The agent should discover and call these methods in order:
 
 1. `getAgentGuide` — public onboarding, consent rules, required call inputs,
    current packages, and the rest of the agent API.
-2. `agentInitialize` — registers the authenticated app principal. The same
-   Internet Identity app principal is the account boundary for presets, call
-   history, prepaid time, and the in-app ICP deposit account.
+2. `agentInitialize` — registers the authenticated app principal. Internet
+   Identity for `voicecallai.online` (web app derivation origin) is the account
+   boundary for presets, call history, prepaid time, Stripe top-ups, and the
+   in-app ICP deposit account. Humans and MCP agents that share that principal
+   see the same balances and history.
 3. `agentGetAccountStatus` — checks deposited ICP, ledger fee, available phone
    time, low-balance guidance, and cached ICP pricing.
 4. `agentRefreshIcpPricing` — refreshes ICP/USD through the Exchange Rate
@@ -275,8 +277,10 @@ duplicated in `env.json`.
 If you edit `src/frontend/public/env.json` directly, set:
 
 - `voice_server_url`: your Cloudflare Tunnel or deployed Node server URL
-- `ii_derivation_origin`: the canonical frontend canister origin used by
-  Internet Identity, normally `https://<frontend-id>.icp0.io`
+- `ii_derivation_origin`: the canonical origin used by Internet Identity so
+  the web app and MCP Agent Identity share one principal — production uses
+  `https://voicecallai.online` (canister URLs are listed in
+  `ii-alternative-origins`)
 
 The frontend build fails when the runtime URL is a placeholder, malformed, or
 blocked by the asset canister CSP.

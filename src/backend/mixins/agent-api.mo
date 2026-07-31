@@ -18,11 +18,13 @@ import AgentLib "../lib/agent";
 import BillingLib "../lib/billing";
 import CallsLib "../lib/calls";
 import ConfigLib "../lib/config";
+import IdentityLib "../lib/identity";
 import AgentTypes "../types/agent";
 
 mixin (
   canisterPrincipal : Principal,
   accessControlState : AccessControl.AccessControlState,
+  identityState : IdentityLib.State,
   agentState : AgentLib.State,
   billingState : BillingLib.State,
   callsState : CallsLib.State,
@@ -30,6 +32,9 @@ mixin (
   configState : ConfigLib.State,
   callPresetVoiceIds : ConfigLib.VoiceIdState,
 ) {
+  private func agentAccountOf(caller : Principal) : Principal {
+    IdentityLib.resolve(identityState, caller);
+  };
   type TransferArg = {
     from_subaccount : ?Blob;
     to : AgentTypes.IcrcAccount;
@@ -130,13 +135,17 @@ mixin (
     displayName : Text,
   ) : async AgentTypes.AgentInitializeResult {
     if (caller.isAnonymous()) {
-      return #err("Anonymous agents cannot initialize an account. Authenticate with Internet Identity through the ICP MCP connector.");
+      return #err("Anonymous agents cannot initialize an account. Authenticate with Internet Identity through the ICP MCP connector or the web app.");
     };
     if (displayName.toArray().size() > MAX_DISPLAY_NAME_CHARS) {
       return #err("Agent display name must be 80 characters or fewer.");
     };
     AccessControl.initialize(accessControlState, caller);
-    #ok(AgentLib.register(agentState, caller, displayName));
+    // Register both the session principal and the shared account principal so
+    // web and MCP sessions that resolve to the same account share one profile.
+    let account = agentAccountOf(caller);
+    ignore AgentLib.register(agentState, caller, displayName);
+    #ok(AgentLib.register(agentState, account, displayName));
   };
 
   /// Agent-readable onboarding, workflow, consent rules, current packages,
@@ -155,18 +164,19 @@ mixin (
   /// without making an inter-canister ledger call.
   public query ({ caller }) func agentGetAccountIdentity() : async AgentTypes.AgentAccount {
     requireAgent(caller);
-    AgentLib.accountFor(canisterPrincipal, caller);
+    AgentLib.accountFor(canisterPrincipal, agentAccountOf(caller));
   };
 
   /// Checks the in-app ICP ledger balance, current ledger fee, prepaid phone
   /// time, low-balance status, and current package pricing.
   public shared ({ caller }) func agentGetAccountStatus() : async AgentTypes.AgentAccountStatusResult {
     requireAgent(caller);
-    let account = AgentLib.accountFor(canisterPrincipal, caller);
+    let accountPrincipal = agentAccountOf(caller);
+    let account = AgentLib.accountFor(canisterPrincipal, accountPrincipal);
     try {
       let icpBalanceE8s = await icpLedger.icrc1_balance_of(account.depositAccount);
       let ledgerFeeE8s = await icpLedger.icrc1_fee();
-      let billing = BillingLib.getBillingStatus(billingState, caller);
+      let billing = BillingLib.getBillingStatus(billingState, accountPrincipal);
       let lowPhoneTime = billing.availableSeconds < AgentLib.lowPhoneTimeThresholdSeconds();
       let pricing = AgentLib.pricing(agentState);
       let message = if (lowPhoneTime) {
@@ -265,39 +275,40 @@ mixin (
     idempotencyKey : Text,
   ) : async AgentTypes.IcpPurchaseResult {
     requireAgent(caller);
+    let account = agentAccountOf(caller);
     switch (validateIdempotencyKey(idempotencyKey)) {
       case (?message) {
-        return #err(agentError("INVALID_IDEMPOTENCY_KEY", message, false, caller));
+        return #err(agentError("INVALID_IDEMPOTENCY_KEY", message, false, account));
       };
       case null {};
     };
-    if (not acquireLock(ledgerLocks, caller)) {
-      return #err(agentError("PAYMENT_IN_PROGRESS", "Another ICP operation is already in progress for this account.", true, caller));
+    if (not acquireLock(ledgerLocks, account)) {
+      return #err(agentError("PAYMENT_IN_PROGRESS", "Another ICP operation is already in progress for this account.", true, account));
     };
 
-    let purchase = switch (AgentLib.getPurchase(agentState, caller, idempotencyKey)) {
+    let purchase = switch (AgentLib.getPurchase(agentState, account, idempotencyKey)) {
       case (?existing) {
         if (existing.packageId != packageId) {
-          releaseLock(ledgerLocks, caller);
+          releaseLock(ledgerLocks, account);
           return #err(agentError(
             "IDEMPOTENCY_CONFLICT",
             "This idempotency key belongs to a different purchase. Use a new key for a new action.",
             false,
-            caller,
+            account,
           ));
         };
         switch (existing.status) {
           case (#completed) {
-            releaseLock(ledgerLocks, caller);
+            releaseLock(ledgerLocks, account);
             return #ok(AgentLib.toPurchase(existing));
           };
           case (#failed) {
-            releaseLock(ledgerLocks, caller);
+            releaseLock(ledgerLocks, account);
             return #err(agentError(
               "PURCHASE_FAILED",
               optionText(existing.error, "The previous purchase attempt failed. Use a new idempotency key after resolving the problem."),
               false,
-              caller,
+              account,
             ));
           };
           case (#pending) {};
@@ -306,41 +317,41 @@ mixin (
       };
       case null {
         if (not AgentLib.pricing(agentState).isFresh) {
-          releaseLock(ledgerLocks, caller);
+          releaseLock(ledgerLocks, account);
           return #err(agentError(
             "STALE_ICP_PRICING",
             "ICP pricing is stale. Call agentRefreshIcpPricing before buying phone time.",
             true,
-            caller,
+            account,
           ));
         };
         let phonePackage = switch (AgentLib.getIcpPackage(agentState, packageId)) {
           case (?value) { value };
           case null {
-            releaseLock(ledgerLocks, caller);
-            return #err(agentError("UNKNOWN_PACKAGE", "Unknown phone-time package.", false, caller));
+            releaseLock(ledgerLocks, account);
+            return #err(agentError("UNKNOWN_PACKAGE", "Unknown phone-time package.", false, account));
           };
         };
         if (phonePackage.priceE8s == 0) {
-          releaseLock(ledgerLocks, caller);
-          return #err(agentError("INVALID_PRICE", "The cached ICP package price is invalid.", true, caller));
+          releaseLock(ledgerLocks, account);
+          return #err(agentError("INVALID_PRICE", "The cached ICP package price is invalid.", true, account));
         };
-        if (not AgentLib.reservePaymentOperationSlot(agentState, caller)) {
-          releaseLock(ledgerLocks, caller);
+        if (not AgentLib.reservePaymentOperationSlot(agentState, account)) {
+          releaseLock(ledgerLocks, account);
           return #err(agentError(
             "PAYMENT_HISTORY_LIMIT",
             "This app account has reached its retained ICP payment-history limit. Contact the app operator before creating another payment.",
             false,
-            caller,
+            account,
           ));
         };
-        AgentLib.createPurchase(agentState, caller, idempotencyKey, phonePackage);
+        AgentLib.createPurchase(agentState, account, idempotencyKey, phonePackage);
       };
     };
 
     try {
       let result = await icpLedger.icrc1_transfer({
-        from_subaccount = ?AgentLib.subaccountFor(caller);
+        from_subaccount = ?AgentLib.subaccountFor(account);
         to = { owner = canisterPrincipal; subaccount = null };
         amount = purchase.amountE8s;
         fee = null;
@@ -358,15 +369,15 @@ mixin (
           let message = transferErrorText(error);
           let retryable = isRetryableTransferError(error);
           AgentLib.failPurchase(purchase, message, not retryable);
-          #err(agentError("ICP_TRANSFER_FAILED", message, retryable, caller));
+          #err(agentError("ICP_TRANSFER_FAILED", message, retryable, account));
         };
       };
     } catch (error) {
       let message = "ICP ledger call outcome is not confirmed: " # error.message() # ". Retry with the same idempotency key.";
       AgentLib.failPurchase(purchase, message, false);
-      #err(agentError("ICP_TRANSFER_UNCONFIRMED", message, true, caller));
+      #err(agentError("ICP_TRANSFER_UNCONFIRMED", message, true, account));
     } finally {
-      releaseLock(ledgerLocks, caller);
+      releaseLock(ledgerLocks, account);
     };
   };
 
@@ -378,50 +389,51 @@ mixin (
     idempotencyKey : Text,
   ) : async AgentTypes.IcpTransferResult {
     requireAgent(caller);
+    let account = agentAccountOf(caller);
     switch (validateIdempotencyKey(idempotencyKey)) {
       case (?message) {
-        return #err(agentError("INVALID_IDEMPOTENCY_KEY", message, false, caller));
+        return #err(agentError("INVALID_IDEMPOTENCY_KEY", message, false, account));
       };
       case null {};
     };
     if (amountE8s == 0 or amountE8s > MAX_TRANSFER_E8S) {
-      return #err(agentError("INVALID_TRANSFER_AMOUNT", "ICP transfer amount is outside the allowed range.", false, caller));
+      return #err(agentError("INVALID_TRANSFER_AMOUNT", "ICP transfer amount is outside the allowed range.", false, account));
     };
     switch (to.subaccount) {
       case (?subaccount) {
         if (subaccount.size() != 32) {
-          return #err(agentError("INVALID_SUBACCOUNT", "ICRC-1 subaccounts must be exactly 32 bytes.", false, caller));
+          return #err(agentError("INVALID_SUBACCOUNT", "ICRC-1 subaccounts must be exactly 32 bytes.", false, account));
         };
       };
       case null {};
     };
-    if (not acquireLock(ledgerLocks, caller)) {
-      return #err(agentError("TRANSFER_IN_PROGRESS", "Another ICP operation is already in progress for this account.", true, caller));
+    if (not acquireLock(ledgerLocks, account)) {
+      return #err(agentError("TRANSFER_IN_PROGRESS", "Another ICP operation is already in progress for this account.", true, account));
     };
 
-    let transfer = switch (AgentLib.getTransfer(agentState, caller, idempotencyKey)) {
+    let transfer = switch (AgentLib.getTransfer(agentState, account, idempotencyKey)) {
       case (?existing) {
         if (existing.to != to or existing.amountE8s != amountE8s) {
-          releaseLock(ledgerLocks, caller);
+          releaseLock(ledgerLocks, account);
           return #err(agentError(
             "IDEMPOTENCY_CONFLICT",
             "This idempotency key belongs to a different transfer. Use a new key for a new action.",
             false,
-            caller,
+            account,
           ));
         };
         switch (existing.status) {
           case (#completed) {
-            releaseLock(ledgerLocks, caller);
+            releaseLock(ledgerLocks, account);
             return #ok(AgentLib.toTransfer(existing));
           };
           case (#failed) {
-            releaseLock(ledgerLocks, caller);
+            releaseLock(ledgerLocks, account);
             return #err(agentError(
               "TRANSFER_FAILED",
               optionText(existing.error, "The previous transfer failed. Use a new idempotency key after resolving the problem."),
               false,
-              caller,
+              account,
             ));
           };
           case (#pending) {};
@@ -429,22 +441,22 @@ mixin (
         existing;
       };
       case null {
-        if (not AgentLib.reservePaymentOperationSlot(agentState, caller)) {
-          releaseLock(ledgerLocks, caller);
+        if (not AgentLib.reservePaymentOperationSlot(agentState, account)) {
+          releaseLock(ledgerLocks, account);
           return #err(agentError(
             "PAYMENT_HISTORY_LIMIT",
             "This app account has reached its retained ICP payment-history limit. Contact the app operator before creating another transfer.",
             false,
-            caller,
+            account,
           ));
         };
-        AgentLib.createTransfer(agentState, caller, idempotencyKey, to, amountE8s);
+        AgentLib.createTransfer(agentState, account, idempotencyKey, to, amountE8s);
       };
     };
 
     try {
       let result = await icpLedger.icrc1_transfer({
-        from_subaccount = ?AgentLib.subaccountFor(caller);
+        from_subaccount = ?AgentLib.subaccountFor(account);
         to;
         amount = transfer.amountE8s;
         fee = null;
@@ -464,15 +476,15 @@ mixin (
           let message = transferErrorText(error);
           let retryable = isRetryableTransferError(error);
           AgentLib.failTransfer(transfer, message, not retryable);
-          #err(agentError("ICP_TRANSFER_FAILED", message, retryable, caller));
+          #err(agentError("ICP_TRANSFER_FAILED", message, retryable, account));
         };
       };
     } catch (error) {
       let message = "ICP ledger call outcome is not confirmed: " # error.message() # ". Retry with the same idempotency key.";
       AgentLib.failTransfer(transfer, message, false);
-      #err(agentError("ICP_TRANSFER_UNCONFIRMED", message, true, caller));
+      #err(agentError("ICP_TRANSFER_UNCONFIRMED", message, true, account));
     } finally {
-      releaseLock(ledgerLocks, caller);
+      releaseLock(ledgerLocks, account);
     };
   };
 
@@ -482,13 +494,14 @@ mixin (
     input : AgentTypes.AgentCallInput,
   ) : async AgentTypes.AgentCallResult {
     requireAgent(caller);
+    let account = agentAccountOf(caller);
     switch (validateIdempotencyKey(input.idempotencyKey)) {
       case (?message) {
-        return #err(agentError("INVALID_IDEMPOTENCY_KEY", message, false, caller));
+        return #err(agentError("INVALID_IDEMPOTENCY_KEY", message, false, account));
       };
       case null {};
     };
-    switch (AgentLib.getCallJobByIdempotency(agentState, caller, input.idempotencyKey)) {
+    switch (AgentLib.getCallJobByIdempotency(agentState, account, input.idempotencyKey)) {
       case (?existing) { return #ok(AgentLib.toCallJob(existing)) };
       case null {};
     };
@@ -497,7 +510,7 @@ mixin (
         "INVALID_PHONE_NUMBER",
         "Phone number must be E.164 format, for example +15551234567.",
         false,
-        caller,
+        account,
       ));
     };
     if (
@@ -508,54 +521,57 @@ mixin (
         "CAPTURE_CONSENT_REQUIRED",
         "consentConfirmed must be true before saving transcripts or recordings.",
         false,
-        caller,
+        account,
       ));
     };
     switch (ConfigLib.getPreset(configState, callPresetVoiceIds, input.presetId)) {
       case null {
-        return #err(agentError("PRESET_NOT_FOUND", "Preset not found.", false, caller));
+        return #err(agentError("PRESET_NOT_FOUND", "Preset not found.", false, account));
       };
       case (?preset) {
-        if (preset.ownerId != caller and not AccessControl.isAdmin(accessControlState, caller)) {
-          return #err(agentError("PRESET_NOT_FOUND", "Preset not found.", false, caller));
+        if (
+          not IdentityLib.sameAccount(identityState, caller, preset.ownerId) and
+          not AccessControl.isAdmin(accessControlState, caller)
+        ) {
+          return #err(agentError("PRESET_NOT_FOUND", "Preset not found.", false, account));
         };
       };
     };
-    if (not AgentLib.canCreateCallJob(agentState, caller)) {
+    if (not AgentLib.canCreateCallJob(agentState, account)) {
       return #err(agentError(
         "CALL_JOB_LIMIT",
         "This app account has too many retained or pending MCP call jobs. Wait for pending calls to finish or contact the app operator.",
         true,
-        caller,
+        account,
       ));
     };
-    let available = BillingLib.getAvailableSeconds(billingState, caller);
+    let available = BillingLib.getAvailableSeconds(billingState, account);
     if (available == 0) {
       return #err(agentError(
         "PHONE_TIME_REQUIRED",
         "There is no available phone time. Tell the user the current ICP package prices and ask before buying a package.",
         false,
-        caller,
+        account,
       ));
     };
-    if (not acquireLock(callLocks, caller)) {
-      return #err(agentError("CALL_REQUEST_IN_PROGRESS", "Another call request is already being prepared for this account.", true, caller));
+    if (not acquireLock(callLocks, account)) {
+      return #err(agentError("CALL_REQUEST_IN_PROGRESS", "Another call request is already being prepared for this account.", true, account));
     };
 
     try {
       let callToken = await agentRandomCallToken();
-      switch (AgentLib.getCallJobByIdempotency(agentState, caller, input.idempotencyKey)) {
+      switch (AgentLib.getCallJobByIdempotency(agentState, account, input.idempotencyKey)) {
         case (?existing) { #ok(AgentLib.toCallJob(existing)) };
         case null {
           let callRecord = CallsLib.createCallRecord(
             callsState,
-            caller,
+            account,
             input.recipientPhone,
             input.presetId,
           );
           let reservation = BillingLib.createReservation(
             billingState,
-            caller,
+            account,
             input.recipientPhone,
             input.presetId,
             callRecord.id,
@@ -571,12 +587,12 @@ mixin (
                 ?Time.now(),
                 ?message,
               );
-              #err(agentError("CALL_RESERVATION_FAILED", message, false, caller));
+              #err(agentError("CALL_RESERVATION_FAILED", message, false, account));
             };
             case (#ok(reserved)) {
               let job = AgentLib.createCallJob(
                 agentState,
-                caller,
+                account,
                 input.idempotencyKey,
                 reserved,
                 callToken,
@@ -598,17 +614,17 @@ mixin (
         "CALL_QUEUE_FAILED",
         "Unable to create a secure call token: " # error.message(),
         true,
-        caller,
+        account,
       ));
     } finally {
-      releaseLock(callLocks, caller);
+      releaseLock(callLocks, account);
     };
   };
 
   /// Lists the authenticated principal's recent MCP-created call jobs.
   public query ({ caller }) func agentListCallJobs() : async [AgentTypes.AgentCallJob] {
     requireAgent(caller);
-    AgentLib.listCallJobsForUser(agentState, caller);
+    AgentLib.listCallJobsForUser(agentState, agentAccountOf(caller));
   };
 
   /// Returns a listen-only HTTPS page for an active MCP-created call. The
@@ -621,7 +637,10 @@ mixin (
     switch (AgentLib.getCallJob(agentState, jobId)) {
       case null { null };
       case (?job) {
-        if (job.user != caller and not AccessControl.isAdmin(accessControlState, caller)) {
+        if (
+          not IdentityLib.sameAccount(identityState, caller, job.user) and
+          not AccessControl.isAdmin(accessControlState, caller)
+        ) {
           return null;
         };
         switch (liveCallLinks.get(jobId)) {
@@ -640,7 +659,7 @@ mixin (
     jobId : Text,
   ) : async Bool {
     requireAgent(caller);
-    switch (AgentLib.cancelCallJob(agentState, jobId, caller)) {
+    switch (AgentLib.cancelCallJob(agentState, jobId, agentAccountOf(caller))) {
       case null { false };
       case (?reservationId) {
         liveCallLinks.remove(jobId);
@@ -679,7 +698,10 @@ mixin (
         return #err(agentError("CALL_JOB_NOT_FOUND", "Call job not found.", false, caller));
       };
       case (?job) {
-        if (job.user != caller and not AccessControl.isAdmin(accessControlState, caller)) {
+        if (
+          not IdentityLib.sameAccount(identityState, caller, job.user) and
+          not AccessControl.isAdmin(accessControlState, caller)
+        ) {
           return #err(agentError("UNAUTHORIZED", "You can only end call jobs you created.", false, caller));
         };
         switch (job.status) {
@@ -740,7 +762,7 @@ mixin (
   };
 
   private func agentCancelQueuedCallInternal(jobId : Text, caller : Principal) : Bool {
-    switch (AgentLib.cancelCallJob(agentState, jobId, caller)) {
+    switch (AgentLib.cancelCallJob(agentState, jobId, agentAccountOf(caller))) {
       case null { false };
       case (?reservationId) {
         liveCallLinks.remove(jobId);
@@ -776,7 +798,10 @@ mixin (
     switch (CallsLib.getCallRecord(callsState, callId)) {
       case null { null };
       case (?call) {
-        if (call.userId != caller and not AccessControl.isAdmin(accessControlState, caller)) {
+        if (
+          not IdentityLib.sameAccount(identityState, caller, call.userId) and
+          not AccessControl.isAdmin(accessControlState, caller)
+        ) {
           return null;
         };
         ?AgentLib.artifacts(CallsLib.toPublic(call));
@@ -935,7 +960,7 @@ mixin (
       code,
       message,
       retryable,
-      BillingLib.getAvailableSeconds(billingState, user),
+      BillingLib.getAvailableSeconds(billingState, agentAccountOf(user)),
     );
   };
 
@@ -943,9 +968,15 @@ mixin (
     if (caller.isAnonymous()) {
       Runtime.trap("Unauthorized: authenticate through Internet Identity");
     };
-    switch (AgentLib.getProfile(agentState, caller)) {
-      case null { Runtime.trap("Unauthorized: call agentInitialize first") };
+    let account = agentAccountOf(caller);
+    switch (AgentLib.getProfile(agentState, account)) {
       case (?_) {};
+      case null {
+        switch (AgentLib.getProfile(agentState, caller)) {
+          case null { Runtime.trap("Unauthorized: call agentInitialize first") };
+          case (?_) {};
+        };
+      };
     };
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: call agentInitialize first");

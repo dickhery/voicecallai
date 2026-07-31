@@ -6,10 +6,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
+  useClaimAccountLinkOffer,
+  useCreateAccountLinkOffer,
   useGetAgentAccountIdentity,
   useGetAgentAccountStatus,
   useGetAgentPricing,
+  useGetMyAccountIdentity,
+  useGetMyBillingStatus,
   useRefreshAgentIcpPricing,
 } from "@/hooks/use-backend";
 import { copyTextToClipboard } from "@/lib/clipboard";
@@ -19,9 +24,11 @@ import {
   CheckCircle2,
   Copy,
   ExternalLink,
+  Link2,
   RefreshCw,
   Wallet,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 const ICP_MCP_URL = "https://mcp.internetcomputer.org/mcp";
@@ -60,18 +67,56 @@ async function copyValue(value: string, label: string) {
 
 export function AgentAccessCard() {
   const accountQuery = useGetAgentAccountIdentity();
+  const identityQuery = useGetMyAccountIdentity();
+  const billingQuery = useGetMyBillingStatus();
   const pricingQuery = useGetAgentPricing();
   const statusMutation = useGetAgentAccountStatus();
   const refreshPricing = useRefreshAgentIcpPricing();
+  const createLink = useCreateAccountLinkOffer();
+  const claimLink = useClaimAccountLinkOffer();
+  const [linkCode, setLinkCode] = useState("");
+  const [issuedCode, setIssuedCode] = useState<string | null>(null);
 
   const account = accountQuery.data;
+  const identity = identityQuery.data;
+  const billing = billingQuery.data;
   const pricing = pricingQuery.data;
   const statusResult = statusMutation.data;
   const status = statusResult?.__kind__ === "ok" ? statusResult.ok : undefined;
+  const phoneMinutes = Math.floor(
+    Number(
+      status?.billing.availableSeconds ?? billing?.availableSeconds ?? 0n,
+    ) / 60,
+  );
   const subaccountHex = bytesToHex(account?.depositAccount.subaccount);
   const icrcAccount = account
     ? `owner=${account.depositAccount.owner.toText()}; subaccount=0x${subaccountHex}`
     : "";
+  const accountPrincipalText =
+    identity?.accountPrincipal?.toText?.() ??
+    account?.principal?.toText?.() ??
+    "";
+  const sessionPrincipalText =
+    identity?.sessionPrincipal?.toText?.() ?? accountPrincipalText;
+
+  useEffect(() => {
+    // Warm the shared balance view once so humans see agent phone time without
+    // an extra click when the session principal is already initialized.
+    if (
+      accountQuery.isSuccess &&
+      !statusMutation.data &&
+      !statusMutation.isPending
+    ) {
+      void statusMutation.mutateAsync().catch(() => {
+        // Balance can still come from getMyBillingStatus.
+      });
+    }
+  }, [
+    accountQuery.isSuccess,
+    statusMutation.data,
+    statusMutation.isPending,
+    statusMutation.mutateAsync,
+  ]);
 
   const handleCheckBalance = async () => {
     try {
@@ -80,7 +125,7 @@ export function AgentAccessCard() {
         toast.error(result.err);
         return;
       }
-      toast.success("Agent account balances updated");
+      toast.success("Shared account balances updated");
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Unable to check balances",
@@ -103,6 +148,43 @@ export function AgentAccessCard() {
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Unable to refresh pricing",
+      );
+    }
+  };
+
+  const handleCreateLinkCode = async () => {
+    try {
+      const result = await createLink.mutateAsync();
+      if (result.__kind__ === "err") {
+        toast.error(result.err);
+        return;
+      }
+      setIssuedCode(result.ok.code);
+      toast.success("Link code created — claim it from the other session");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Unable to create link code",
+      );
+    }
+  };
+
+  const handleClaimLinkCode = async () => {
+    const code = linkCode.trim();
+    if (!code) {
+      toast.error("Enter a link code first");
+      return;
+    }
+    try {
+      const result = await claimLink.mutateAsync(code);
+      if (result.__kind__ === "err") {
+        toast.error(result.err);
+        return;
+      }
+      setLinkCode("");
+      toast.success("Identities linked — balances and history are shared");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Unable to claim link code",
       );
     }
   };
@@ -234,9 +316,10 @@ export function AgentAccessCard() {
             <div className="flex items-center gap-2">
               <Wallet className="w-4 h-4 text-primary" />
               <div>
-                <p className="text-xs font-semibold">Agent ICP account</p>
+                <p className="text-xs font-semibold">Shared app account</p>
                 <p className="text-[11px] text-muted-foreground">
-                  Isolated to your authenticated app principal
+                  Web (Stripe) and MCP agent (ICP) use the same phone-time
+                  balance and call history for this Internet Identity.
                 </p>
               </div>
             </div>
@@ -255,24 +338,53 @@ export function AgentAccessCard() {
             </Button>
           </div>
 
-          {status && (
-            <div className="grid grid-cols-2 gap-2">
-              <div className="rounded-md bg-muted/30 px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                  ICP available
-                </p>
-                <p className="text-sm font-semibold mt-0.5">
-                  {formatIcp(status.icpBalanceE8s)}
-                </p>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-md bg-muted/30 px-3 py-2">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                ICP deposit
+              </p>
+              <p className="text-sm font-semibold mt-0.5">
+                {status ? formatIcp(status.icpBalanceE8s) : "—"}
+              </p>
+            </div>
+            <div className="rounded-md bg-muted/30 px-3 py-2">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Phone time
+              </p>
+              <p className="text-sm font-semibold mt-0.5">{phoneMinutes} min</p>
+            </div>
+          </div>
+
+          {accountPrincipalText && (
+            <div>
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+                Account principal
+              </p>
+              <div className="flex items-center gap-2">
+                <code
+                  className="text-[10px] font-mono bg-muted/30 rounded px-2 py-1.5 truncate flex-1"
+                  title={accountPrincipalText}
+                >
+                  {accountPrincipalText}
+                </code>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="w-8 h-8 shrink-0"
+                  onClick={() =>
+                    copyValue(accountPrincipalText, "Account principal")
+                  }
+                  aria-label="Copy account principal"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                </Button>
               </div>
-              <div className="rounded-md bg-muted/30 px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                  Phone time
-                </p>
-                <p className="text-sm font-semibold mt-0.5">
-                  {Math.floor(Number(status.billing.availableSeconds) / 60)} min
-                </p>
-              </div>
+              {sessionPrincipalText &&
+                sessionPrincipalText !== accountPrincipalText && (
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    Session principal differs and is linked to this account.
+                  </p>
+                )}
             </div>
           )}
 
@@ -280,7 +392,7 @@ export function AgentAccessCard() {
             <div className="space-y-2">
               <div>
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
-                  ICRC-1 deposit account
+                  ICRC-1 deposit account (agent ICP funding)
                 </p>
                 <div className="flex items-center gap-2">
                   <code
@@ -329,6 +441,71 @@ export function AgentAccessCard() {
               </div>
             </div>
           )}
+        </div>
+
+        <div className="rounded-lg border border-border p-4 space-y-3">
+          <div className="flex items-start gap-2">
+            <Link2 className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+            <div>
+              <p className="text-xs font-semibold">
+                Link a previous app principal
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                If an older web login or MCP session used a different principal
+                for the same Internet Identity, create a code in one session and
+                claim it in the other to merge phone time and history.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              className="h-8 gap-2"
+              onClick={() => {
+                void handleCreateLinkCode();
+              }}
+              disabled={createLink.isPending}
+              data-ocid="settings.agent_access.create_link_button"
+            >
+              {createLink.isPending ? "Creating…" : "Create link code"}
+            </Button>
+            {issuedCode && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 gap-2 font-mono"
+                onClick={() => copyValue(issuedCode, "Link code")}
+              >
+                <Copy className="w-3.5 h-3.5" />
+                {issuedCode}
+              </Button>
+            )}
+          </div>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Input
+              value={linkCode}
+              onChange={(event) =>
+                setLinkCode(event.target.value.toUpperCase())
+              }
+              placeholder="Enter link code"
+              className="h-8 font-mono text-xs"
+              maxLength={16}
+              data-ocid="settings.agent_access.claim_link_input"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8"
+              onClick={() => {
+                void handleClaimLinkCode();
+              }}
+              disabled={claimLink.isPending || !linkCode.trim()}
+              data-ocid="settings.agent_access.claim_link_button"
+            >
+              {claimLink.isPending ? "Linking…" : "Claim code"}
+            </Button>
+          </div>
         </div>
 
         <div className="rounded-lg border border-border p-4">
@@ -384,9 +561,10 @@ export function AgentAccessCard() {
         </div>
 
         <p className="text-[11px] leading-relaxed text-muted-foreground">
-          AI sessions authorized to the same Internet Identity app principal
-          share this account, presets, phone-time balance, and call history.
-          Stripe remains available to people using the web app.
+          Humans signed into the web app can buy phone time with Stripe. Agents
+          authenticated through MCP can deposit ICP to the deposit account above
+          and purchase the same packages. Both paths credit the shared
+          phone-time balance and appear in the same call history.
         </p>
       </CardContent>
     </Card>

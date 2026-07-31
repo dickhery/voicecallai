@@ -125,6 +125,54 @@ const sampleAnsweringPreset = {
 
 export const mockBackend: Partial<backendInterface> = {
   _initializeAccessControl: async () => undefined,
+
+  getMyAccountIdentity: async () => ({
+    sessionPrincipal: samplePrincipal,
+    accountPrincipal: samplePrincipal,
+    groupPrincipals: [samplePrincipal],
+    isLinked: false,
+  }),
+
+  createAccountLinkOffer: async () => ({
+    __kind__: "ok" as const,
+    ok: {
+      code: "MOCKCODE",
+      expiresAt: BigInt(Date.now() * 1_000_000 + 900_000_000_000),
+      accountPrincipal: samplePrincipal,
+    },
+  }),
+
+  claimAccountLinkOffer: async (_code: string) => ({
+    __kind__: "ok" as const,
+    ok: {
+      sessionPrincipal: samplePrincipal,
+      accountPrincipal: samplePrincipal,
+      groupPrincipals: [samplePrincipal],
+      isLinked: true,
+    },
+  }),
+
+  agentInitialize: async (_displayName: string) => ({
+    __kind__: "ok" as const,
+    ok: {
+      principal: samplePrincipal,
+      displayName: "Mock agent",
+      createdAt: BigInt(Date.now() * 1_000_000),
+      updatedAt: BigInt(Date.now() * 1_000_000),
+    },
+  }),
+
+  agentGetAccountIdentity: async () => ({
+    principal: samplePrincipal,
+    ledgerCanister: samplePrincipal,
+    depositAccount: {
+      owner: samplePrincipal,
+      subaccount: new Uint8Array(32),
+    },
+    legacyAccountId: new Uint8Array(32),
+    legacyAccountIdHex: "00".repeat(32),
+  }),
+
   adminAddPromoMinutes: async (_user: Principal, _minutes: bigint) => ({
     __kind__: "ok",
     ok: true,

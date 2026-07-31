@@ -203,6 +203,20 @@ type CreatePurchaseIntentResult =
    err: text;
    ok: PurchaseIntentPublic;
  };
+type CreateLinkOfferResult = 
+ variant {
+   err: text;
+   ok: record {
+         accountPrincipal: principal;
+         code: text;
+         expiresAt: int;
+       };
+ };
+type ClaimLinkOfferResult = 
+ variant {
+   err: text;
+   ok: AccountIdentity;
+ };
 type CallStatus = 
  variant {
    completed;
@@ -327,10 +341,12 @@ type Backend =
     (BillingMutationResult);
    cancelCallReservationByCallSidForServer: (callSid: text, reason: text) ->
     (BillingMutationResult);
+   claimAccountLinkOffer: (code: text) -> (ClaimLinkOfferResult);
    claimAgentCallForServer: (jobId: text) -> (opt AgentCallDispatch);
    clearPendingCallEndForServer: (id: text) -> (bool);
    completeAgentCallDispatchForServer: (jobId: text, callSid: opt text,
     serverSessionId: opt text, liveAudioUrl: opt text) -> (bool);
+   createAccountLinkOffer: () -> (CreateLinkOfferResult);
    createAnsweringPreset: (input: AnsweringPresetInput) ->
     (AnsweringPresetMutationResult);
    createPreset: (input: CallPresetInput) -> (CallPreset);
@@ -365,6 +381,7 @@ type Backend =
    getBillingPackages: () -> (vec BillingPackage) query;
    getCallRecord: (id: CallId) -> (opt CallRecordPublic) query;
    getCallerUserRole: () -> (UserRole) query;
+   getMyAccountIdentity: () -> (AccountIdentity) query;
    getMyBillingStatus: () -> (BillingStatus) query;
    getPreset: (id: PresetId) -> (opt CallPreset) query;
    getPresetForServer: (id: PresetId) -> (opt CallPreset) query;
@@ -611,5 +628,12 @@ type AgentAccount =
    legacyAccountId: blob;
    legacyAccountIdHex: text;
    "principal": principal;
+ };
+type AccountIdentity = 
+ record {
+   accountPrincipal: principal;
+   groupPrincipals: vec principal;
+   isLinked: bool;
+   sessionPrincipal: principal;
  };
 service : () -> Backend

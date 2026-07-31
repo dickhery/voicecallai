@@ -619,8 +619,28 @@ module {
     voiceIds : VoiceIdState,
     userId : Principal,
   ) : [Types.CallPreset] {
+    listPresetsForUsers(state, voiceIds, [userId]);
+  };
+
+  public func listPresetsForUsers(
+    state : State,
+    voiceIds : VoiceIdState,
+    userIds : [Principal],
+  ) : [Types.CallPreset] {
+    if (userIds.size() == 0) {
+      return [];
+    };
     state.presets.values()
-      .filter(func(p) { Principal.equal(p.ownerId, userId) })
+      .filter(
+        func(p) {
+          for (userId in userIds.values()) {
+            if (Principal.equal(p.ownerId, userId)) {
+              return true;
+            };
+          };
+          false;
+        }
+      )
       .map(func(p) { toPublicPreset(voiceIds, p) })
       .toArray();
   };

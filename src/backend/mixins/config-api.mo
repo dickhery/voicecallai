@@ -2,17 +2,22 @@ import Runtime "mo:core/Runtime";
 import Principal "mo:core/Principal";
 import AccessControl "mo:caffeineai-authorization/access-control";
 import ConfigLib "../lib/config";
+import IdentityLib "../lib/identity";
 import ConfigTypes "../types/config";
 import Common "../types/common";
 
 mixin (
   accessControlState : AccessControl.AccessControlState,
+  identityState : IdentityLib.State,
   configState : ConfigLib.State,
   callPresetVoiceIds : ConfigLib.VoiceIdState,
   twilioLineState : ConfigLib.TwilioLineState,
   answeringState : ConfigLib.AnsweringState,
   answeringPresetVoiceIds : ConfigLib.VoiceIdState,
 ) {
+  private func configAccountOf(caller : Principal) : Principal {
+    IdentityLib.resolve(identityState, caller);
+  };
   // Admin: view non-secret line routing. Service-secret flags remain in the
   // response only for Candid compatibility and are always false.
   public query ({ caller }) func getAdminConfig() : async {
@@ -84,7 +89,7 @@ mixin (
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
     };
-    ConfigLib.createPreset(configState, callPresetVoiceIds, caller, input);
+    ConfigLib.createPreset(configState, callPresetVoiceIds, configAccountOf(caller), input);
   };
 
   public query ({ caller }) func getPreset(
@@ -96,7 +101,10 @@ mixin (
     switch (ConfigLib.getPreset(configState, callPresetVoiceIds, id)) {
       case null { null };
       case (?preset) {
-        if (Principal.equal(preset.ownerId, caller) or AccessControl.isAdmin(accessControlState, caller)) {
+        if (
+          IdentityLib.sameAccount(identityState, caller, preset.ownerId) or
+          AccessControl.isAdmin(accessControlState, caller)
+        ) {
           ?preset;
         } else {
           null;
@@ -118,7 +126,12 @@ mixin (
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
     };
-    ConfigLib.listPresetsForUser(configState, callPresetVoiceIds, caller);
+    // Union presets owned by any principal in the linked account group.
+    let group = IdentityLib.accountGroup(identityState, caller);
+    if (group.size() == 1) {
+      return ConfigLib.listPresetsForUser(configState, callPresetVoiceIds, group[0]);
+    };
+    ConfigLib.listPresetsForUsers(configState, callPresetVoiceIds, group);
   };
 
   public shared ({ caller }) func updatePreset(
@@ -128,7 +141,19 @@ mixin (
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
     };
-    ConfigLib.updatePreset(configState, callPresetVoiceIds, caller, id, input);
+    switch (ConfigLib.getPreset(configState, callPresetVoiceIds, id)) {
+      case null { null };
+      case (?preset) {
+        if (
+          not IdentityLib.sameAccount(identityState, caller, preset.ownerId) and
+          not AccessControl.isAdmin(accessControlState, caller)
+        ) {
+          Runtime.trap("Unauthorized: not the owner");
+        };
+        // Keep historical owner id; linked sessions act as the owner via sameAccount.
+        ConfigLib.updatePreset(configState, callPresetVoiceIds, preset.ownerId, id, input);
+      };
+    };
   };
 
   public shared ({ caller }) func updatePresetInstructions(
@@ -138,7 +163,24 @@ mixin (
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
     };
-    ConfigLib.updatePresetInstructions(configState, callPresetVoiceIds, caller, id, systemPrompt);
+    switch (ConfigLib.getPreset(configState, callPresetVoiceIds, id)) {
+      case null { #err("Preset not found.") };
+      case (?preset) {
+        if (
+          not IdentityLib.sameAccount(identityState, caller, preset.ownerId) and
+          not AccessControl.isAdmin(accessControlState, caller)
+        ) {
+          Runtime.trap("Unauthorized: not the owner");
+        };
+        ConfigLib.updatePresetInstructions(
+          configState,
+          callPresetVoiceIds,
+          preset.ownerId,
+          id,
+          systemPrompt,
+        );
+      };
+    };
   };
 
   public shared ({ caller }) func deletePreset(
@@ -147,7 +189,18 @@ mixin (
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
     };
-    ConfigLib.deletePreset(configState, callPresetVoiceIds, caller, id);
+    switch (ConfigLib.getPreset(configState, callPresetVoiceIds, id)) {
+      case null { false };
+      case (?preset) {
+        if (
+          not IdentityLib.sameAccount(identityState, caller, preset.ownerId) and
+          not AccessControl.isAdmin(accessControlState, caller)
+        ) {
+          Runtime.trap("Unauthorized: not the owner");
+        };
+        ConfigLib.deletePreset(configState, callPresetVoiceIds, preset.ownerId, id);
+      };
+    };
   };
 
   public shared ({ caller }) func duplicatePreset(
@@ -159,8 +212,11 @@ mixin (
     switch (ConfigLib.getPreset(configState, callPresetVoiceIds, id)) {
       case null { null };
       case (?preset) {
-        if (Principal.equal(preset.ownerId, caller) or AccessControl.isAdmin(accessControlState, caller)) {
-          ConfigLib.duplicatePreset(configState, callPresetVoiceIds, caller, id);
+        if (
+          IdentityLib.sameAccount(identityState, caller, preset.ownerId) or
+          AccessControl.isAdmin(accessControlState, caller)
+        ) {
+          ConfigLib.duplicatePreset(configState, callPresetVoiceIds, configAccountOf(caller), id);
         } else {
           null;
         };
@@ -174,14 +230,18 @@ mixin (
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
     };
-    ConfigLib.createAnsweringPreset(answeringState, answeringPresetVoiceIds, caller, input);
+    ConfigLib.createAnsweringPreset(answeringState, answeringPresetVoiceIds, configAccountOf(caller), input);
   };
 
   public query ({ caller }) func listMyAnsweringPresets() : async [ConfigTypes.AnsweringPreset] {
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
     };
-    ConfigLib.listAnsweringPresetsForUser(answeringState, answeringPresetVoiceIds, caller);
+    ConfigLib.listAnsweringPresetsForUser(
+      answeringState,
+      answeringPresetVoiceIds,
+      configAccountOf(caller),
+    );
   };
 
   public query ({ caller }) func getAnsweringPreset(
@@ -193,7 +253,10 @@ mixin (
     switch (ConfigLib.getAnsweringPreset(answeringState, answeringPresetVoiceIds, id)) {
       case null { null };
       case (?preset) {
-        if (not Principal.equal(preset.ownerId, caller) and not AccessControl.isAdmin(accessControlState, caller)) {
+        if (
+          not IdentityLib.sameAccount(identityState, caller, preset.ownerId) and
+          not AccessControl.isAdmin(accessControlState, caller)
+        ) {
           Runtime.trap("Unauthorized: can only view your own answering presets");
         };
         ?preset;
@@ -208,7 +271,24 @@ mixin (
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
     };
-    ConfigLib.updateAnsweringPreset(answeringState, answeringPresetVoiceIds, caller, id, input);
+    switch (ConfigLib.getAnsweringPreset(answeringState, answeringPresetVoiceIds, id)) {
+      case null { #err("Answering preset not found.") };
+      case (?preset) {
+        if (
+          not IdentityLib.sameAccount(identityState, caller, preset.ownerId) and
+          not AccessControl.isAdmin(accessControlState, caller)
+        ) {
+          Runtime.trap("Unauthorized: not the owner");
+        };
+        ConfigLib.updateAnsweringPreset(
+          answeringState,
+          answeringPresetVoiceIds,
+          preset.ownerId,
+          id,
+          input,
+        );
+      };
+    };
   };
 
   public shared ({ caller }) func updateAnsweringPresetInstructions(
@@ -218,7 +298,24 @@ mixin (
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
     };
-    ConfigLib.updateAnsweringPresetInstructions(answeringState, answeringPresetVoiceIds, caller, id, systemPrompt);
+    switch (ConfigLib.getAnsweringPreset(answeringState, answeringPresetVoiceIds, id)) {
+      case null { #err("Answering preset not found.") };
+      case (?preset) {
+        if (
+          not IdentityLib.sameAccount(identityState, caller, preset.ownerId) and
+          not AccessControl.isAdmin(accessControlState, caller)
+        ) {
+          Runtime.trap("Unauthorized: not the owner");
+        };
+        ConfigLib.updateAnsweringPresetInstructions(
+          answeringState,
+          answeringPresetVoiceIds,
+          preset.ownerId,
+          id,
+          systemPrompt,
+        );
+      };
+    };
   };
 
   public shared ({ caller }) func deleteAnsweringPreset(
@@ -227,7 +324,23 @@ mixin (
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
     };
-    ConfigLib.deleteAnsweringPreset(answeringState, answeringPresetVoiceIds, caller, id);
+    switch (ConfigLib.getAnsweringPreset(answeringState, answeringPresetVoiceIds, id)) {
+      case null { false };
+      case (?preset) {
+        if (
+          not IdentityLib.sameAccount(identityState, caller, preset.ownerId) and
+          not AccessControl.isAdmin(accessControlState, caller)
+        ) {
+          Runtime.trap("Unauthorized: not the owner");
+        };
+        ConfigLib.deleteAnsweringPreset(
+          answeringState,
+          answeringPresetVoiceIds,
+          preset.ownerId,
+          id,
+        );
+      };
+    };
   };
 
   public shared ({ caller }) func setAnsweringPresetEnabled(
@@ -237,7 +350,24 @@ mixin (
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
     };
-    ConfigLib.setAnsweringPresetEnabled(answeringState, answeringPresetVoiceIds, caller, id, enabled);
+    switch (ConfigLib.getAnsweringPreset(answeringState, answeringPresetVoiceIds, id)) {
+      case null { #err("Answering preset not found.") };
+      case (?preset) {
+        if (
+          not IdentityLib.sameAccount(identityState, caller, preset.ownerId) and
+          not AccessControl.isAdmin(accessControlState, caller)
+        ) {
+          Runtime.trap("Unauthorized: not the owner");
+        };
+        ConfigLib.setAnsweringPresetEnabled(
+          answeringState,
+          answeringPresetVoiceIds,
+          preset.ownerId,
+          id,
+          enabled,
+        );
+      };
+    };
   };
 
   public query ({ caller }) func getAnsweringPresetForServer(

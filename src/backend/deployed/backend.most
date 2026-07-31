@@ -92,6 +92,16 @@ type Nat__1011761150 = Nat__920180692;
 type Nat__920180692 = Nat;
 type Node__362690243<K, V> =
   {#internal : Internal__150062700<K, V>; #leaf : Leaf__147444601<K, V>};
+type PendingCallEnd__893732215 =
+  {
+    callId : ?Nat;
+    callSid : ?Text;
+    id : Text;
+    reason : Text;
+    requestedAt : Int;
+    reservationId : Text;
+    serverSessionId : ?Text
+  };
 type PresetId__8920344 = Nat;
 type PurchaseIntentStatus__438133736 = {#canceled; #paid; #pending};
 type PurchaseIntent__399492561 =
@@ -266,6 +276,8 @@ actor {
       purchaseIntents : Map__254296833<Text, PurchaseIntent__399492561>;
       reservedSecondsByUser : Map__254296833<Principal, Nat>
     };
+  stable callEndState :
+    {pendingEnds : Map__254296833<Text, PendingCallEnd__893732215>};
   stable callPresetVoiceIds :
     {
       var root : Node__362690243<PresetId__8920344, Text>;

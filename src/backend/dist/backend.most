@@ -77,6 +77,14 @@ type IcrcAccount__824881519 = {owner : Principal; subaccount : ?Blob};
 type Internal__150062700<K, V> =
   {children : [var ?Node__362690243<K, V>]; data : Data__917616847<K, V>};
 type Leaf__147444601<K, V> = {data : Data__917616847<K, V>};
+type LinkOffer__10813655 =
+  {
+    code : Text;
+    createdAt : Int;
+    expiresAt : Int;
+    issuer : Principal;
+    primary : Principal
+  };
 type List__338271302<T> =
   {
     var blockIndex : Nat__1011761150;
@@ -297,6 +305,14 @@ actor {
       nextPresetId : {var value : Nat};
       presets :
         Map__254296833<PresetId__8920344, StoredCallPreset__999262307>
+    };
+  stable identityState :
+    {
+      aliases : Map__254296833<Principal, Principal>;
+      linkOffers : Map__254296833<Text, LinkOffer__10813655>;
+      nextOfferNonce : {var value : Nat};
+      secondariesByPrimary :
+        Map__254296833<Principal, List__341252331<Principal>>
     };
   stable twilioLineState :
     {

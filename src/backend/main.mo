@@ -4,10 +4,12 @@ import ConfigLib "lib/config";
 import CallsLib "lib/calls";
 import BillingLib "lib/billing";
 import AgentLib "lib/agent";
+import IdentityLib "lib/identity";
 import ConfigApi "mixins/config-api";
 import CallsApi "mixins/calls-api";
 import BillingApi "mixins/billing-api";
 import AgentApi "mixins/agent-api";
+import IdentityApi "mixins/identity-api";
 import Principal "mo:core/Principal";
 
 shared ({ caller = installer }) persistent actor class Backend() = this {
@@ -31,14 +33,18 @@ shared ({ caller = installer }) persistent actor class Backend() = this {
   let callEndState = CallsLib.initCallEndState();
   let billingState = BillingLib.initState();
   let agentState = AgentLib.initState();
+  // Links web-app and MCP session principals that belong to the same human.
+  let identityState = IdentityLib.initState();
 
   // Domain mixins
-  include ConfigApi(accessControlState, configState, callPresetVoiceIds, twilioLineState, answeringState, answeringPresetVoiceIds);
-  include CallsApi(accessControlState, callsState, answeringLiveState, callEndState, configState, callPresetVoiceIds, billingState);
-  include BillingApi(accessControlState, billingState, callsState, configState, callPresetVoiceIds, answeringState, answeringPresetVoiceIds);
+  include IdentityApi(accessControlState, identityState, billingState);
+  include ConfigApi(accessControlState, identityState, configState, callPresetVoiceIds, twilioLineState, answeringState, answeringPresetVoiceIds);
+  include CallsApi(accessControlState, identityState, callsState, answeringLiveState, callEndState, configState, callPresetVoiceIds, billingState);
+  include BillingApi(accessControlState, identityState, billingState, callsState, configState, callPresetVoiceIds, answeringState, answeringPresetVoiceIds);
   include AgentApi(
     Principal.fromActor(this),
     accessControlState,
+    identityState,
     agentState,
     billingState,
     callsState,

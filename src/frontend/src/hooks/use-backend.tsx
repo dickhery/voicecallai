@@ -334,6 +334,47 @@ export function useGetAgentAccountIdentity() {
   });
 }
 
+export function useGetMyAccountIdentity() {
+  const { actor, isFetching } = useBackendActor();
+  return useQuery({
+    queryKey: ["myAccountIdentity"],
+    queryFn: async () => {
+      if (!actor) return null;
+      return actor.getMyAccountIdentity();
+    },
+    enabled: !!actor && !isFetching,
+    staleTime: 30_000,
+  });
+}
+
+export function useCreateAccountLinkOffer() {
+  const { actor } = useBackendActor();
+  return useMutation({
+    mutationFn: async () => {
+      if (!actor) throw new Error("Actor not available");
+      return actor.createAccountLinkOffer();
+    },
+  });
+}
+
+export function useClaimAccountLinkOffer() {
+  const { actor } = useBackendActor();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (code: string) => {
+      if (!actor) throw new Error("Actor not available");
+      return actor.claimAccountLinkOffer(code);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["myAccountIdentity"] });
+      void qc.invalidateQueries({ queryKey: ["myBillingStatus"] });
+      void qc.invalidateQueries({ queryKey: ["myCalls"] });
+      void qc.invalidateQueries({ queryKey: ["myPresets"] });
+      void qc.invalidateQueries({ queryKey: ["agentAccountIdentity"] });
+    },
+  });
+}
+
 export function useGetAgentPricing() {
   const { actor, isFetching } = useBackendActor();
   return useQuery<IcpPricing | null>({

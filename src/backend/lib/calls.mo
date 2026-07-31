@@ -298,25 +298,54 @@ module {
     state : State,
     userId : Principal,
   ) : [Types.CallRecordPublic] {
-    switch (state.userCallIndex.get(userId)) {
-      case null { [] };
-      case (?ids) {
-        let buf = List.empty<Types.CallRecordPublic>();
-        let total = ids.size();
-        let start = if (total > MAX_USER_CALL_HISTORY_RESULTS) {
-          Nat.sub(total, MAX_USER_CALL_HISTORY_RESULTS);
-        } else {
-          0;
-        };
-        for (cid in ids.sliceToArray(start, total).values()) {
-          switch (state.callRecords.get(cid)) {
-            case null {};
-            case (?r) { buf.add(toPublic(r)) };
+    listCallsForUsers(state, [userId]);
+  };
+
+  /// Union of call history for one linked-account group. Bounded and sorted newest first.
+  public func listCallsForUsers(
+    state : State,
+    userIds : [Principal],
+  ) : [Types.CallRecordPublic] {
+    if (userIds.size() == 0) {
+      return [];
+    };
+    if (userIds.size() == 1) {
+      switch (state.userCallIndex.get(userIds[0])) {
+        case null { return [] };
+        case (?ids) {
+          let buf = List.empty<Types.CallRecordPublic>();
+          let total = ids.size();
+          let start = if (total > MAX_USER_CALL_HISTORY_RESULTS) {
+            Nat.sub(total, MAX_USER_CALL_HISTORY_RESULTS);
+          } else {
+            0;
           };
+          for (cid in ids.sliceToArray(start, total).values()) {
+            switch (state.callRecords.get(cid)) {
+              case null {};
+              case (?r) { buf.add(toPublic(r)) };
+            };
+          };
+          return buf.toArray().sort(compareCallsNewestFirst);
         };
-        buf.toArray().sort(compareCallsNewestFirst);
       };
     };
+    let buf = List.empty<Types.CallRecordPublic>();
+    for (userId in userIds.values()) {
+      switch (state.userCallIndex.get(userId)) {
+        case null {};
+        case (?ids) {
+          for (cid in ids.values()) {
+            switch (state.callRecords.get(cid)) {
+              case null {};
+              case (?r) { buf.add(toPublic(r)) };
+            };
+          };
+        };
+      };
+    };
+    let sorted = buf.toArray().sort(compareCallsNewestFirst);
+    sorted.sliceToArray(0, Nat.min(sorted.size(), MAX_USER_CALL_HISTORY_RESULTS));
   };
 
   public func listAllCalls(state : State) : [Types.CallRecordPublic] {

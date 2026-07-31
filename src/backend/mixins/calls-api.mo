@@ -6,11 +6,13 @@ import AccessControl "mo:caffeineai-authorization/access-control";
 import BillingLib "../lib/billing";
 import CallsLib "../lib/calls";
 import ConfigLib "../lib/config";
+import IdentityLib "../lib/identity";
 import CallTypes "../types/calls";
 import Common "../types/common";
 
 mixin (
   accessControlState : AccessControl.AccessControlState,
+  identityState : IdentityLib.State,
   callsState : CallsLib.State,
   answeringLiveState : CallsLib.AnsweringLiveState,
   callEndState : CallsLib.CallEndState,
@@ -19,6 +21,10 @@ mixin (
   billingState : BillingLib.State,
 ) {
   let MAX_CALL_TRANSCRIPT_CHARS : Nat = 20_000;
+
+  private func callsAccountOf(caller : Principal) : Principal {
+    IdentityLib.resolve(identityState, caller);
+  };
 
   // Create an on-chain call record before the external voice server places the
   // Twilio call. Real-time Twilio/xAI traffic cannot reliably run from the IC.
@@ -58,7 +64,10 @@ mixin (
     switch (CallsLib.getCallRecord(callsState, callId)) {
       case null { return false };
       case (?record) {
-        if (not Principal.equal(record.userId, caller) and not isAdmin) {
+        if (
+          not IdentityLib.sameAccount(identityState, caller, record.userId) and
+          not isAdmin
+        ) {
           return false;
         };
       };
@@ -89,12 +98,15 @@ mixin (
     CallsLib.updateCallRecord(callsState, callId, status, null, endTime, transcript);
   };
 
-  // Call history for authenticated user
+  // Call history for authenticated user (includes linked web/MCP principals)
   public query ({ caller }) func listMyCalls() : async [CallTypes.CallRecordPublic] {
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
     };
-    CallsLib.listCallsForUser(callsState, caller);
+    CallsLib.listCallsForUsers(
+      callsState,
+      IdentityLib.accountGroup(identityState, caller),
+    );
   };
 
   public query ({ caller }) func getCallRecord(
@@ -106,7 +118,10 @@ mixin (
     switch (CallsLib.getCallRecord(callsState, id)) {
       case null { null };
       case (?r) {
-        if (not Principal.equal(r.userId, caller) and not AccessControl.isAdmin(accessControlState, caller)) {
+        if (
+          not IdentityLib.sameAccount(identityState, caller, r.userId) and
+          not AccessControl.isAdmin(accessControlState, caller)
+        ) {
           Runtime.trap("Unauthorized: can only view your own calls");
         };
         ?CallsLib.toPublic(r);
@@ -165,7 +180,7 @@ mixin (
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
     };
-    CallsLib.listAnsweringLiveSessionsForUser(answeringLiveState, caller);
+    CallsLib.listAnsweringLiveSessionsForUser(answeringLiveState, callsAccountOf(caller));
   };
 
   /// Ask the off-chain voice bridge to hang up an active call owned by the
@@ -180,7 +195,10 @@ mixin (
     switch (CallsLib.getCallRecord(callsState, callId)) {
       case null { return #err("Call not found.") };
       case (?record) {
-        if (not Principal.equal(record.userId, caller) and not AccessControl.isAdmin(accessControlState, caller)) {
+        if (
+          not IdentityLib.sameAccount(identityState, caller, record.userId) and
+          not AccessControl.isAdmin(accessControlState, caller)
+        ) {
           return #err("Unauthorized: can only end your own calls.");
         };
         switch (record.status) {

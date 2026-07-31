@@ -9,11 +9,13 @@ import AccessControl "mo:caffeineai-authorization/access-control";
 import BillingLib "../lib/billing";
 import CallsLib "../lib/calls";
 import ConfigLib "../lib/config";
+import IdentityLib "../lib/identity";
 import BillingTypes "../types/billing";
 import CallTypes "../types/calls";
 
 mixin (
   accessControlState : AccessControl.AccessControlState,
+  identityState : IdentityLib.State,
   billingState : BillingLib.State,
   callsState : CallsLib.State,
   configState : ConfigLib.State,
@@ -22,6 +24,10 @@ mixin (
   answeringPresetVoiceIds : ConfigLib.VoiceIdState,
 ) {
   let ANSWERING_PRESET_ID_OFFSET : Nat = 1_000_000_000;
+
+  private func billingAccountOf(caller : Principal) : Principal {
+    IdentityLib.resolve(identityState, caller);
+  };
 
   private func byteToHex(byte : Nat8) : Text {
     let alphabet = "0123456789abcdef".toArray();
@@ -42,7 +48,7 @@ mixin (
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
     };
-    BillingLib.getBillingStatus(billingState, caller);
+    BillingLib.getBillingStatus(billingState, billingAccountOf(caller));
   };
 
   public query func getBillingPackages() : async [BillingTypes.BillingPackage] {
@@ -60,7 +66,9 @@ mixin (
     } else {
       #live;
     };
-    BillingLib.createPurchaseIntent(billingState, caller, packageId, mode);
+    // Stripe top-ups credit the shared account principal so web funding is
+    // visible to MCP agent sessions linked to the same identity.
+    BillingLib.createPurchaseIntent(billingState, billingAccountOf(caller), packageId, mode);
   };
 
   public query ({ caller }) func getPurchaseIntentForServer(
@@ -136,19 +144,23 @@ mixin (
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
     };
+    let account = billingAccountOf(caller);
     if (not ConfigLib.isE164(input.recipientPhone)) {
       return #err("Phone number must be E.164 format, for example +15551234567.");
     };
     switch (ConfigLib.getPreset(configState, callPresetVoiceIds, input.presetId)) {
       case null { return #err("Preset not found") };
       case (?preset) {
-        if (not Principal.equal(preset.ownerId, caller) and not AccessControl.isAdmin(accessControlState, caller)) {
+        if (
+          not IdentityLib.sameAccount(identityState, caller, preset.ownerId) and
+          not AccessControl.isAdmin(accessControlState, caller)
+        ) {
           return #err("Preset not found");
         };
       };
     };
 
-    let available = BillingLib.getAvailableSeconds(billingState, caller);
+    let available = BillingLib.getAvailableSeconds(billingState, account);
     if (available == 0) {
       return #err("You need prepaid phone time before starting a call.");
     };
@@ -156,13 +168,13 @@ mixin (
     let callToken = await randomCallToken();
     let callRecord = CallsLib.createCallRecord(
       callsState,
-      caller,
+      account,
       input.recipientPhone,
       input.presetId,
     );
     let reservation = BillingLib.createReservation(
       billingState,
-      caller,
+      account,
       input.recipientPhone,
       input.presetId,
       callRecord.id,

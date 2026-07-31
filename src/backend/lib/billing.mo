@@ -101,6 +101,36 @@ module {
     };
   };
 
+  /// Move unreserved phone-time seconds from one principal to another.
+  /// Reserved seconds stay with the source so open calls continue debiting there.
+  public func moveAvailableBalance(
+    state : State,
+    from : Principal,
+    to : Principal,
+  ) : Nat {
+    if (Principal.equal(from, to)) {
+      return 0;
+    };
+    let available = getAvailableSeconds(state, from);
+    if (available == 0) {
+      return 0;
+    };
+    let fromBalance = getBalance(state, from);
+    let nextFrom = if (fromBalance > available) {
+      Nat.sub(fromBalance, available);
+    } else {
+      0;
+    };
+    if (nextFrom == 0) {
+      state.balances.remove(from);
+    } else {
+      state.balances.add(from, nextFrom);
+    };
+    let toBalance = getBalance(state, to);
+    state.balances.add(to, toBalance + available);
+    available;
+  };
+
   public func toPurchaseIntentPublic(intent : Types.PurchaseIntent) : Types.PurchaseIntentPublic {
     {
       id = intent.id;

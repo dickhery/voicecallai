@@ -110,14 +110,15 @@ function resolveDerivationOrigin(
   existingEnvironment,
 ) {
   if (targetMode !== "ic") return "";
-  const fallback = frontendCanisterId
-    ? `https://${frontendCanisterId}.icp0.io`
-    : "";
+  // Prefer the custom domain so web II sessions match MCP Agent Identity
+  // principals for the same Internet Identity (voicecallai.online).
+  const fallback = "https://voicecallai.online";
   const value =
     getArg("ii-derivation-origin") ||
     process.env.II_DERIVATION_ORIGIN ||
     existingEnvironment.ii_derivation_origin ||
-    fallback;
+    fallback ||
+    (frontendCanisterId ? `https://${frontendCanisterId}.icp0.io` : "");
   return value ? normalizeOrigin(value) : "";
 }
 

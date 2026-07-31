@@ -210,8 +210,8 @@ module {
       productionMcpUrl = "https://mcp.internetcomputer.org/mcp";
       authentication = [
         "VoiceCall AI's telephony action is on this backend canister. The frontend canister only serves assets; do not conclude phone calling is unavailable after inspecting only that canister.",
-        "Authorize the official ICP MCP / Agent Identity connector with Internet Identity and grant Actions and questions when you want the agent to place calls or move ICP.",
-        "Resolve this app, obtain the app-specific principal, then call agentInitialize once. The principal is the account boundary for presets, phone time, call history, and the in-app ICP deposit subaccount.",
+        "Authorize the official ICP MCP / Agent Identity connector with Internet Identity for voicecallai.online and grant Actions and questions when you want the agent to place calls or move ICP.",
+        "Resolve this app, obtain the app-specific principal derived for voicecallai.online, then call agentInitialize once. The same principal is shared with the human web app for presets, phone time, call history, Stripe top-ups, and the in-app ICP deposit subaccount.",
         "Internet Identity grants expire. Re-authorize the connector when an authenticated call reports an expired delegation.",
       ];
       firstActions = [
