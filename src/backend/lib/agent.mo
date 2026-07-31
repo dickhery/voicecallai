@@ -10,6 +10,7 @@ import Nat64 "mo:core/Nat64";
 import Principal "mo:core/Principal";
 import Text "mo:core/Text";
 import Time "mo:core/Time";
+import BillingLib "billing";
 import AgentTypes "../types/agent";
 import BillingTypes "../types/billing";
 import CallTypes "../types/calls";
@@ -154,11 +155,17 @@ module {
   };
 
   public func icpPackages(state : State) : [AgentTypes.IcpPhoneTimePackage] {
-    [
-      packageFromUsd(state, "pack_5", "$5 - 45 minutes", 500, 45 * 60),
-      packageFromUsd(state, "pack_10", "$10 - 90 minutes", 1_000, 90 * 60),
-      packageFromUsd(state, "pack_20", "$20 - 180 minutes", 2_000, 180 * 60),
-    ];
+    BillingLib.packages().map<BillingTypes.BillingPackage, AgentTypes.IcpPhoneTimePackage>(
+      func(phonePackage) {
+        packageFromUsd(
+          state,
+          phonePackage.id,
+          phonePackage.name,
+          phonePackage.amountCents,
+          phonePackage.seconds,
+        )
+      }
+    );
   };
 
   public func getIcpPackage(

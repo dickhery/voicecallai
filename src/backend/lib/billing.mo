@@ -14,6 +14,26 @@ module {
   private let BILLING_INCREMENT_SECONDS : Nat = 60;
   private let MAX_OPEN_RESERVATION_RESULTS : Nat = 100;
   private let MAX_PROMO_MINUTES_PER_GRANT : Nat = 100_000;
+  private let BILLING_PACKAGES : [Types.BillingPackage] = [
+    {
+      id = "pack_5";
+      name = "$5 - 30 minutes";
+      amountCents = 500;
+      seconds = 1_800;
+    },
+    {
+      id = "pack_10";
+      name = "$10 - 60 minutes";
+      amountCents = 1_000;
+      seconds = 3_600;
+    },
+    {
+      id = "pack_20";
+      name = "$20 - 120 minutes";
+      amountCents = 2_000;
+      seconds = 7_200;
+    },
+  ];
 
   public type State = {
     balances : Map.Map<Principal, Nat>;
@@ -38,26 +58,7 @@ module {
   };
 
   public func packages() : [Types.BillingPackage] {
-    [
-      {
-        id = "pack_5";
-        name = "$5 - 45 minutes";
-        amountCents = 500;
-        seconds = 45 * 60;
-      },
-      {
-        id = "pack_10";
-        name = "$10 - 90 minutes";
-        amountCents = 1_000;
-        seconds = 90 * 60;
-      },
-      {
-        id = "pack_20";
-        name = "$20 - 180 minutes";
-        amountCents = 2_000;
-        seconds = 180 * 60;
-      },
-    ];
+    BILLING_PACKAGES;
   };
 
   public func getPackage(packageId : Text) : ?Types.BillingPackage {
@@ -154,7 +155,12 @@ module {
           case (?existing) {
             switch (existing.status) {
               case (#pending) {
-                if (existing.packageId == pkg.id and existing.mode == mode) {
+                if (
+                  existing.packageId == pkg.id and
+                  existing.amountCents == pkg.amountCents and
+                  existing.seconds == pkg.seconds and
+                  existing.mode == mode
+                ) {
                   return #ok(toPurchaseIntentPublic(existing));
                 };
                 existing.status := #canceled;

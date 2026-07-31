@@ -31,6 +31,7 @@
     "Call agentQueueCall with an E.164 number and a unique idempotency key.",
     "Poll agentListCallJobs with backoff and report only returned state.",
     "Call agentGetLiveCallLink once for a dispatched job when the user wants to listen.",
+    "Call agentEndCall to cancel a queued job or hang up a live call you created.",
     "Retrieve artifacts after completion only when capture was approved."
   ],
   "primary_methods": [
@@ -42,6 +43,7 @@
     "createPreset",
     "agentQueueCall",
     "agentListCallJobs",
+    "agentEndCall",
     "agentGetLiveCallLink",
     "agentGetCallArtifacts"
   ],

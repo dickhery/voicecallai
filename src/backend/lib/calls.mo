@@ -20,6 +20,9 @@ module {
   private let SYSTEM_LOGS_AFTER_PRUNE : Nat = 400;
   private let MAX_SYSTEM_LOG_RESULTS : Nat = 500;
   private let MAX_SYSTEM_LOG_MESSAGE_CHARS : Nat = 500;
+  // A paid call can reserve at most four hours. Keep a one-hour grace period
+  // for queueing/finalization, but never present older orphaned sessions as live.
+  private let MAX_RELEVANT_LIVE_SESSION_AGE_NS : Int = 18_000_000_000_000;
 
   public type State = {
     callRecords : Map.Map<Common.CallId, Types.CallRecord>;
@@ -384,8 +387,12 @@ module {
     state : AnsweringLiveState,
     userId : Principal,
   ) : [Types.AnsweringLiveSession] {
+    let oldestRelevantStart = Time.now() - MAX_RELEVANT_LIVE_SESSION_AGE_NS;
     state.activeSessions.values()
-      .filter(func(session) { Principal.equal(session.userId, userId) })
+      .filter(func(session) {
+        Principal.equal(session.userId, userId) and
+        session.startedAt >= oldestRelevantStart
+      })
       .toArray();
   };
 };

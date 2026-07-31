@@ -73,6 +73,11 @@ type ReserveCallResult =
    err: text;
    ok: CallReservationPublic;
  };
+type RequestCallEndResult = 
+ variant {
+   err: text;
+   ok: PendingCallEnd;
+ };
 type PurchaseIntentStatus = 
  variant {
    canceled;
@@ -93,6 +98,16 @@ type PurchaseIntentPublic =
    user: principal;
  };
 type PresetId = nat;
+type PendingCallEnd = 
+ record {
+   callId: opt nat;
+   callSid: opt text;
+   id: text;
+   reason: text;
+   requestedAt: int;
+   reservationId: text;
+   serverSessionId: opt text;
+ };
 type InitiateCallResult = 
  variant {
    err: text;
@@ -294,6 +309,7 @@ type Backend =
    adminSetIcpUsdRate: (rate: nat64, decimals: nat32, sourceTimestampSeconds:
     nat64) -> (IcpPricingResult);
    agentCancelQueuedCall: (jobId: text) -> (bool);
+   agentEndCall: (jobId: text) -> (AgentCallResult);
    agentGetAccountIdentity: () -> (AgentAccount) query;
    agentGetAccountStatus: () -> (AgentAccountStatusResult);
    agentGetCallArtifacts: (callId: nat) -> (opt AgentCallArtifacts) query;
@@ -312,6 +328,7 @@ type Backend =
    cancelCallReservationByCallSidForServer: (callSid: text, reason: text) ->
     (BillingMutationResult);
    claimAgentCallForServer: (jobId: text) -> (opt AgentCallDispatch);
+   clearPendingCallEndForServer: (id: text) -> (bool);
    completeAgentCallDispatchForServer: (jobId: text, callSid: opt text,
     serverSessionId: opt text, liveAudioUrl: opt text) -> (bool);
    createAnsweringPreset: (input: AnsweringPresetInput) ->
@@ -363,11 +380,13 @@ type Backend =
    listOpenCallReservationsForServer: (limit: nat) ->
     (vec CallReservationPublic) query;
    listPendingAgentCallsForServer: (limit: nat) -> (vec AgentCallJob) query;
+   listPendingCallEndsForServer: (limit: nat) -> (vec PendingCallEnd) query;
    markReservationStarted: (reservationId: text, callSid: text) ->
     (BillingMutationResult);
    registerAnsweringLiveSessionForServer: (session: AnsweringLiveSession) ->
     (bool);
    removeTwilioLine: (phoneNumber: text) -> (TwilioLineMutationResult);
+   requestEndActiveCall: (callId: CallId) -> (RequestCallEndResult);
    reserveCall: (input: InitiateCallInput) -> (ReserveCallResult);
    reserveIncomingAnsweringCall: (webhookSecret: text, callerPhone: text,
     twilioToNumber: text, callSid: text) -> (ReserveCallResult);
@@ -471,7 +490,7 @@ type AgentProfile =
    "principal": principal;
    updatedAt: int;
  };
-type AgentLiveCallLink =
+type AgentLiveCallLink = 
  record {
    callId: nat;
    expiresAt: int;

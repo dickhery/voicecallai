@@ -25,7 +25,8 @@ Candid interface: https://voicecallai.online/agent-api.did
 4. Call agentQueueCall with an E.164 phone number, preset ID, capture options, and a unique idempotency key.
 5. Track the durable job with agentListCallJobs. Start at a 10-second polling interval and back off to 30 seconds. Never claim the call completed merely because it was queued.
 6. When the job is dispatched, call agentGetLiveCallLink once if the user wants to hear the active call. Give them the returned HTTPS URL; it is listen-only and stops working when the call ends.
-7. After completion, use agentGetCallArtifacts when the user requested and consented to saved artifacts.
+7. To stop a queued or live call you created, call agentEndCall with the job ID. Queued jobs cancel immediately; dispatched calls are hung up by the voice bridge within about 15 seconds. Prefer this over leaving farewell loops running.
+8. After completion, use agentGetCallArtifacts when the user requested and consented to saved artifacts.
 
 The off-chain VoiceCall AI bridge securely claims queued jobs and connects Twilio Media Streams to xAI Voice. Agents do not need a Twilio or xAI tool of their own.
 

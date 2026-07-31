@@ -110,7 +110,7 @@ const VOICE_PREVIEW_RATE_LIMIT_WINDOW_MS = Number(
 const VOICE_PREVIEW_RATE_LIMIT_MAX = Number(
   process.env.VOICE_PREVIEW_RATE_LIMIT_MAX || 12,
 );
-const SERVER_VERSION = "2026-07-29-think-fast-2-live-listener";
+const SERVER_VERSION = "2026-07-31-phone-time-pricing";
 const VOICE_SESSION_START = "[[vc:session]]";
 const VOICE_SESSION_END = "[[/vc:session]]";
 const SERVER_STARTED_AT = new Date().toISOString();
@@ -217,23 +217,23 @@ const SAFETY_RULES = [
 const BILLING_PACKAGES = {
   pack_5: {
     id: "pack_5",
-    name: "$5 - 45 minutes",
+    name: "$5 - 30 minutes",
     amountCents: 500,
-    seconds: 45 * 60,
+    seconds: 30 * 60,
     priceEnvSuffix: "5",
   },
   pack_10: {
     id: "pack_10",
-    name: "$10 - 90 minutes",
+    name: "$10 - 60 minutes",
     amountCents: 1000,
-    seconds: 90 * 60,
+    seconds: 60 * 60,
     priceEnvSuffix: "10",
   },
   pack_20: {
     id: "pack_20",
-    name: "$20 - 180 minutes",
+    name: "$20 - 120 minutes",
     amountCents: 2000,
-    seconds: 180 * 60,
+    seconds: 120 * 60,
     priceEnvSuffix: "20",
   },
 };

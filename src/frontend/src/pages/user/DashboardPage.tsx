@@ -1,3 +1,4 @@
+import { CallStatus } from "@/bindings/backend";
 import { AgentPresetGallery } from "@/components/AgentPresetGallery";
 import { AppLayout } from "@/components/AppLayout";
 import { CallStatusBadge } from "@/components/CallStatusBadge";
@@ -37,7 +38,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { CallStatus } from "@/bindings/backend";
 import {
   useCreatePreset,
   useCreatePurchaseIntent,
@@ -147,6 +147,10 @@ const STATUS_LABELS: Record<XaiCallStatus, string> = {
 const MAX_AI_INSTRUCTIONS_CHARS = 8000;
 const MAX_STEERING_PROMPT_CHARS = 800;
 const LOW_BALANCE_SECONDS = 5 * 60;
+// Backend call records are history, not a presence channel. A paid call can
+// reserve at most four hours, so records older than this grace window cannot
+// still represent an actionable live call.
+const MAX_REMOTE_CALL_AGE_MS = 5 * 60 * 60 * 1000;
 
 function StatCard({
   icon,
@@ -643,13 +647,14 @@ export default function DashboardPage() {
     isLoading: callsLoading,
     refetch: refetchCalls,
   } = useListMyCalls();
-  const {
-    data: answeringLiveSessions,
-    refetch: refetchAnsweringLive,
-  } = useListMyAnsweringLiveSessions();
+  const { data: answeringLiveSessions, refetch: refetchAnsweringLive } =
+    useListMyAnsweringLiveSessions();
   const requestEndActiveCall = useRequestEndActiveCall();
   const [endingRemoteCallId, setEndingRemoteCallId] = useState<string | null>(
     null,
+  );
+  const [endRequestedCallIds, setEndRequestedCallIds] = useState<Set<string>>(
+    () => new Set(),
   );
   const [endingAnsweringSessionId, setEndingAnsweringSessionId] = useState<
     string | null
@@ -676,15 +681,18 @@ export default function DashboardPage() {
   });
 
   const recentCalls = (calls ?? []).slice(0, 5);
-  const openBackendCalls = useMemo(
-    () =>
-      (calls ?? []).filter(
-        (call) =>
-          call.status === CallStatus.pending ||
-          call.status === CallStatus.inProgress,
-      ),
-    [calls],
-  );
+  const openBackendCalls = useMemo(() => {
+    const now = BigInt(Date.now()) * 1_000_000n;
+    const oldestRelevantStart =
+      now - BigInt(MAX_REMOTE_CALL_AGE_MS) * 1_000_000n;
+    return (calls ?? []).filter(
+      (call) =>
+        call.status === CallStatus.inProgress &&
+        Boolean(call.callSid?.trim()) &&
+        call.startTime >= oldestRelevantStart &&
+        !endRequestedCallIds.has(call.id.toString()),
+    );
+  }, [calls, endRequestedCallIds]);
   const totalCalls = (calls ?? []).length;
 
   const handleEndRemoteCall = async (callId: bigint) => {
@@ -700,6 +708,11 @@ export default function DashboardPage() {
       toast.success("Hang-up requested", {
         description:
           "The voice bridge will end the call within about 15 seconds.",
+      });
+      setEndRequestedCallIds((current) => {
+        const updated = new Set(current);
+        updated.add(key);
+        return updated;
       });
       void refetchCalls();
     } catch (err) {
@@ -1292,13 +1305,14 @@ export default function DashboardPage() {
               <CardHeader className="pb-3">
                 <CardTitle className="text-base font-semibold flex items-center gap-2">
                   <PhoneOff className="w-4 h-4 text-amber-400" />
-                  Active calls you can end
+                  Live calls you can end
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
                 <p className="text-xs text-muted-foreground">
-                  Includes agent-created outbound calls and live answering
-                  sessions. Use this if a call gets stuck after goodbyes.
+                  Shows recent outbound calls with a Twilio connection and live
+                  answering sessions. Use this if a call gets stuck after
+                  goodbyes.
                 </p>
                 {openBackendCalls.map((call) => (
                   <div
@@ -1354,9 +1368,7 @@ export default function DashboardPage() {
                       variant="destructive"
                       size="sm"
                       className="gap-1.5 shrink-0"
-                      disabled={
-                        endingAnsweringSessionId === session.sessionId
-                      }
+                      disabled={endingAnsweringSessionId === session.sessionId}
                       onClick={() => void handleEndAnsweringSession(session)}
                       data-ocid={`dashboard.answering_live.end.${session.sessionId}`}
                     >

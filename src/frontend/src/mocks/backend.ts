@@ -177,7 +177,7 @@ export const mockBackend: Partial<backendInterface> = {
       user: samplePrincipal,
       packageId,
       amountCents: BigInt(packageId === "pack_20" ? 2000 : packageId === "pack_10" ? 1000 : 500),
-      seconds: BigInt(packageId === "pack_20" ? 10800 : packageId === "pack_10" ? 5400 : 2700),
+      seconds: BigInt(packageId === "pack_20" ? 7200 : packageId === "pack_10" ? 3600 : 1800),
       mode: StripeMode.test,
       createdAt: BigInt(Date.now() * 1_000_000),
       status: PurchaseIntentStatus.pending,
@@ -205,9 +205,9 @@ export const mockBackend: Partial<backendInterface> = {
   }),
 
   getBillingPackages: async () => [
-    { id: "pack_5", name: "$5 - 45 minutes", amountCents: 500n, seconds: 2700n },
-    { id: "pack_10", name: "$10 - 90 minutes", amountCents: 1000n, seconds: 5400n },
-    { id: "pack_20", name: "$20 - 180 minutes", amountCents: 2000n, seconds: 10800n },
+    { id: "pack_5", name: "$5 - 30 minutes", amountCents: 500n, seconds: 1800n },
+    { id: "pack_10", name: "$10 - 60 minutes", amountCents: 1000n, seconds: 3600n },
+    { id: "pack_20", name: "$20 - 120 minutes", amountCents: 2000n, seconds: 7200n },
   ],
 
   getCallRecord: async (_id: bigint) => sampleCallRecord,
@@ -217,13 +217,13 @@ export const mockBackend: Partial<backendInterface> = {
   getAnsweringPreset: async (_id: bigint) => sampleAnsweringPreset,
 
   getMyBillingStatus: async () => ({
-    balanceSeconds: 5400n,
+    balanceSeconds: 3600n,
     reservedSeconds: 0n,
-    availableSeconds: 5400n,
+    availableSeconds: 3600n,
     packages: [
-      { id: "pack_5", name: "$5 - 45 minutes", amountCents: 500n, seconds: 2700n },
-      { id: "pack_10", name: "$10 - 90 minutes", amountCents: 1000n, seconds: 5400n },
-      { id: "pack_20", name: "$20 - 180 minutes", amountCents: 2000n, seconds: 10800n },
+      { id: "pack_5", name: "$5 - 30 minutes", amountCents: 500n, seconds: 1800n },
+      { id: "pack_10", name: "$10 - 60 minutes", amountCents: 1000n, seconds: 3600n },
+      { id: "pack_20", name: "$20 - 120 minutes", amountCents: 2000n, seconds: 7200n },
     ],
   }),
 
