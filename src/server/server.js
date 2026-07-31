@@ -1,6 +1,9 @@
 import "dotenv/config";
 import http from "node:http";
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
 import cors from "cors";
 import express from "express";
@@ -21,6 +24,7 @@ import {
   unwrapOptional,
 } from "./ic-backend.js";
 
+const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 const XAI_MODEL =
   process.env.XAI_MODEL || "grok-voice-think-fast-2.0";
@@ -91,8 +95,14 @@ const AGENT_CALL_POLL_LIMIT = Math.max(
 const ORPHANED_TWILIO_CALL_END_MS = Number(
   process.env.ORPHANED_TWILIO_CALL_END_MS || 120_000,
 );
+// Keep answering-service recordings long enough for normal history review.
+// Media lives on the voice host disk (not the IC canister) so this is free of cycles.
 const BRIDGE_RECORDING_TTL_MS = Number(
-  process.env.BRIDGE_RECORDING_TTL_MS || 7 * 24 * 60 * 60 * 1000,
+  process.env.BRIDGE_RECORDING_TTL_MS || 30 * 24 * 60 * 60 * 1000,
+);
+const BRIDGE_RECORDING_DIR = path.resolve(
+  process.env.BRIDGE_RECORDING_DIR ||
+    path.join(SERVER_DIR, "data", "bridge-recordings"),
 );
 const LINE_CONFIG_REFRESH_MS = Number(process.env.LINE_CONFIG_REFRESH_MS || 30_000);
 const CALL_QUEUE_MAX_WAIT_MS = Number(process.env.CALL_QUEUE_MAX_WAIT_MS || 30 * 60 * 1000);
@@ -110,7 +120,7 @@ const VOICE_PREVIEW_RATE_LIMIT_WINDOW_MS = Number(
 const VOICE_PREVIEW_RATE_LIMIT_MAX = Number(
   process.env.VOICE_PREVIEW_RATE_LIMIT_MAX || 12,
 );
-const SERVER_VERSION = "2026-07-31-phone-time-pricing";
+const SERVER_VERSION = "2026-07-31-durable-bridge-recordings";
 const VOICE_SESSION_START = "[[vc:session]]";
 const VOICE_SESSION_END = "[[/vc:session]]";
 const SERVER_STARTED_AT = new Date().toISOString();
@@ -393,6 +403,7 @@ const requiredEnv = [
 const callSessions = new Map();
 const callsBySid = new Map();
 const activeLineSessions = new Map();
+/** Metadata index for durable bridge recordings (media bytes live on disk). */
 const bridgeRecordings = new Map();
 const voicePreviewRateLimits = new Map();
 const callQueue = [];
@@ -2156,6 +2167,210 @@ function buildPublicBridgeRecordingUrl(recordingId) {
   return url.toString();
 }
 
+function getBridgeRecordingPaths(recordingId) {
+  const safeId = String(recordingId || "");
+  return {
+    mediaPath: path.join(BRIDGE_RECORDING_DIR, `${safeId}.wav`),
+    metaPath: path.join(BRIDGE_RECORDING_DIR, `${safeId}.json`),
+  };
+}
+
+function ensureBridgeRecordingDir() {
+  fs.mkdirSync(BRIDGE_RECORDING_DIR, { recursive: true });
+}
+
+function writeBridgeRecordingFiles(recordingId, entry) {
+  ensureBridgeRecordingDir();
+  const { mediaPath, metaPath } = getBridgeRecordingPaths(recordingId);
+  const mediaTmp = `${mediaPath}.tmp`;
+  const metaTmp = `${metaPath}.tmp`;
+  const meta = {
+    recordingId,
+    callSid: entry.callSid || "",
+    createdAt: entry.createdAt,
+    expiresAt: entry.expiresAt,
+    bytes: entry.media?.length || 0,
+  };
+  fs.writeFileSync(mediaTmp, entry.media);
+  fs.writeFileSync(metaTmp, `${JSON.stringify(meta, null, 2)}\n`, "utf8");
+  fs.renameSync(mediaTmp, mediaPath);
+  fs.renameSync(metaTmp, metaPath);
+  return meta;
+}
+
+function readBridgeRecordingMetaFromDisk(recordingId) {
+  const { metaPath, mediaPath } = getBridgeRecordingPaths(recordingId);
+  if (!fs.existsSync(metaPath) || !fs.existsSync(mediaPath)) {
+    return null;
+  }
+  try {
+    const raw = fs.readFileSync(metaPath, "utf8");
+    const meta = JSON.parse(raw);
+    if (!meta || typeof meta !== "object") return null;
+    const createdAt = Number(meta.createdAt) || 0;
+    const expiresAt =
+      Number(meta.expiresAt) || createdAt + BRIDGE_RECORDING_TTL_MS;
+    return {
+      recordingId,
+      callSid: String(meta.callSid || ""),
+      createdAt,
+      expiresAt,
+      mediaPath,
+      metaPath,
+    };
+  } catch (error) {
+    log("warn", "Failed to read bridge recording metadata", {
+      recordingId,
+      error: error.message,
+    });
+    return null;
+  }
+}
+
+function deleteBridgeRecordingFiles(recordingId) {
+  const { mediaPath, metaPath } = getBridgeRecordingPaths(recordingId);
+  for (const filePath of [mediaPath, metaPath, `${mediaPath}.tmp`, `${metaPath}.tmp`]) {
+    try {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    } catch (error) {
+      log("warn", "Failed to delete bridge recording file", {
+        recordingId,
+        filePath,
+        error: error.message,
+      });
+    }
+  }
+}
+
+function storeBridgeRecording(recordingId, entry) {
+  const meta = writeBridgeRecordingFiles(recordingId, entry);
+  const indexEntry = {
+    callSid: meta.callSid,
+    createdAt: meta.createdAt,
+    expiresAt: meta.expiresAt,
+    mediaPath: getBridgeRecordingPaths(recordingId).mediaPath,
+    metaPath: getBridgeRecordingPaths(recordingId).metaPath,
+  };
+  bridgeRecordings.set(recordingId, indexEntry);
+  return indexEntry;
+}
+
+function removeBridgeRecording(recordingId) {
+  bridgeRecordings.delete(recordingId);
+  deleteBridgeRecordingFiles(recordingId);
+}
+
+function loadBridgeRecordingMedia(recordingId, indexEntry = null) {
+  const entry = indexEntry || bridgeRecordings.get(recordingId);
+  if (Buffer.isBuffer(entry?.media) && entry.media.length > 0) {
+    return entry.media;
+  }
+  const mediaPath =
+    entry?.mediaPath || getBridgeRecordingPaths(recordingId).mediaPath;
+  if (!mediaPath || !fs.existsSync(mediaPath)) {
+    return null;
+  }
+  try {
+    return fs.readFileSync(mediaPath);
+  } catch (error) {
+    log("warn", "Failed to read bridge recording media", {
+      recordingId,
+      error: error.message,
+    });
+    return null;
+  }
+}
+
+/**
+ * Resolve a bridge recording for playback. Uses the in-memory index when
+ * present, otherwise reloads durable files from disk so restarts do not drop
+ * history links. Returns null when expired or missing.
+ */
+function resolveBridgeRecording(recordingId) {
+  if (!isValidBridgeRecordingId(recordingId)) return null;
+
+  let entry = bridgeRecordings.get(recordingId);
+  if (!entry) {
+    entry = readBridgeRecordingMetaFromDisk(recordingId);
+    if (entry) {
+      bridgeRecordings.set(recordingId, {
+        callSid: entry.callSid,
+        createdAt: entry.createdAt,
+        expiresAt: entry.expiresAt,
+        mediaPath: entry.mediaPath,
+        metaPath: entry.metaPath,
+      });
+      entry = bridgeRecordings.get(recordingId);
+    }
+  }
+
+  if (!entry) return null;
+
+  if (entry.expiresAt < Date.now()) {
+    removeBridgeRecording(recordingId);
+    return null;
+  }
+
+  const media = loadBridgeRecordingMedia(recordingId, entry);
+  if (!media || media.length === 0) {
+    removeBridgeRecording(recordingId);
+    return null;
+  }
+
+  return {
+    media,
+    callSid: entry.callSid || "",
+    createdAt: entry.createdAt,
+    expiresAt: entry.expiresAt,
+  };
+}
+
+function loadBridgeRecordingsFromDisk() {
+  ensureBridgeRecordingDir();
+  let loaded = 0;
+  let expired = 0;
+  let skipped = 0;
+  let entries;
+  try {
+    entries = fs.readdirSync(BRIDGE_RECORDING_DIR);
+  } catch (error) {
+    log("warn", "Unable to scan bridge recording directory", {
+      dir: BRIDGE_RECORDING_DIR,
+      error: error.message,
+    });
+    return { loaded, expired, skipped };
+  }
+
+  const now = Date.now();
+  for (const name of entries) {
+    if (!name.endsWith(".json")) continue;
+    const recordingId = name.slice(0, -".json".length);
+    if (!isValidBridgeRecordingId(recordingId)) {
+      skipped += 1;
+      continue;
+    }
+    const meta = readBridgeRecordingMetaFromDisk(recordingId);
+    if (!meta) {
+      skipped += 1;
+      continue;
+    }
+    if (meta.expiresAt < now) {
+      removeBridgeRecording(recordingId);
+      expired += 1;
+      continue;
+    }
+    bridgeRecordings.set(recordingId, {
+      callSid: meta.callSid,
+      createdAt: meta.createdAt,
+      expiresAt: meta.expiresAt,
+      mediaPath: meta.mediaPath,
+      metaPath: meta.metaPath,
+    });
+    loaded += 1;
+  }
+  return { loaded, expired, skipped };
+}
+
 function appendBridgeRecordingAudio(session, payload, track, timestampMs = null) {
   if (
     !session?.recordAudio ||
@@ -2210,12 +2425,31 @@ function finalizeBridgeRecording(session) {
 
   const recordingId = `br_${session.id}`;
   const media = buildBridgeRecordingWav(recorder);
-  bridgeRecordings.set(recordingId, {
-    media,
-    callSid: session.callSid || "",
-    createdAt: Date.now(),
-    expiresAt: Date.now() + BRIDGE_RECORDING_TTL_MS,
-  });
+  const createdAt = Date.now();
+  const expiresAt = createdAt + BRIDGE_RECORDING_TTL_MS;
+  try {
+    storeBridgeRecording(recordingId, {
+      media,
+      callSid: session.callSid || "",
+      createdAt,
+      expiresAt,
+    });
+  } catch (error) {
+    log("error", "Failed to persist bridge recording to disk", {
+      recordingId,
+      sessionId: session.id,
+      error: error.message,
+    });
+    // Still expose a signed URL so the session can finish; resolve will 404
+    // until disk is healthy, but we avoid losing the call entirely.
+    bridgeRecordings.set(recordingId, {
+      media,
+      callSid: session.callSid || "",
+      createdAt,
+      expiresAt,
+      memoryOnly: true,
+    });
+  }
   session.recording = {
     sid: null,
     callSid: session.callSid || null,
@@ -3580,16 +3814,18 @@ app.get("/bridge-recordings/:recordingId", (req, res) => {
       res.status(403).json({ ok: false, error: "Recording access link is invalid." });
       return;
     }
-    const recording = bridgeRecordings.get(recordingId);
-    if (recording?.expiresAt < Date.now()) {
-      bridgeRecordings.delete(recordingId);
-    }
-    if (!recording?.media || recording.expiresAt < Date.now()) {
-      res.status(404).json({ ok: false, error: "Recording is no longer available." });
+    const recording = resolveBridgeRecording(recordingId);
+    if (!recording?.media) {
+      res.status(404).json({
+        ok: false,
+        error:
+          "Recording is no longer available. Answering-service audio is kept on the voice server for a limited retention window and may be removed after expiry or host cleanup.",
+      });
       return;
     }
     res.setHeader("Content-Type", "audio/wav");
     res.setHeader("Content-Length", String(recording.media.length));
+    res.setHeader("Cache-Control", "private, max-age=3600");
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
     res.setHeader(
       "Content-Disposition",
@@ -5311,8 +5547,36 @@ async function runSessionCleanup() {
     }
     for (const [recordingId, recording] of bridgeRecordings.entries()) {
       if (recording.expiresAt < now) {
-        bridgeRecordings.delete(recordingId);
+        removeBridgeRecording(recordingId);
       }
+    }
+    // Sweep any orphaned on-disk recordings that are no longer indexed
+    // (e.g. left behind by a previous process crash).
+    try {
+      if (fs.existsSync(BRIDGE_RECORDING_DIR)) {
+        for (const name of fs.readdirSync(BRIDGE_RECORDING_DIR)) {
+          if (!name.endsWith(".json")) continue;
+          const recordingId = name.slice(0, -".json".length);
+          if (!isValidBridgeRecordingId(recordingId)) continue;
+          if (bridgeRecordings.has(recordingId)) continue;
+          const meta = readBridgeRecordingMetaFromDisk(recordingId);
+          if (!meta || meta.expiresAt < now) {
+            removeBridgeRecording(recordingId);
+          } else {
+            bridgeRecordings.set(recordingId, {
+              callSid: meta.callSid,
+              createdAt: meta.createdAt,
+              expiresAt: meta.expiresAt,
+              mediaPath: meta.mediaPath,
+              metaPath: meta.metaPath,
+            });
+          }
+        }
+      }
+    } catch (error) {
+      log("warn", "Bridge recording disk sweep failed", {
+        error: error.message,
+      });
     }
     for (const [key, limit] of voicePreviewRateLimits.entries()) {
       if (limit.resetAt <= now) {
@@ -5353,11 +5617,24 @@ server.listen(PORT, () => {
   if (!process.env.ICP_SERVER_IDENTITY_JSON && !process.env.ICP_SERVER_IDENTITY_SECRET_KEY) {
     missing.push("ICP_SERVER_IDENTITY_JSON");
   }
+  let bridgeRecordingIndex = { loaded: 0, expired: 0, skipped: 0 };
+  try {
+    bridgeRecordingIndex = loadBridgeRecordingsFromDisk();
+  } catch (error) {
+    log("warn", "Failed to load durable bridge recordings on startup", {
+      dir: BRIDGE_RECORDING_DIR,
+      error: error.message,
+    });
+  }
   log("info", "VoiceCall AI server listening", {
     serverVersion: SERVER_VERSION,
     port: PORT,
     publicHost: getPublicHost() || null,
     health: `http://localhost:${PORT}/health`,
+    bridgeRecordingDir: BRIDGE_RECORDING_DIR,
+    bridgeRecordingTtlMs: BRIDGE_RECORDING_TTL_MS,
+    bridgeRecordingsLoaded: bridgeRecordingIndex.loaded,
+    bridgeRecordingsExpired: bridgeRecordingIndex.expired,
     missingEnv: missing,
   });
   scheduleAgentCallPoll(1_000);

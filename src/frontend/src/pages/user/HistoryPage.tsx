@@ -655,6 +655,25 @@ function CallRow({
   );
 }
 
+async function readRecordingAccessError(
+  response: Response,
+): Promise<string | null> {
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) return null;
+  try {
+    const body = (await response.clone().json()) as {
+      error?: string;
+      ok?: boolean;
+    };
+    if (typeof body.error === "string" && body.error.trim()) {
+      return body.error.trim();
+    }
+  } catch {
+    // ignore parse failures; fall back to generic status text
+  }
+  return null;
+}
+
 function RecordingArtifact({
   recordingUrl,
   recordingSid,
@@ -668,6 +687,7 @@ function RecordingArtifact({
 }) {
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
   const [isResolving, setIsResolving] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const captionSrc = useMemo(() => toCaptionDataUrl(transcript), [transcript]);
 
@@ -677,8 +697,51 @@ function RecordingArtifact({
     setError(null);
 
     if (!needsProxy) {
-      setPlaybackUrl(recordingUrl);
-      setIsResolving(false);
+      // Probe signed bridge (or other non-Twilio) links so missing media shows
+      // a clear message instead of a broken audio control / raw JSON page.
+      setPlaybackUrl(null);
+      setIsResolving(true);
+      fetch(recordingUrl, { method: "GET", credentials: "omit" })
+        .then(async (response) => {
+          if (cancelled) return;
+          if (!response.ok) {
+            const remoteError = await readRecordingAccessError(response);
+            setPlaybackUrl(null);
+            setError(
+              remoteError ||
+                (response.status === 404
+                  ? "Recording is no longer available on the voice server."
+                  : `Unable to load recording (${response.status}).`),
+            );
+            return;
+          }
+          // Prefer a blob URL so download reuses media and missing files show
+          // a clear message instead of navigating to a JSON error page.
+          const blob = await response.blob();
+          if (cancelled) return;
+          if (!blob || blob.size === 0) {
+            setPlaybackUrl(null);
+            setError("Recording media is empty or unavailable.");
+            return;
+          }
+          const objectUrl = URL.createObjectURL(blob);
+          if (cancelled) {
+            URL.revokeObjectURL(objectUrl);
+            return;
+          }
+          setPlaybackUrl(objectUrl);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          // Fall back to direct media URL (e.g. if CORS probe is blocked).
+          // The <audio> element can still play cross-origin media.
+          setPlaybackUrl(recordingUrl);
+          setError(null);
+        })
+        .finally(() => {
+          if (!cancelled) setIsResolving(false);
+        });
+
       return () => {
         cancelled = true;
       };
@@ -719,21 +782,67 @@ function RecordingArtifact({
     };
   }, [callSid, recordingSid, recordingUrl]);
 
-  const downloadUrl = playbackUrl ? withDownloadParam(playbackUrl) : null;
-  const downloadExtension =
-    getRecordingMimeType(downloadUrl ?? playbackUrl ?? recordingUrl) ===
-    "audio/wav"
-      ? "wav"
-      : "mp3";
+  // Revoke blob object URLs created for bridge playback.
+  useEffect(() => {
+    return () => {
+      if (playbackUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(playbackUrl);
+      }
+    };
+  }, [playbackUrl]);
 
-  function handleDownload() {
-    if (!downloadUrl) return;
-    const anchor = document.createElement("a");
-    anchor.href = downloadUrl;
-    anchor.download = `voicecall-recording-${recordingSid ?? "audio"}.${downloadExtension}`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
+  const downloadUrl = playbackUrl
+    ? playbackUrl.startsWith("blob:")
+      ? playbackUrl
+      : withDownloadParam(playbackUrl)
+    : null;
+  // Blob object URLs lose path/format hints; use the original recording URL.
+  const mimeType = getRecordingMimeType(recordingUrl);
+  const downloadExtension = mimeType === "audio/wav" ? "wav" : "mp3";
+
+  async function handleDownload() {
+    if (!downloadUrl || isDownloading) return;
+    setIsDownloading(true);
+    setError(null);
+    try {
+      let href = downloadUrl;
+      let shouldRevoke = false;
+      if (!downloadUrl.startsWith("blob:")) {
+        const response = await fetch(downloadUrl, {
+          method: "GET",
+          credentials: "omit",
+        });
+        if (!response.ok) {
+          const remoteError = await readRecordingAccessError(response);
+          throw new Error(
+            remoteError ||
+              (response.status === 404
+                ? "Recording is no longer available on the voice server."
+                : `Unable to download recording (${response.status}).`),
+          );
+        }
+        const blob = await response.blob();
+        href = URL.createObjectURL(blob);
+        shouldRevoke = true;
+      }
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.download = `voicecall-recording-${recordingSid ?? "audio"}.${downloadExtension}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      if (shouldRevoke) {
+        setTimeout(() => URL.revokeObjectURL(href), 1_000);
+      }
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Unable to download this recording.";
+      setError(message);
+    } finally {
+      setIsDownloading(false);
+    }
   }
 
   return (
@@ -747,11 +856,13 @@ function RecordingArtifact({
           variant="outline"
           size="sm"
           className="h-7 gap-1.5 text-xs"
-          onClick={handleDownload}
-          disabled={!downloadUrl || isResolving}
+          onClick={() => {
+            void handleDownload();
+          }}
+          disabled={!downloadUrl || isResolving || isDownloading}
         >
           <Download className="w-3.5 h-3.5" />
-          Save audio
+          {isDownloading ? "Saving…" : "Save audio"}
         </Button>
       </div>
       {isResolving ? (
@@ -766,7 +877,7 @@ function RecordingArtifact({
             setError(formatAudioElementError(event.currentTarget.error))
           }
         >
-          <source src={playbackUrl} type={getRecordingMimeType(playbackUrl)} />
+          <source src={playbackUrl} type={mimeType} />
           <track
             kind="captions"
             srcLang="en"

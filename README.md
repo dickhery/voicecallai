@@ -212,7 +212,12 @@ paying twice.
 The voice server polls only a bounded public job list, exponentially backs off
 from 10 to 30 seconds while that list is empty, performs an update call only
 when it claims or finalizes a real job, and reuses the existing paid-call
-reservation and reconciliation flow. Audio remains on the voice server/Twilio.
+reservation and reconciliation flow. Audio remains on the voice server/Twilio
+(never on the Motoko canister), so playback does not consume IC cycles.
+Answering-service bridge recordings are written under
+`src/server/data/bridge-recordings/` (or `BRIDGE_RECORDING_DIR`) with a default
+30-day retention (`BRIDGE_RECORDING_TTL_MS`) so history links survive process
+restarts. Outbound Twilio recordings continue to stream through Twilio.
 Listen-only links use a token distinct from the call-control token and are kept
 in transient canister memory, so an upgrade invalidates them and no live token
 is added to stable state. An agent reads the link with one query only when the

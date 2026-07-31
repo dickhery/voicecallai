@@ -12,3 +12,4 @@ src/frontend/src/bindings/
 
 src/frontend/node_modules/.cache/
 src/server/.env
+src/server/data/
