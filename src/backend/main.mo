@@ -27,12 +27,14 @@ shared ({ caller = installer }) persistent actor class Backend() = this {
   let answeringPresetVoiceIds = ConfigLib.initVoiceIdState();
   let callsState = CallsLib.initState();
   let answeringLiveState = CallsLib.initAnsweringLiveState();
+  // New stable collection for remote hang-up requests (empty on first upgrade).
+  let callEndState = CallsLib.initCallEndState();
   let billingState = BillingLib.initState();
   let agentState = AgentLib.initState();
 
   // Domain mixins
   include ConfigApi(accessControlState, configState, callPresetVoiceIds, twilioLineState, answeringState, answeringPresetVoiceIds);
-  include CallsApi(accessControlState, callsState, answeringLiveState, configState, callPresetVoiceIds);
+  include CallsApi(accessControlState, callsState, answeringLiveState, callEndState, configState, callPresetVoiceIds, billingState);
   include BillingApi(accessControlState, billingState, callsState, configState, callPresetVoiceIds, answeringState, answeringPresetVoiceIds);
   include AgentApi(
     Principal.fromActor(this),
@@ -40,6 +42,7 @@ shared ({ caller = installer }) persistent actor class Backend() = this {
     agentState,
     billingState,
     callsState,
+    callEndState,
     configState,
     callPresetVoiceIds,
   );

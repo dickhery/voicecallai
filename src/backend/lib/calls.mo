@@ -32,6 +32,16 @@ module {
     activeSessions : Map.Map<Text, Types.AnsweringLiveSession>;
   };
 
+  // Bounded map of remote hang-up requests. Kept separate so upgrades only add
+  // a new empty collection rather than reshaping CallRecord/agent job types.
+  public type CallEndState = {
+    pendingEnds : Map.Map<Text, Types.PendingCallEnd>;
+  };
+
+  private let MAX_PENDING_CALL_ENDS : Nat = 100;
+  private let MAX_PENDING_CALL_END_RESULTS : Nat = 25;
+  private let MAX_CALL_END_REASON_CHARS : Nat = 120;
+
   public func initState() : State {
     {
       callRecords = Map.empty<Common.CallId, Types.CallRecord>();
@@ -44,6 +54,109 @@ module {
   public func initAnsweringLiveState() : AnsweringLiveState {
     {
       activeSessions = Map.empty<Text, Types.AnsweringLiveSession>();
+    };
+  };
+
+  public func initCallEndState() : CallEndState {
+    {
+      pendingEnds = Map.empty<Text, Types.PendingCallEnd>();
+    };
+  };
+
+  private func prunePendingCallEnds(state : CallEndState) {
+    if (state.pendingEnds.size() < MAX_PENDING_CALL_ENDS) {
+      return;
+    };
+    // Drop oldest entries first when the bounded map is full.
+    var oldestId : ?Text = null;
+    var oldestAt : Int = 0;
+    state.pendingEnds.forEach(func(id, entry) {
+      switch (oldestId) {
+        case null {
+          oldestId := ?id;
+          oldestAt := entry.requestedAt;
+        };
+        case (?_) {
+          if (entry.requestedAt < oldestAt) {
+            oldestId := ?id;
+            oldestAt := entry.requestedAt;
+          };
+        };
+      };
+    });
+    switch (oldestId) {
+      case (?id) { ignore state.pendingEnds.remove(id) };
+      case null {};
+    };
+  };
+
+  private func cleanEndReason(reason : Text) : Text {
+    let trimmed = reason.trim(#char(' '));
+    if (trimmed == "") {
+      return "user_or_agent_requested_end";
+    };
+    let chars = trimmed.toArray();
+    if (chars.size() > MAX_CALL_END_REASON_CHARS) {
+      Text.fromArray(chars.sliceToArray(0, MAX_CALL_END_REASON_CHARS));
+    } else {
+      trimmed;
+    };
+  };
+
+  public func requestCallEnd(
+    state : CallEndState,
+    id : Text,
+    callId : ?Nat,
+    reservationId : Text,
+    callSid : ?Text,
+    serverSessionId : ?Text,
+    reason : Text,
+  ) : Types.PendingCallEnd {
+    prunePendingCallEnds(state);
+    let entry : Types.PendingCallEnd = {
+      id;
+      callId;
+      reservationId;
+      callSid;
+      serverSessionId;
+      requestedAt = Time.now();
+      reason = cleanEndReason(reason);
+    };
+    state.pendingEnds.add(id, entry);
+    entry;
+  };
+
+  public func getPendingCallEnd(
+    state : CallEndState,
+    id : Text,
+  ) : ?Types.PendingCallEnd {
+    state.pendingEnds.get(id);
+  };
+
+  public func listPendingCallEnds(
+    state : CallEndState,
+    limit : Nat,
+  ) : [Types.PendingCallEnd] {
+    let safeLimit = Nat.min(limit, MAX_PENDING_CALL_END_RESULTS);
+    let buf = List.empty<Types.PendingCallEnd>();
+    state.pendingEnds.forEach(func(_id, entry) {
+      if (buf.size() < safeLimit) {
+        buf.add(entry);
+      };
+    });
+    buf.toArray();
+  };
+
+  public func clearPendingCallEnd(
+    state : CallEndState,
+    id : Text,
+  ) : Bool {
+    switch (state.pendingEnds.get(id)) {
+      case null { false };
+      case (?_) {
+        state.pendingEnds.remove(id);
+        true;
+      };
     };
   };
 

@@ -61,6 +61,12 @@ const BILLING_STALE_ACTIVITY_GRACE_MS = Number(
 const CALL_MEDIA_IDLE_END_MS = Number(
   process.env.CALL_MEDIA_IDLE_END_MS || 60_000,
 );
+// End calls stuck in farewell loops once this many goodbye-like utterances
+// are detected across either party (assistant/answering service or caller).
+const GOODBYE_END_THRESHOLD = Math.max(
+  1,
+  Number(process.env.GOODBYE_END_THRESHOLD || 3),
+);
 const SESSION_CLEANUP_INTERVAL_MS = Number(
   process.env.SESSION_CLEANUP_INTERVAL_MS || 15_000,
 );
@@ -613,6 +619,7 @@ function buildNaturalVoiceInstructions(
     "Paraphrase by default. Keep exact wording only for fixed facts that must remain precise, such as names, phone numbers, addresses, URLs, prices, appointment times, or clearly required legal/compliance statements.",
     "Vary your wording across repeated calls and across turns. Use natural contractions, short acknowledgements, and concise spoken sentences.",
     "Never say or imply phrases like 'my instructions say', 'the prompt says', 'according to the preset', or 'I have been told'.",
+    "When the conversation is clearly over (goals met, or the other party is saying goodbye), give one brief farewell and stop. Do not keep exchanging goodbyes, reassurances, or closing lines in a loop.",
     "",
     "Private preset source material:",
     '"""',
@@ -1635,6 +1642,228 @@ function appendTranscript(session, speaker, text) {
     return;
   }
   session.transcript.push({ speaker, text: cleanText });
+}
+
+// Matches common farewell phrases without catching casual mid-call "bye" fragments
+// that are part of larger non-closing speech when possible.
+const GOODBYE_UTTERANCE_PATTERN =
+  /\b(?:good\s*bye|goodbye|bye[\s-]?bye|bye|farewell|take care|talk soon|see you(?: later| soon)?|have a (?:good|great|nice|wonderful) (?:one|day|night|evening|afternoon|weekend)|so long|hang(?:ing)? up|i(?:'m| am) (?:gonna|going to) (?:hang up|go)|until next time)\b/i;
+
+function textContainsGoodbye(text) {
+  return GOODBYE_UTTERANCE_PATTERN.test(String(text || ""));
+}
+
+function getLatestTranscriptText(session, speaker) {
+  const entries = Array.isArray(session?.transcript) ? session.transcript : [];
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    if (String(entries[i]?.speaker || "") === speaker) {
+      return String(entries[i]?.text || "");
+    }
+  }
+  return "";
+}
+
+/**
+ * Count completed farewell turns. Each finished utterance that contains a
+ * goodbye-like phrase increments the counter once. After GOODBYE_END_THRESHOLD
+ * (default 3), the voice bridge hangs up so AI-to-AI farewell loops cannot
+ * burn prepaid phone time forever.
+ */
+function noteGoodbyeUtterance(session, speaker, text, source = "transcript") {
+  if (!session || session.finished || session.goodbyeEndTriggered) return false;
+  const cleanText = String(text || "").trim();
+  if (!cleanText || !textContainsGoodbye(cleanText)) return false;
+
+  // Avoid double-counting the same streaming assistant turn.
+  const fingerprint = `${speaker}:${cleanText.slice(0, 160).toLowerCase()}`;
+  if (session.lastGoodbyeFingerprint === fingerprint) return false;
+  session.lastGoodbyeFingerprint = fingerprint;
+
+  session.goodbyeUtteranceCount = Math.max(
+    0,
+    Number(session.goodbyeUtteranceCount || 0),
+  ) + 1;
+
+  log("info", "Detected goodbye-like utterance on live call", {
+    sessionId: session.id,
+    callSid: session.callSid || null,
+    speaker,
+    source,
+    goodbyeUtteranceCount: session.goodbyeUtteranceCount,
+    threshold: GOODBYE_END_THRESHOLD,
+  });
+
+  if (session.goodbyeUtteranceCount < GOODBYE_END_THRESHOLD) return false;
+
+  session.goodbyeEndTriggered = true;
+  endSessionForGoodbyeLoop(session).catch((error) => {
+    log("error", "Failed to end call after goodbye loop threshold", {
+      sessionId: session.id,
+      callSid: session.callSid || null,
+      error: error.message,
+    });
+  });
+  return true;
+}
+
+async function endSessionForGoodbyeLoop(session) {
+  if (!session || session.finished) return;
+  log("warn", "Ending call after repeated goodbye exchange", {
+    sessionId: session.id,
+    callSid: session.callSid || null,
+    reservationId: session.reservationId || null,
+    goodbyeUtteranceCount: session.goodbyeUtteranceCount || 0,
+  });
+
+  try {
+    if (session.callSid && twilioClient) {
+      await twilioClient.calls(session.callSid).update({ status: "completed" });
+    }
+  } catch (error) {
+    log("warn", "Unable to hang up Twilio call after goodbye loop", {
+      sessionId: session.id,
+      callSid: session.callSid || null,
+      error: error.message,
+    });
+  }
+
+  session.billingStoppedAt ||= Date.now();
+  closeSessionSockets(session, "goodbye_loop_threshold");
+  scheduleFinishPaidSession(session, "goodbye_loop_threshold");
+}
+
+async function endSessionFromRemoteRequest(session, reason = "user_requested_end") {
+  if (!session || session.finished) return false;
+  if (session.state === "queued" && !session.callSid) {
+    await cancelQueuedSession(session, reason);
+    return true;
+  }
+
+  const callSid = getValidCallSid(session.callSid);
+  if (callSid && twilioClient) {
+    try {
+      await twilioClient.calls(callSid).update({ status: "completed" });
+    } catch (error) {
+      log("warn", "Unable to hang up Twilio call for remote end request", {
+        sessionId: session.id,
+        callSid,
+        reason,
+        error: error.message,
+      });
+    }
+  }
+
+  session.endedAt = Date.now();
+  markBillingActivity(session, "lastStatusAt", session.endedAt);
+  session.billingStoppedAt ||= session.endedAt;
+  closeSessionSockets(session, reason);
+  scheduleFinishPaidSession(session, reason);
+  return true;
+}
+
+function findSessionForPendingEnd(request = {}) {
+  const sessionId = String(request.serverSessionId || "").trim();
+  if (sessionId && callSessions.has(sessionId)) {
+    return callSessions.get(sessionId);
+  }
+
+  const callSid = getValidCallSid(request.callSid);
+  if (callSid) {
+    const bySid = callsBySid.get(callSid);
+    if (bySid && callSessions.has(bySid)) {
+      return callSessions.get(bySid);
+    }
+    for (const session of callSessions.values()) {
+      if (getValidCallSid(session.callSid) === callSid) return session;
+    }
+  }
+
+  const reservationId = String(request.reservationId || "").trim();
+  if (reservationId) {
+    for (const session of callSessions.values()) {
+      if (session.reservationId === reservationId) return session;
+    }
+  }
+
+  const callId = String(request.callId ?? "").trim();
+  if (callId) {
+    for (const session of callSessions.values()) {
+      if (String(session.callId || "") === callId) return session;
+    }
+  }
+
+  return null;
+}
+
+async function processPendingBackendCallEnds() {
+  if (!process.env.BACKEND_CANISTER_ID) return 0;
+  const actor = await getBackendActor();
+  if (typeof actor.listPendingCallEndsForServer !== "function") return 0;
+
+  const pending = await actor.listPendingCallEndsForServer(25n);
+  if (!Array.isArray(pending) || pending.length === 0) return 0;
+
+  let processed = 0;
+  for (const raw of pending) {
+    const request = {
+      id: String(raw?.id || ""),
+      callId: raw?.callId != null ? String(raw.callId) : "",
+      reservationId: String(raw?.reservationId || ""),
+      callSid: unwrapOptional(raw?.callSid) || raw?.callSid || "",
+      serverSessionId:
+        unwrapOptional(raw?.serverSessionId) || raw?.serverSessionId || "",
+      reason: String(raw?.reason || "user_or_agent_requested_end"),
+    };
+    if (!request.id) continue;
+
+    const session = findSessionForPendingEnd(request);
+    if (session) {
+      await endSessionFromRemoteRequest(
+        session,
+        request.reason || "user_or_agent_requested_end",
+      );
+      processed += 1;
+    } else {
+      const callSid = getValidCallSid(request.callSid);
+      if (callSid && twilioClient) {
+        try {
+          await twilioClient.calls(callSid).update({ status: "completed" });
+          settleBackendReservationFromTwilioFetch(
+            callSid,
+            `${request.reason || "remote_end"}_without_memory_session`,
+          ).catch((error) => {
+            log("error", "Unable to settle reservation after remote end", {
+              callSid,
+              error: error.message,
+            });
+          });
+          processed += 1;
+        } catch (error) {
+          log("warn", "Remote end request found no live session or Twilio call", {
+            requestId: request.id,
+            callSid,
+            error: error.message,
+          });
+        }
+      }
+    }
+
+    try {
+      if (typeof actor.clearPendingCallEndForServer === "function") {
+        await actor.clearPendingCallEndForServer(request.id);
+      }
+    } catch (error) {
+      log("warn", "Unable to clear pending call-end request", {
+        requestId: request.id,
+        error: error.message,
+      });
+    }
+  }
+
+  if (processed > 0) {
+    log("info", "Processed pending remote call-end requests", { processed });
+  }
+  return processed;
 }
 
 function normalizeRecordingUrl(recordingUrl) {
@@ -3584,6 +3813,9 @@ app.post("/initiate-call", async (req, res) => {
       recordingStatusUrl: getPublicRecordingStatusUrl(sessionId),
       transcript: [],
       awaitingCallerTranscript: false,
+      goodbyeUtteranceCount: 0,
+      goodbyeEndTriggered: false,
+      lastGoodbyeFingerprint: "",
       recording: null,
       bridgeRecordingChunks: null,
       bridgeRecordingTimeline: null,
@@ -3787,6 +4019,9 @@ app.post("/answering/incoming/:webhookSecret", async (req, res) => {
       recordingStatusUrl: "",
       transcript: [],
       awaitingCallerTranscript: false,
+      goodbyeUtteranceCount: 0,
+      goodbyeEndTriggered: false,
+      lastGoodbyeFingerprint: "",
       recording: null,
       bridgeRecordingChunks: [],
       bridgeRecordingTimeline: null,
@@ -4541,6 +4776,13 @@ mediaWss.on("connection", (twilioWs, request) => {
         session.xaiResponseInProgress = false;
         if (completedOpening) {
           applyFullSessionInstructions("opening_response_done");
+        } else if (session.fullInstructionsApplied) {
+          noteGoodbyeUtterance(
+            session,
+            "assistant",
+            getLatestTranscriptText(session, "assistant"),
+            "assistant_response_done",
+          );
         }
         return;
       }
@@ -4584,7 +4826,10 @@ mediaWss.on("connection", (twilioWs, request) => {
         if (session.metrics) {
           session.metrics.callerTranscriptChars += text.length;
         }
-        if (text) appendTranscript(session, "caller", `${text}\n`);
+        if (text) {
+          appendTranscript(session, "caller", `${text}\n`);
+          noteGoodbyeUtterance(session, "caller", text, "caller_transcription");
+        }
         const pendingArtifacts = getPendingCallArtifacts(session);
         if (session.finishTimer && !pendingArtifacts.recording) {
           finishPaidSession(session, "xai_realtime_transcription_completed");
@@ -5076,6 +5321,15 @@ async function runSessionCleanup() {
     }
     if (now - lastBackendReconcileAt >= BACKEND_CALL_RECONCILE_INTERVAL_MS) {
       await reconcileOpenBackendCallReservations();
+    }
+    // Lightweight query + optional hangups. Runs with cleanup so remote
+    // dashboard/agent end requests are honored without a dedicated poller.
+    try {
+      await processPendingBackendCallEnds();
+    } catch (error) {
+      log("warn", "Unable to process pending remote call-end requests", {
+        error: error.message,
+      });
     }
     await dispatchQueuedSessions();
   } catch (error) {

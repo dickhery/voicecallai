@@ -63,4 +63,21 @@ module {
     startedAt : Int;
     allowedSeconds : Nat;
   };
+
+  // Remote hang-up request stored on-chain for the off-chain voice bridge to poll.
+  // Keeps Twilio hang-ups out of the canister while still letting users/agents end calls.
+  public type PendingCallEnd = {
+    id : Text;
+    callId : ?Nat;
+    reservationId : Text;
+    callSid : ?Text;
+    serverSessionId : ?Text;
+    requestedAt : Int;
+    reason : Text;
+  };
+
+  public type RequestCallEndResult = {
+    #ok : PendingCallEnd;
+    #err : Text;
+  };
 };

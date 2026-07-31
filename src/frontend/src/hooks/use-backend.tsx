@@ -14,6 +14,7 @@ import type {
   InitiateCallInput,
   InitiateCallResult,
   PresetId,
+  RequestCallEndResult,
   ReserveCallResult,
   TwilioLineInput,
   TwilioLineMutationResult,
@@ -250,6 +251,22 @@ export function useListMyAnsweringLiveSessions() {
     },
     enabled: !!actor && !isFetching,
     refetchInterval: 3000,
+  });
+}
+
+/** Queue a hang-up for an active call owned by the signed-in principal. */
+export function useRequestEndActiveCall() {
+  const { actor } = useBackendActor();
+  const qc = useQueryClient();
+  return useMutation<RequestCallEndResult, Error, CallId>({
+    mutationFn: async (callId) => {
+      if (!actor) throw new Error("Actor not available");
+      return actor.requestEndActiveCall(callId);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["myCalls"] });
+      void qc.invalidateQueries({ queryKey: ["myAnsweringLiveSessions"] });
+    },
   });
 }
 

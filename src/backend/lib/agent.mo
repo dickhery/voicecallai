@@ -198,8 +198,8 @@ module {
   public func guide(state : State) : AgentTypes.AgentGuide {
     {
       appName = "VoiceCall AI";
-      apiVersion = "2026-07-agent-v3";
-      summary = "Place real outbound AI phone calls, configure voice presets, fund prepaid phone time with ICP, retrieve a listen-only live call link, manage answering presets, and retrieve approved call transcripts or recording links through ICP MCP.";
+      apiVersion = "2026-07-agent-v4";
+      summary = "Place real outbound AI phone calls, end stuck or completed calls, configure voice presets, fund prepaid phone time with ICP, retrieve a listen-only live call link, manage answering presets, and retrieve approved call transcripts or recording links through ICP MCP.";
       productionMcpUrl = "https://mcp.internetcomputer.org/mcp";
       authentication = [
         "VoiceCall AI's telephony action is on this backend canister. The frontend canister only serves assets; do not conclude phone calling is unavailable after inspecting only that canister.",
@@ -224,6 +224,7 @@ module {
         "Check agentGetAccountStatus once when a live balance is needed. If available phone time is low, tell the user the exact ICP package prices before purchasing.",
         "Create or select a call preset, confirm the recipient, purpose, preset, capture choices, and consent, then call agentQueueCall. Agents do not need separate Twilio or xAI tools: the off-chain voice bridge securely claims the job and places the call.",
         "Poll agentListCallJobs after about 10 seconds, then back off to 20 and 30 seconds while waiting. Once a job is dispatched, call agentGetLiveCallLink once if the user wants to hear the call. Use agentGetCallArtifacts after completion for the transcript and a signed audio URL when capture was enabled.",
+        "To stop a live or queued call you created, call agentEndCall with the job ID. Queued jobs cancel immediately; dispatched calls are hung up by the voice bridge within about 15 seconds. Prefer this over leaving farewell loops running.",
         "Report queued, dispatched, in-progress, or completed according to returned state. Never claim a call was placed or completed without supporting job or call-record state.",
       ];
       paymentWorkflow = [
@@ -247,6 +248,7 @@ module {
         capability("Transfer ICP", "agentTransferIcp", "Transfer unspent ICP from the in-app subaccount to an ICRC-1 account.", true),
         capability("Manage presets", "createPreset", "Create, list, update, duplicate, and delete outbound call presets.", true),
         capability("Queue a call", "agentQueueCall", "Reserve phone time and queue an idempotent outbound voice-server job.", true),
+        capability("End a call", "agentEndCall", "Cancel a queued MCP call or request hang-up of a dispatched/in-progress call you created.", true),
         capability("Listen to a live call", "agentGetLiveCallLink", "Return a short-lived, listen-only HTTPS page for an active MCP-created call.", false),
         capability("Call history", "listMyCalls", "Read the authenticated principal's bounded call history.", false),
         capability("Call artifacts", "agentGetCallArtifacts", "Return a completed call's transcript and signed recording URL when available.", false),

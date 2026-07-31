@@ -61,7 +61,11 @@ import {
   getTurnTimingProfileId,
   normalizeTurnDetection,
 } from "@/lib/natural-phone";
-import { getLiveAudioMonitorUrl, getVoiceServerUrl } from "@/lib/voice-server";
+import {
+  endVoiceServerCall,
+  getLiveAudioMonitorUrl,
+  getVoiceServerUrl,
+} from "@/lib/voice-server";
 import type { AnsweringPreset, AnsweringPresetInput } from "@/types";
 import {
   CheckCircle2,
@@ -399,6 +403,59 @@ function TurnDetectionFields({
         </div>
       </div>
     </div>
+  );
+}
+
+function EndLiveCallButton({
+  sessionId,
+  monitorToken,
+  callSid,
+  onEnded,
+}: {
+  sessionId: string;
+  monitorToken: string;
+  callSid?: string;
+  onEnded?: () => void;
+}) {
+  const [ending, setEnding] = useState(false);
+
+  const handleEnd = async () => {
+    if (ending) return;
+    setEnding(true);
+    try {
+      await endVoiceServerCall({
+        sessionId,
+        monitorToken,
+        callSid: callSid || null,
+      });
+      toast.success("Call end requested");
+      onEnded?.();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Unable to end the live call.";
+      toast.error(message);
+    } finally {
+      setEnding(false);
+    }
+  };
+
+  return (
+    <Button
+      type="button"
+      variant="destructive"
+      size="sm"
+      className="gap-1.5"
+      disabled={ending}
+      onClick={() => void handleEnd()}
+      data-ocid="answering.live_call.end_button"
+    >
+      {ending ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <PhoneOff className="h-3.5 w-3.5" />
+      )}
+      End Call
+    </Button>
   );
 }
 
@@ -1421,10 +1478,18 @@ export default function AnsweringServicePage() {
                           {formatMinutes(session.allowedSeconds)} reserved
                         </p>
                       </div>
-                      <LiveAudioButton
-                        sessionId={session.sessionId}
-                        monitorToken={session.monitorToken}
-                      />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <LiveAudioButton
+                          sessionId={session.sessionId}
+                          monitorToken={session.monitorToken}
+                        />
+                        <EndLiveCallButton
+                          sessionId={session.sessionId}
+                          monitorToken={session.monitorToken}
+                          callSid={session.callSid}
+                          onEnded={() => void liveSessions.refetch()}
+                        />
+                      </div>
                     </div>
                   ))}
                 </div>

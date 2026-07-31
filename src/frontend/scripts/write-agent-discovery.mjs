@@ -93,7 +93,8 @@ Candid interface: ${productionOrigin}/agent-api.did
 4. Call agentQueueCall with an E.164 phone number, preset ID, capture options, and a unique idempotency key.
 5. Track the durable job with agentListCallJobs. Start at a 10-second polling interval and back off to 30 seconds. Never claim the call completed merely because it was queued.
 6. When the job is dispatched, call agentGetLiveCallLink once if the user wants to hear the active call. Give them the returned HTTPS URL; it is listen-only and stops working when the call ends.
-7. After completion, use agentGetCallArtifacts when the user requested and consented to saved artifacts.
+7. To stop a queued or live call you created, call agentEndCall with the job ID. Queued jobs cancel immediately; dispatched calls are hung up by the voice bridge within about 15 seconds. Prefer this over leaving farewell loops running.
+8. After completion, use agentGetCallArtifacts when the user requested and consented to saved artifacts.
 
 The off-chain VoiceCall AI bridge securely claims queued jobs and connects Twilio Media Streams to xAI Voice. Agents do not need a Twilio or xAI tool of their own.
 
@@ -144,7 +145,8 @@ Always specify that linked identity and the mainnet environment on later calls. 
 8. Read agentListCallJobs after about 10 seconds. Back off to 20 and then 30 seconds while waiting. Use listMyCalls or getCallRecord for the resulting call record.
 9. Say "queued", "dispatched", "in progress", or "completed" according to returned state. Do not report a successful live call without supporting state.
 10. If the user wants to hear a dispatched call, call agentGetLiveCallLink once and present its listen-only HTTPS URL. Treat the link as sensitive and do not poll this method.
-11. Call agentGetCallArtifacts only after completion and only when the user is authorized to see the artifacts.
+11. If the user asks to hang up, or a call is stuck exchanging goodbyes, call agentEndCall with the job ID. Do not leave prepaid time burning on a finished conversation.
+12. Call agentGetCallArtifacts only after completion and only when the user is authorized to see the artifacts.
 
 ## Funding phone time with ICP
 
@@ -200,6 +202,7 @@ const structuredGuide = {
     "Call agentQueueCall with an E.164 number and a unique idempotency key.",
     "Poll agentListCallJobs with backoff and report only returned state.",
     "Call agentGetLiveCallLink once for a dispatched job when the user wants to listen.",
+    "Call agentEndCall to cancel a queued job or hang up a live call you created.",
     "Retrieve artifacts after completion only when capture was approved.",
   ],
   primary_methods: [
@@ -211,6 +214,7 @@ const structuredGuide = {
     "createPreset",
     "agentQueueCall",
     "agentListCallJobs",
+    "agentEndCall",
     "agentGetLiveCallLink",
     "agentGetCallArtifacts",
   ],

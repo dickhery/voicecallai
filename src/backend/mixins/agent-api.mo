@@ -26,6 +26,7 @@ mixin (
   agentState : AgentLib.State,
   billingState : BillingLib.State,
   callsState : CallsLib.State,
+  callEndState : CallsLib.CallEndState,
   configState : ConfigLib.State,
   callPresetVoiceIds : ConfigLib.VoiceIdState,
 ) {
@@ -634,7 +635,7 @@ mixin (
   };
 
   /// Cancels a queued/claimed MCP call before dispatch and releases reserved
-  /// phone time. Dispatched calls must be ended through the voice bridge.
+  /// phone time. Dispatched calls must be ended with agentEndCall.
   public shared ({ caller }) func agentCancelQueuedCall(
     jobId : Text,
   ) : async Bool {
@@ -657,6 +658,106 @@ mixin (
               null,
               ?Time.now(),
               ?"Canceled before dispatch",
+            );
+          };
+          case null {};
+        };
+        true;
+      };
+    };
+  };
+
+  /// Ends an MCP-created call. Queued/claimed jobs cancel immediately.
+  /// Dispatched/in-progress jobs queue a bounded hang-up request for the
+  /// off-chain voice bridge (no HTTPS outcalls from the canister).
+  public shared ({ caller }) func agentEndCall(
+    jobId : Text,
+  ) : async AgentTypes.AgentCallResult {
+    requireAgent(caller);
+    switch (AgentLib.getCallJob(agentState, jobId)) {
+      case null {
+        return #err(agentError("CALL_JOB_NOT_FOUND", "Call job not found.", false, caller));
+      };
+      case (?job) {
+        if (job.user != caller and not AccessControl.isAdmin(accessControlState, caller)) {
+          return #err(agentError("UNAUTHORIZED", "You can only end call jobs you created.", false, caller));
+        };
+        switch (job.status) {
+          case (#queued) {
+            if (agentCancelQueuedCallInternal(jobId, caller)) {
+              switch (AgentLib.getCallJob(agentState, jobId)) {
+                case (?updated) { return #ok(AgentLib.toCallJob(updated)) };
+                case null {
+                  return #err(agentError("CALL_JOB_NOT_FOUND", "Call job not found after cancel.", true, caller));
+                };
+              };
+            };
+            return #err(agentError("CANCEL_FAILED", "Unable to cancel the queued call.", true, caller));
+          };
+          case (#claimed) {
+            if (agentCancelQueuedCallInternal(jobId, caller)) {
+              switch (AgentLib.getCallJob(agentState, jobId)) {
+                case (?updated) { return #ok(AgentLib.toCallJob(updated)) };
+                case null {
+                  return #err(agentError("CALL_JOB_NOT_FOUND", "Call job not found after cancel.", true, caller));
+                };
+              };
+            };
+            return #err(agentError("CANCEL_FAILED", "Unable to cancel the claimed call.", true, caller));
+          };
+          case (#failed) {
+            return #err(agentError("CALL_ALREADY_FINISHED", "This call job already failed.", false, caller));
+          };
+          case (#canceled) {
+            return #err(agentError("CALL_ALREADY_FINISHED", "This call job was already canceled.", false, caller));
+          };
+          case (#dispatched) {
+            let endId = "job:" # jobId;
+            switch (CallsLib.getPendingCallEnd(callEndState, endId)) {
+              case (?_) { return #ok(AgentLib.toCallJob(job)) };
+              case null {};
+            };
+            ignore CallsLib.requestCallEnd(
+              callEndState,
+              endId,
+              ?job.callId,
+              job.reservationId,
+              job.callSid,
+              job.serverSessionId,
+              "agent_requested_end",
+            );
+            CallsLib.addSystemLog(
+              callsState,
+              #info,
+              "Queued remote hang-up for MCP call job " # jobId,
+              ?job.callId,
+            );
+            #ok(AgentLib.toCallJob(job));
+          };
+        };
+      };
+    };
+  };
+
+  private func agentCancelQueuedCallInternal(jobId : Text, caller : Principal) : Bool {
+    switch (AgentLib.cancelCallJob(agentState, jobId, caller)) {
+      case null { false };
+      case (?reservationId) {
+        liveCallLinks.remove(jobId);
+        ignore BillingLib.cancelReservation(
+          billingState,
+          reservationId,
+          "Canceled by the authenticated agent",
+        );
+        switch (AgentLib.getCallJob(agentState, jobId)) {
+          case (?job) {
+            ignore CallsLib.updateCallRecord(
+              callsState,
+              job.callId,
+              #failed,
+              null,
+              ?Time.now(),
+              ?"Canceled by agent",
             );
           };
           case null {};

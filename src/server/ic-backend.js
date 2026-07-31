@@ -200,6 +200,16 @@ const AgentCallDispatch = IDL.Record({
   callToken: IDL.Text,
 });
 
+const PendingCallEnd = IDL.Record({
+  id: IDL.Text,
+  callId: IDL.Opt(IDL.Nat),
+  reservationId: IDL.Text,
+  callSid: IDL.Opt(IDL.Text),
+  serverSessionId: IDL.Opt(IDL.Text),
+  requestedAt: IDL.Int,
+  reason: IDL.Text,
+});
+
 const idlFactory = ({ IDL }) =>
   IDL.Service({
     getPurchaseIntentForServer: IDL.Func(
@@ -312,6 +322,12 @@ const idlFactory = ({ IDL }) =>
       [IDL.Bool],
       [],
     ),
+    listPendingCallEndsForServer: IDL.Func(
+      [IDL.Nat],
+      [IDL.Vec(PendingCallEnd)],
+      ["query"],
+    ),
+    clearPendingCallEndForServer: IDL.Func([IDL.Text], [IDL.Bool], []),
   });
 
 let identityCache = null;

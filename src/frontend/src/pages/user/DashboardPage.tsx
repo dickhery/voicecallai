@@ -37,14 +37,17 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { CallStatus } from "@/bindings/backend";
 import {
   useCreatePreset,
   useCreatePurchaseIntent,
   useDeletePreset,
   useDuplicatePreset,
   useGetMyBillingStatus,
+  useListMyAnsweringLiveSessions,
   useListMyCalls,
   useListMyPresets,
+  useRequestEndActiveCall,
   useUpdatePresetInstructions,
 } from "@/hooks/use-backend";
 import type { XaiCallStatus } from "@/hooks/use-xai-voice";
@@ -65,6 +68,7 @@ import {
 } from "@/lib/phone";
 import {
   createCheckoutSession,
+  endVoiceServerCall,
   getVoiceServerHealth,
 } from "@/lib/voice-server";
 import type { CallPreset } from "@/types";
@@ -640,6 +644,17 @@ export default function DashboardPage() {
     refetch: refetchCalls,
   } = useListMyCalls();
   const {
+    data: answeringLiveSessions,
+    refetch: refetchAnsweringLive,
+  } = useListMyAnsweringLiveSessions();
+  const requestEndActiveCall = useRequestEndActiveCall();
+  const [endingRemoteCallId, setEndingRemoteCallId] = useState<string | null>(
+    null,
+  );
+  const [endingAnsweringSessionId, setEndingAnsweringSessionId] = useState<
+    string | null
+  >(null);
+  const {
     data: billingStatus,
     isLoading: billingLoading,
     refetch: refetchBilling,
@@ -661,7 +676,67 @@ export default function DashboardPage() {
   });
 
   const recentCalls = (calls ?? []).slice(0, 5);
+  const openBackendCalls = useMemo(
+    () =>
+      (calls ?? []).filter(
+        (call) =>
+          call.status === CallStatus.pending ||
+          call.status === CallStatus.inProgress,
+      ),
+    [calls],
+  );
   const totalCalls = (calls ?? []).length;
+
+  const handleEndRemoteCall = async (callId: bigint) => {
+    const key = callId.toString();
+    if (endingRemoteCallId) return;
+    setEndingRemoteCallId(key);
+    try {
+      const result = await requestEndActiveCall.mutateAsync(callId);
+      if (result.__kind__ === "err") {
+        toast.error(result.err);
+        return;
+      }
+      toast.success("Hang-up requested", {
+        description:
+          "The voice bridge will end the call within about 15 seconds.",
+      });
+      void refetchCalls();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Unable to request call hang-up.",
+      );
+    } finally {
+      setEndingRemoteCallId(null);
+    }
+  };
+
+  const handleEndAnsweringSession = async (session: {
+    sessionId: string;
+    monitorToken: string;
+    callSid: string;
+  }) => {
+    if (endingAnsweringSessionId) return;
+    setEndingAnsweringSessionId(session.sessionId);
+    try {
+      await endVoiceServerCall({
+        sessionId: session.sessionId,
+        monitorToken: session.monitorToken,
+        callSid: session.callSid || null,
+      });
+      toast.success("Answering call ended");
+      void refetchAnsweringLive();
+      void refetchCalls();
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : "Unable to end the answering call.",
+      );
+    } finally {
+      setEndingAnsweringSessionId(null);
+    }
+  };
   const callsToday = (calls ?? []).filter((c) => {
     const d = new Date(Number(c.startTime / 1_000_000n));
     const now = new Date();
@@ -1207,6 +1282,96 @@ export default function DashboardPage() {
             voice={voice}
             onRequestEnd={() => setConfirmEndOpen(true)}
           />
+
+          {(openBackendCalls.length > 0 ||
+            (answeringLiveSessions?.length ?? 0) > 0) && (
+            <Card
+              className="border-amber-500/30 bg-card"
+              data-ocid="dashboard.remote_active_calls.card"
+            >
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base font-semibold flex items-center gap-2">
+                  <PhoneOff className="w-4 h-4 text-amber-400" />
+                  Active calls you can end
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  Includes agent-created outbound calls and live answering
+                  sessions. Use this if a call gets stuck after goodbyes.
+                </p>
+                {openBackendCalls.map((call) => (
+                  <div
+                    key={`open-${call.id.toString()}`}
+                    className="flex flex-col gap-2 rounded-md border border-border p-3 sm:flex-row sm:items-center sm:justify-between"
+                    data-ocid={`dashboard.remote_active_calls.item.${call.id.toString()}`}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium font-mono truncate">
+                        {formatPhoneDisplay(call.recipientPhone)}
+                      </p>
+                      <div className="mt-1 flex items-center gap-2">
+                        <CallStatusBadge status={call.status} />
+                        <span className="text-xs text-muted-foreground">
+                          Call #{call.id.toString()}
+                        </span>
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      className="gap-1.5 shrink-0"
+                      disabled={endingRemoteCallId === call.id.toString()}
+                      onClick={() => void handleEndRemoteCall(call.id)}
+                      data-ocid={`dashboard.remote_active_calls.end.${call.id.toString()}`}
+                    >
+                      {endingRemoteCallId === call.id.toString() ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <PhoneOff className="w-3.5 h-3.5" />
+                      )}
+                      End call
+                    </Button>
+                  </div>
+                ))}
+                {(answeringLiveSessions ?? []).map((session) => (
+                  <div
+                    key={`ans-${session.sessionId}`}
+                    className="flex flex-col gap-2 rounded-md border border-border p-3 sm:flex-row sm:items-center sm:justify-between"
+                    data-ocid={`dashboard.answering_live.item.${session.sessionId}`}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">
+                        {session.answeringPresetName}
+                      </p>
+                      <p className="text-xs text-muted-foreground font-mono">
+                        Incoming {formatPhoneDisplay(session.callerPhone)}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      className="gap-1.5 shrink-0"
+                      disabled={
+                        endingAnsweringSessionId === session.sessionId
+                      }
+                      onClick={() => void handleEndAnsweringSession(session)}
+                      data-ocid={`dashboard.answering_live.end.${session.sessionId}`}
+                    >
+                      {endingAnsweringSessionId === session.sessionId ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <PhoneOff className="w-3.5 h-3.5" />
+                      )}
+                      End answering call
+                    </Button>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
             <Card

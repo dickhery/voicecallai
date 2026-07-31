@@ -3,6 +3,7 @@ import Principal "mo:core/Principal";
 import Time "mo:core/Time";
 import Text "mo:core/Text";
 import AccessControl "mo:caffeineai-authorization/access-control";
+import BillingLib "../lib/billing";
 import CallsLib "../lib/calls";
 import ConfigLib "../lib/config";
 import CallTypes "../types/calls";
@@ -12,8 +13,10 @@ mixin (
   accessControlState : AccessControl.AccessControlState,
   callsState : CallsLib.State,
   answeringLiveState : CallsLib.AnsweringLiveState,
+  callEndState : CallsLib.CallEndState,
   configState : ConfigLib.State,
   callPresetVoiceIds : ConfigLib.VoiceIdState,
+  billingState : BillingLib.State,
 ) {
   let MAX_CALL_TRANSCRIPT_CHARS : Nat = 20_000;
 
@@ -163,5 +166,106 @@ mixin (
       Runtime.trap("Unauthorized: must be logged in");
     };
     CallsLib.listAnsweringLiveSessionsForUser(answeringLiveState, caller);
+  };
+
+  /// Ask the off-chain voice bridge to hang up an active call owned by the
+  /// caller. The canister only records a bounded pending request (query-polled
+  /// by the server) so this stays cheap on cycles.
+  public shared ({ caller }) func requestEndActiveCall(
+    callId : Common.CallId,
+  ) : async CallTypes.RequestCallEndResult {
+    if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
+      Runtime.trap("Unauthorized: must be logged in");
+    };
+    switch (CallsLib.getCallRecord(callsState, callId)) {
+      case null { return #err("Call not found.") };
+      case (?record) {
+        if (not Principal.equal(record.userId, caller) and not AccessControl.isAdmin(accessControlState, caller)) {
+          return #err("Unauthorized: can only end your own calls.");
+        };
+        switch (record.status) {
+          case (#completed) { return #err("Call is already completed.") };
+          case (#failed) { return #err("Call is already finished.") };
+          case (#pending) {};
+          case (#inProgress) {};
+        };
+
+        // Prefer live answering session tokens when present (fast path identity).
+        var answeringSessionId : ?Text = null;
+        var answeringCallSid : ?Text = null;
+        for (session in CallsLib.listAnsweringLiveSessionsForUser(answeringLiveState, record.userId).vals()) {
+          // Answering sessions don't store callId on the public type; match by
+          // active callSid recorded on the call when available.
+          switch (record.callSid) {
+            case (?sid) {
+              if (session.callSid == sid) {
+                answeringSessionId := ?session.sessionId;
+                answeringCallSid := ?session.callSid;
+              };
+            };
+            case null {};
+          };
+        };
+
+        var reservationId = "";
+        var callSid = record.callSid;
+        for (reservation in BillingLib.listOpenReservations(billingState, 100).vals()) {
+          if (reservation.callId == callId and Principal.equal(reservation.user, record.userId)) {
+            reservationId := reservation.id;
+            switch (reservation.callSid) {
+              case (?sid) { callSid := ?sid };
+              case null {};
+            };
+          };
+        };
+        switch (answeringCallSid) {
+          case (?sid) { callSid := ?sid };
+          case null {};
+        };
+
+        let endId = "call:" # callId.toText();
+        switch (CallsLib.getPendingCallEnd(callEndState, endId)) {
+          case (?existing) { return #ok(existing) };
+          case null {};
+        };
+
+        let entry = CallsLib.requestCallEnd(
+          callEndState,
+          endId,
+          ?callId,
+          reservationId,
+          callSid,
+          answeringSessionId,
+          "dashboard_user_requested_end",
+        );
+        CallsLib.addSystemLog(
+          callsState,
+          #info,
+          "Queued remote hang-up for call " # callId.toText(),
+          ?callId,
+        );
+        #ok(entry);
+      };
+    };
+  };
+
+  /// Voice-server poll: bounded list of hang-up requests. Query-only so the
+  /// cleanup loop stays cheap when idle.
+  public query ({ caller }) func listPendingCallEndsForServer(
+    limit : Nat,
+  ) : async [CallTypes.PendingCallEnd] {
+    if (not AccessControl.isAdmin(accessControlState, caller)) {
+      Runtime.trap("Unauthorized: server admin only");
+    };
+    CallsLib.listPendingCallEnds(callEndState, limit);
+  };
+
+  public shared ({ caller }) func clearPendingCallEndForServer(
+    id : Text,
+  ) : async Bool {
+    if (not AccessControl.isAdmin(accessControlState, caller)) {
+      Runtime.trap("Unauthorized: server admin only");
+    };
+    CallsLib.clearPendingCallEnd(callEndState, id);
   };
 };

@@ -308,6 +308,34 @@ export const mockBackend: Partial<backendInterface> = {
 
   twilioWebhook: async (_callSid: string, _callStatus: string) => "<Response/>",
 
+  requestEndActiveCall: async (callId: bigint) => ({
+    __kind__: "ok" as const,
+    ok: {
+      id: `call:${callId.toString()}`,
+      callId,
+      reservationId: "",
+      callSid: undefined,
+      serverSessionId: undefined,
+      requestedAt: BigInt(Date.now() * 1_000_000),
+      reason: "dashboard_user_requested_end",
+    },
+  }),
+
+  listPendingCallEndsForServer: async (_limit: bigint) => [],
+
+  clearPendingCallEndForServer: async (_id: string) => true,
+
+  agentEndCall: async (_jobId: string) => ({
+    __kind__: "err" as const,
+    err: {
+      code: "CALL_JOB_NOT_FOUND",
+      message: "Mock backend has no MCP call jobs.",
+      retryable: false,
+      availablePhoneSeconds: 0n,
+      pricing: [],
+    },
+  }),
+
   updateCallStatus: async (
     _callId: bigint,
     _status: CallStatus,
