@@ -674,8 +674,11 @@ export default function AdminDashboardPage() {
                           <p className="text-sm font-mono font-medium truncate">
                             {call.recipientPhone}
                           </p>
-                          <p className="text-xs text-muted-foreground font-mono truncate">
-                            {call.userId.toString().substring(0, 24)}...
+                          <p
+                            className="text-xs text-muted-foreground font-mono truncate"
+                            title={call.userId.toString()}
+                          >
+                            PID: {call.userId.toString()}
                           </p>
                         </div>
                         <CallStatusBadge status={call.status} />

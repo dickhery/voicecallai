@@ -185,7 +185,7 @@ mixin (
         CallsLib.addSystemLog(
           callsState,
           #info,
-          "Reserved " # debug_show(reserved.allowedSeconds) # " paid seconds for call " # debug_show(callRecord.id),
+          "Reserved " # debug_show(reserved.allowedSeconds) # " paid seconds for call " # debug_show(callRecord.id) # " owner PID " # account.toText(),
           ?callRecord.id,
         );
       };

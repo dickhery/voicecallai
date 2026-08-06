@@ -2764,6 +2764,21 @@ function stripeWebhookHandler(mode) {
 function callArtifactsToText(session) {
   if (!session) return null;
   const sections = [];
+  // Always stamp the account PID into saved artifacts so history can be
+  // reorganized after identity/login mistakes without extra canister queries.
+  const ownerPid =
+    session.userId?.toText?.() ||
+    session.userId?.toString?.() ||
+    session.userPrincipal ||
+    session.accountPrincipal ||
+    session.reservationUser ||
+    "";
+  if (ownerPid) {
+    sections.push(`Account PID: ${ownerPid}`);
+  }
+  if (session.callId != null && session.callId !== "") {
+    sections.push(`Call ID: ${session.callId}`);
+  }
   if (session.recordAudio && session.permissionConfirmed) {
     const recordingLines = ["Recording: enabled"];
     if (session.recording?.url) {
@@ -4000,6 +4015,8 @@ app.post("/initiate-call", async (req, res) => {
       mediaToken,
       callId,
       reservationId,
+      // Account principal that owns the prepaid reservation / call history row.
+      userId: reservation.user || "",
       allowedSeconds: reservation.allowedSeconds,
       recipientPhone,
       direction: CALL_DIRECTIONS.OUTBOUND,
@@ -4205,6 +4222,8 @@ app.post("/answering/incoming/:webhookSecret", async (req, res) => {
       reservationId: reservation.id,
       answeringPresetId: answeringPreset.id,
       answeringPresetName: answeringPreset.name,
+      // Account principal that owns the answering preset / call history row.
+      userId: reservation.user || answeringPreset.ownerId || "",
       allowedSeconds: reservation.allowedSeconds,
       recipientPhone: callerPhone,
       direction: CALL_DIRECTIONS.INBOUND,

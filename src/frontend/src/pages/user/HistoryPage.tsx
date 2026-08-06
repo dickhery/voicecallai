@@ -58,6 +58,7 @@ function formatDateTime(ns: bigint): string {
 function exportCsv(calls: CallRecordPublic[], presetMap: Map<string, string>) {
   const header = [
     "Call ID",
+    "User ID (PID)",
     "Recipient",
     "Preset",
     "Date",
@@ -66,6 +67,7 @@ function exportCsv(calls: CallRecordPublic[], presetMap: Map<string, string>) {
   ];
   const rows = calls.map((c) => [
     c.id.toString(),
+    c.userId?.toString?.() ?? "",
     c.recipientPhone,
     presetMap.get(c.presetId.toString()) ?? c.presetId.toString(),
     new Date(Number(c.startTime / 1_000_000n)).toISOString(),
@@ -100,12 +102,15 @@ function parseCallArtifacts(text?: string) {
   const source = text ?? "";
   const recordingUrlMatch = source.match(/^Recording URL:\s*(.+)$/im);
   const recordingSidMatch = source.match(/^Recording SID:\s*(.+)$/im);
+  const accountPidMatch = source.match(/^Account PID:\s*(.+)$/im);
   const rawRecordingUrl = recordingUrlMatch?.[1]?.trim() ?? "";
   const recordingUrl =
     rawRecordingUrl && rawRecordingUrl.toLowerCase() !== "pending"
       ? rawRecordingUrl
       : null;
   const transcript = source
+    .replace(/^Account PID:\s*.*$/gim, "")
+    .replace(/^Call ID:\s*.*$/gim, "")
     .replace(/^Recording:\s*.*$/gim, "")
     .replace(/^Recording URL:\s*.*$/gim, "")
     .replace(/^Recording SID:\s*.*$/gim, "")
@@ -116,6 +121,7 @@ function parseCallArtifacts(text?: string) {
     recordingUrl,
     recordingSid: recordingSidMatch?.[1]?.trim() ?? null,
     recordingPending: rawRecordingUrl.toLowerCase() === "pending",
+    artifactAccountPid: accountPidMatch?.[1]?.trim() ?? null,
   };
 }
 
@@ -229,10 +235,13 @@ export default function HistoryPage() {
         ).toLowerCase();
         const transcript = (c.transcript ?? "").toLowerCase();
         const phone = c.recipientPhone.toLowerCase();
+        const userPid = (c.userId?.toString?.() ?? "").toLowerCase();
         if (
           !phone.includes(q) &&
           !presetName.includes(q) &&
-          !transcript.includes(q)
+          !transcript.includes(q) &&
+          !userPid.includes(q) &&
+          !c.id.toString().includes(q)
         ) {
           return false;
         }
@@ -294,7 +303,7 @@ export default function HistoryPage() {
             <div className="relative flex-1 min-w-0">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
               <Input
-                placeholder="Search phone, preset, or transcript…"
+                placeholder="Search phone, preset, PID, or transcript…"
                 value={search}
                 onChange={(e) => {
                   setSearch(e.target.value);
@@ -601,6 +610,23 @@ function CallRow({
               <p className="font-mono text-foreground text-[10px] break-all">
                 {call.id.toString()}
               </p>
+            </div>
+            <div className="col-span-2 sm:col-span-3">
+              <p className="text-muted-foreground mb-1">User ID (PID)</p>
+              <p
+                className="font-mono text-foreground text-[10px] break-all"
+                title="Account principal that owns this call history row"
+              >
+                {call.userId?.toString?.() ?? (
+                  <span className="text-muted-foreground/60">—</span>
+                )}
+              </p>
+              {artifacts.artifactAccountPid &&
+                artifacts.artifactAccountPid !== call.userId?.toString?.() && (
+                  <p className="font-mono text-amber-600 text-[10px] break-all mt-1">
+                    Artifact PID: {artifacts.artifactAccountPid}
+                  </p>
+                )}
             </div>
           </div>
           {artifacts.recordingUrl && (

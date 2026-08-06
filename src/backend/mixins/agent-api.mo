@@ -601,7 +601,7 @@ mixin (
               CallsLib.addSystemLog(
                 callsState,
                 #info,
-                "Queued MCP agent call job " # job.id # " for call " # callRecord.id.toText(),
+                "Queued MCP agent call job " # job.id # " for call " # callRecord.id.toText() # " owner PID " # account.toText(),
                 ?callRecord.id,
               );
               #ok(AgentLib.toCallJob(job));

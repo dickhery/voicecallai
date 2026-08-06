@@ -248,6 +248,14 @@ module {
         userList.add(id);
       };
     };
+    // Durable, cheap local log so admin recovery can map call ID → owner PID
+    // even if per-user indexes or identity linking get confused.
+    addSystemLog(
+      state,
+      #info,
+      "Created call " # id.toText() # " owner PID " # userId.toText() # " recipient " # recipientPhone,
+      ?id,
+    );
     record;
   };
 
