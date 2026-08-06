@@ -167,6 +167,16 @@ module {
     consentConfirmed : Bool;
   };
 
+  /// Kept for stable-memory layout compatibility with canisters that already
+  /// upgraded past cbb93ff. Not used by this restored cbb93ff-behavior build.
+  public type AgentConsentGrant = {
+    placeCalls : Bool;
+    saveTranscript : Bool;
+    recordAudio : Bool;
+    grantedAt : Int;
+    expiresAt : Int;
+  };
+
   public type AgentCallInput = {
     recipientPhone : Text;
     presetId : Nat;

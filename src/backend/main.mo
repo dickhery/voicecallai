@@ -33,6 +33,9 @@ shared ({ caller = installer }) persistent actor class Backend() = this {
   let callEndState = CallsLib.initCallEndState();
   let billingState = BillingLib.initState();
   let agentState = AgentLib.initState();
+  // Retained for memory-compatible upgrade onto post-cbb93ff canisters.
+  // Behavior matches cbb93ff; consent APIs are not exposed.
+  let agentConsentState = AgentLib.initConsentState();
   // Links web-app and MCP session principals that belong to the same human.
   let identityState = IdentityLib.initState();
 
@@ -52,4 +55,7 @@ shared ({ caller = installer }) persistent actor class Backend() = this {
     configState,
     callPresetVoiceIds,
   );
+
+  // Keep the binding live so the Motoko compiler does not drop it.
+  ignore agentConsentState;
 };

@@ -10,6 +10,14 @@ type AgentCallCaptureOptions__597500174 =
   {consentConfirmed : Bool; recordAudio : Bool; saveTranscript : Bool};
 type AgentCallJobStatus__1065128923 =
   {#canceled; #claimed; #dispatched; #failed; #queued};
+type AgentConsentGrant__819570921 =
+  {
+    expiresAt : Int;
+    grantedAt : Int;
+    placeCalls : Bool;
+    recordAudio : Bool;
+    saveTranscript : Bool
+  };
 type AgentProfile__748171481 =
   {
     createdAt : Int;
@@ -238,6 +246,8 @@ actor {
       var adminAssigned : Bool;
       userRoles : Map__254296833<Principal, UserRole__1073662873>
     };
+  stable agentConsentState :
+    {grants : Map__254296833<Principal, AgentConsentGrant__819570921>};
   stable agentState :
     {
       callJobIdempotencyIndex : Map__254296833<Text, Text>;

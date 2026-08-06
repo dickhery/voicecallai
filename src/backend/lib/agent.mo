@@ -46,6 +46,12 @@ module {
     var pricingLastAttemptAt : Int;
   };
 
+  /// Stable layout field introduced after cbb93ff. Retained so upgrades onto
+  /// canisters that already store consent grants do not trap.
+  public type ConsentState = {
+    grants : Map.Map<Principal, AgentTypes.AgentConsentGrant>;
+  };
+
   public func initState() : State {
     {
       profiles = Map.empty<Principal, AgentTypes.AgentProfile>();
@@ -66,6 +72,10 @@ module {
       var pricingExpiresAt = 0;
       var pricingLastAttemptAt = 0;
     };
+  };
+
+  public func initConsentState() : ConsentState {
+    { grants = Map.empty<Principal, AgentTypes.AgentConsentGrant>() };
   };
 
   public func register(
