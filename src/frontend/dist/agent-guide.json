@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "name": "VoiceCall AI",
   "canonical_origin": "https://voicecallai.online",
-  "summary": "Place and manage real AI phone calls through the VoiceCall AI backend canister and its off-chain xAI Voice/Twilio bridge.",
+  "summary": "Place and manage real AI phone calls, fund prepaid phone time with ICP, and set up inbound AI answering on a user-owned Twilio number through the VoiceCall AI backend canister and off-chain xAI Voice/Twilio bridge.",
   "discovery_warning": "The frontend canister is an asset canister. If it is the only canister initially discovered, continue with the declared backend canister before deciding telephony is unavailable.",
   "mcp": {
     "name": "Official Internet Computer MCP / Agent Identity",
@@ -23,29 +23,57 @@
     }
   },
   "workflow": [
-    "Call getAgentGuide once.",
+    "Call getAgentGuide once (or getApiDoc for a short markdown summary).",
     "Authenticate with Internet Identity and call agentInitialize once.",
-    "List existing presets and calls before creating duplicates.",
+    "List existing presets, answering presets, and calls before creating duplicates.",
     "Check the live account status only when balances are needed.",
-    "Confirm recipient, purpose, preset, capture choices, and consent.",
+    "Confirm recipient, purpose, preset, capture choices, and consent for outbound calls.",
     "Call agentQueueCall with an E.164 number and a unique idempotency key.",
     "Poll agentListCallJobs with backoff and report only returned state.",
     "Call agentGetLiveCallLink once for a dispatched job when the user wants to listen.",
     "Call agentEndCall to cancel a queued job or hang up a live call you created.",
     "Retrieve artifacts after completion only when capture was approved."
   ],
+  "answering_workflow": [
+    "Collect the user's Twilio E.164 number, AI instructions, capture choices, and consent.",
+    "Confirm shared prepaid phone time exists (ICP or Stripe).",
+    "listMyAnsweringPresets then createAnsweringPreset with a random webhookSecret.",
+    "Give the user https://voicecall.richardhery.com/answering/incoming/{webhookSecret} for Twilio Voice POST.",
+    "User verifies by calling the number once; then setAnsweringPresetEnabled when verified."
+  ],
+  "payment_workflow": [
+    "agentGetAccountIdentity for the exact ICRC-1 deposit account.",
+    "User transfers ICP; agentRefreshIcpPricing only if the quote is stale.",
+    "agentPurchasePhoneTime after user authorization; confirm availableSeconds increased.",
+    "Shared phone-time balance funds outbound calls and inbound answering."
+  ],
+  "required_answering_information": [
+    "User-owned Twilio number in E.164",
+    "Ability to set Twilio Voice webhook",
+    "Answering AI instructions and name",
+    "Capture options and consent when saving artifacts",
+    "Random webhookSecret (32–160 URL-safe characters)",
+    "Prepaid phone time on the shared account"
+  ],
   "primary_methods": [
     "getAgentGuide",
+    "getApiDoc",
     "agentInitialize",
     "agentGetAccountIdentity",
     "agentGetAccountStatus",
+    "agentPurchasePhoneTime",
     "listMyPresets",
     "createPreset",
     "agentQueueCall",
     "agentListCallJobs",
     "agentEndCall",
     "agentGetLiveCallLink",
-    "agentGetCallArtifacts"
+    "agentGetCallArtifacts",
+    "listMyAnsweringPresets",
+    "createAnsweringPreset",
+    "setAnsweringPresetEnabled",
+    "updateAnsweringPreset",
+    "deleteAnsweringPreset"
   ],
   "cycle_guidance": [
     "Read and cache the guide once per task.",

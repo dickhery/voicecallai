@@ -215,27 +215,36 @@ module {
   public func guide(state : State) : AgentTypes.AgentGuide {
     {
       appName = "VoiceCall AI";
-      apiVersion = "2026-07-agent-v4";
-      summary = "Place real outbound AI phone calls, end stuck or completed calls, configure voice presets, fund prepaid phone time with ICP, retrieve a listen-only live call link, manage answering presets, and retrieve approved call transcripts or recording links through ICP MCP.";
+      apiVersion = "2026-08-agent-v5";
+      summary = "Place real outbound AI phone calls, end stuck or completed calls, configure voice presets, fund prepaid phone time with ICP, retrieve a listen-only live call link, set up inbound AI answering on a user-owned Twilio number, and retrieve approved call transcripts or recording links through ICP MCP.";
       productionMcpUrl = "https://mcp.internetcomputer.org/mcp";
       authentication = [
         "VoiceCall AI's telephony action is on this backend canister. The frontend canister only serves assets; do not conclude phone calling is unavailable after inspecting only that canister.",
-        "Authorize the official ICP MCP / Agent Identity connector with Internet Identity for voicecallai.online and grant Actions and questions when you want the agent to place calls or move ICP.",
-        "Resolve this app, obtain the app-specific principal derived for voicecallai.online, then call agentInitialize once. The same principal is shared with the human web app for presets, phone time, call history, Stripe top-ups, and the in-app ICP deposit subaccount.",
+        "Authorize the official ICP MCP / Agent Identity connector with Internet Identity for voicecallai.online and grant Actions and questions when you want the agent to place calls, set up answering, or move ICP.",
+        "Resolve this app, obtain the app-specific principal derived for voicecallai.online, then call agentInitialize once. The same principal is shared with the human web app for presets, answering presets, phone time, call history, Stripe top-ups, and the in-app ICP deposit subaccount.",
         "Internet Identity grants expire. Re-authorize the connector when an authenticated call reports an expired delegation.",
       ];
       firstActions = [
         "Read https://voicecallai.online/llms.txt. If app discovery returns only the frontend asset canister, use the declared backend canister and its Candid interface.",
         "Call getAgentGuide once before planning work, then cache it for the current task.",
         "Call agentInitialize with a short agent or workspace name.",
-        "Call listMyPresets and listMyCalls before creating duplicates.",
+        "Call listMyPresets, listMyAnsweringPresets, and listMyCalls before creating duplicates.",
         "Call agentGetAccountStatus only when a current ICP, ledger-fee, phone-time, or pricing check is relevant.",
       ];
       requiredCallInformation = [
         "Recipient phone number in E.164 format, such as +15551234567.",
-        "A user-owned preset ID. Create one with createPreset when none fits.",
+        "A user-owned outbound preset ID. Create one with createPreset when none fits.",
         "Whether transcripts or audio may be saved. consentConfirmed must be true whenever either capture option is enabled.",
         "A unique idempotencyKey for every intended purchase, transfer, or call. Reuse the same key only when retrying that same action.",
+      ];
+      requiredAnsweringInformation = [
+        "A Twilio phone number the user owns, in E.164 format (for example +15551234567). The agent cannot buy or provision Twilio numbers.",
+        "Access for the user to open the Twilio Console and set the number's Voice webhook to the URL you give them after createAnsweringPreset.",
+        "A short preset name and AI answering instructions (role, greeting style, what to capture, escalation rules).",
+        "Preferred voice (or accept defaults). audioFormat must be pcmu and sampleRate hz8000 for phone audio.",
+        "Whether to save transcripts and/or record audio. If either is true, captureOptions.consentConfirmed must be true after the user affirms applicable consent rules.",
+        "A unique webhookSecret: 32–160 characters using only A–Z, a–z, 0–9, hyphen, or underscore. Generate a random secret; never reuse another preset's secret.",
+        "Prepaid phone time on this same app account (ICP purchase or web Stripe). Incoming answering calls deduct from the shared balance.",
       ];
       callWorkflow = [
         "Check agentGetAccountStatus once when a live balance is needed. If available phone time is low, tell the user the exact ICP package prices before purchasing.",
@@ -244,35 +253,67 @@ module {
         "To stop a live or queued call you created, call agentEndCall with the job ID. Queued jobs cancel immediately; dispatched calls are hung up by the voice bridge within about 15 seconds. Prefer this over leaving farewell loops running.",
         "Report queued, dispatched, in-progress, or completed according to returned state. Never claim a call was placed or completed without supporting job or call-record state.",
       ];
+      answeringWorkflow = [
+        "Tell the user what you need before creating anything: their Twilio number (E.164), what the AI should say/do on inbound calls, capture choices, and that they must paste a webhook URL into Twilio after creation.",
+        "Confirm prepaid phone time exists via agentGetAccountStatus (or list after an ICP purchase). Answering uses the same balance as outbound calls; without available seconds, inbound calls cannot start.",
+        "Call listMyAnsweringPresets first. Only one preset may be pendingVerification per account; finish verification before creating another.",
+        "Generate a random webhookSecret (32+ URL-safe characters). Call createAnsweringPreset with name, phoneNumber, systemPrompt, voice, turnDetection (serverVad true), audioFormat #pcmu, sampleRate #hz8000, toolsEnabled, captureOptions, enabled (usually false until verified), and webhookSecret.",
+        "From the returned preset, build the Twilio Voice webhook URL exactly as: https://voicecall.richardhery.com/answering/incoming/{webhookSecret} — use the webhookSecret field from the create response, not a guess.",
+        "Give the user clear steps: (1) open Twilio Console → that phone number → Voice configuration, (2) set webhook to the URL with HTTP POST, (3) save, (4) call the number once from another phone so VoiceCall AI can verify ownership. Tell them the web app AI Answering page can also show the same URL.",
+        "After verificationStatus becomes verified (listMyAnsweringPresets or getAnsweringPreset), call setAnsweringPresetEnabled(id, true) if the user wants the line live. Do not enable before verification succeeds.",
+        "Use updateAnsweringPreset or updateAnsweringPresetInstructions to change behavior. Changing phoneNumber resets verification. deleteAnsweringPreset removes routing.",
+        "Never claim the answering service is live until the preset is verified and enabled, and remind the user that each answered minute consumes prepaid phone time.",
+      ];
       paymentWorkflow = [
-        "Fund depositAccount from agentGetAccountIdentity using an ICRC-1 ICP transfer. The deposit subaccount is controlled by this canister and isolated by app principal.",
-        "If pricing is stale, call agentRefreshIcpPricing. The quote is cached for six hours to limit XRC cycle use.",
-        "Call agentPurchasePhoneTime with a package ID and idempotency key. Stripe remains the separate payment path for human web users.",
-        "Use agentTransferIcp to withdraw or transfer unspent ICP from this app-principal subaccount.",
+        "Fund depositAccount from agentGetAccountIdentity using an ICRC-1 ICP transfer. The deposit subaccount is controlled by this canister and isolated by app principal. Do not invent the subaccount — copy it from agentGetAccountIdentity.",
+        "If pricing is stale, call agentRefreshIcpPricing. The quote is cached for six hours to limit XRC cycle use. Never refresh while isFresh is true.",
+        "Call agentPurchasePhoneTime with a package ID (for example pack_5, pack_15, pack_30) and a unique idempotency key only after the user authorizes the package. On success, seconds are credited to the same shared phone-time balance used by web Stripe purchases, outbound agentQueueCall, and inbound answering.",
+        "Confirm credit with one agentGetAccountStatus read after purchase (availableSeconds should increase). Reuse the same idempotency key only when retrying that purchase after a retryable failure.",
+        "Use agentTransferIcp to withdraw or transfer unspent ICP from this app-principal subaccount. Stripe remains the separate card path for human web users.",
       ];
       safetyAndConsent = [
         "Confirm the recipient, purpose, preset, and capture choices with the user before placing a call.",
+        "For answering, confirm the Twilio number belongs to the user and that they understand callers will reach an AI.",
         "Do not enable transcript or audio capture without the user's confirmation that applicable participant consent requirements are satisfied.",
         "Only request or share a live-listen link when the authorized user asks, and remind them to satisfy applicable participant notice or consent requirements.",
         "Do not use the app for threats, harassment, fraud, credential theft, unlawful impersonation, or other harmful activity.",
-        "Phone numbers, transcripts, live-listen links, and recording links are sensitive. Reveal them only in the authorized user's chat.",
+        "Phone numbers, webhook secrets, transcripts, live-listen links, and recording links are sensitive. Reveal them only in the authorized user's chat.",
       ];
       capabilities = [
         capability("Initialize agent access", "agentInitialize", "Register the authenticated app principal and create its isolated in-app ICP account identity.", true),
         capability("Check balances", "agentGetAccountStatus", "Read ICP deposit balance, ledger fee, prepaid phone time, low-balance guidance, and ICP pricing.", true),
         capability("Refresh ICP pricing", "agentRefreshIcpPricing", "Refresh the cached ICP/USD quote from the Exchange Rate Canister at most once per six-hour pricing window.", true),
-        capability("Buy phone time", "agentPurchasePhoneTime", "Pay from the principal's ICP deposit subaccount and credit the same phone-time packages sold through Stripe.", true),
+        capability("Buy phone time", "agentPurchasePhoneTime", "Pay from the principal's ICP deposit subaccount and credit the same phone-time packages sold through Stripe (shared with answering).", true),
         capability("Transfer ICP", "agentTransferIcp", "Transfer unspent ICP from the in-app subaccount to an ICRC-1 account.", true),
-        capability("Manage presets", "createPreset", "Create, list, update, duplicate, and delete outbound call presets.", true),
+        capability("Manage outbound presets", "createPreset", "Create, list, update, duplicate, and delete outbound call presets.", true),
         capability("Queue a call", "agentQueueCall", "Reserve phone time and queue an idempotent outbound voice-server job.", true),
         capability("End a call", "agentEndCall", "Cancel a queued MCP call or request hang-up of a dispatched/in-progress call you created.", true),
         capability("Listen to a live call", "agentGetLiveCallLink", "Return a short-lived, listen-only HTTPS page for an active MCP-created call.", false),
         capability("Call history", "listMyCalls", "Read the authenticated principal's bounded call history.", false),
         capability("Call artifacts", "agentGetCallArtifacts", "Return a completed call's transcript and signed recording URL when available.", false),
-        capability("Answering presets", "createAnsweringPreset", "Create, update, enable, and delete inbound AI answering presets.", true),
+        capability("List answering presets", "listMyAnsweringPresets", "List the user's inbound AI answering presets and verification status.", false),
+        capability("Create answering preset", "createAnsweringPreset", "Create an inbound AI answering preset bound to a user-owned Twilio number and webhook secret.", true),
+        capability("Update answering preset", "updateAnsweringPreset", "Update answering routing, voice, capture options, or instructions.", true),
+        capability("Enable answering preset", "setAnsweringPresetEnabled", "Turn a verified answering line on or off.", true),
+        capability("Delete answering preset", "deleteAnsweringPreset", "Remove an answering preset and its webhook routing.", true),
       ];
       pricing = pricing(state);
     };
+  };
+
+  /// Compact markdown for getApiDoc-style discovery (query-only, no cycles).
+  public func apiDocMarkdown(state : State) : Text {
+    let g = guide(state);
+    "VoiceCall AI agent API (" # g.apiVersion # ")\n\n" #
+    g.summary # "\n\n" #
+    "Public queries: getAgentGuide, getApiDoc, getAgentPricing.\n" #
+    "First authenticated call: agentInitialize.\n" #
+    "Outbound: createPreset / listMyPresets → agentQueueCall → agentListCallJobs / agentEndCall.\n" #
+    "Answering: collect Twilio E.164 + instructions → createAnsweringPreset → give user webhook " #
+    "https://voicecall.richardhery.com/answering/incoming/{webhookSecret} → user verifies by calling the number → setAnsweringPresetEnabled.\n" #
+    "Payments: agentGetAccountIdentity deposit → agentPurchasePhoneTime credits shared phone time for calls and answering.\n" #
+    "Cache getAgentGuide once per task. Refresh ICP pricing only when stale. Poll jobs with backoff.\n" #
+    "Full guide: call getAgentGuide. Static docs: https://voicecallai.online/llms.txt\n"
   };
 
   public func makeError(

@@ -25,6 +25,7 @@
   "agent_api": {
     "canister_id": "2dwhz-ziaaa-aaaak-qy2ia-cai",
     "guide_method": "getAgentGuide",
+    "api_doc_method": "getApiDoc",
     "candid_url": "https://voicecallai.online/agent-api.did",
     "mcp_url": "https://mcp.internetcomputer.org/mcp"
   },

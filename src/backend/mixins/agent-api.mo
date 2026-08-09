@@ -154,6 +154,12 @@ mixin (
     AgentLib.guide(agentState);
   };
 
+  /// Compact markdown behavior doc for zero-knowledge discovery (same content
+  /// family as getAgentGuide). Public query — no authentication, no cycles.
+  public query func getApiDoc() : async Text {
+    AgentLib.apiDocMarkdown(agentState);
+  };
+
   /// Current cached ICP prices. A stale quote can be refreshed with
   /// agentRefreshIcpPricing; ordinary reads never spend XRC cycles.
   public query func getAgentPricing() : async AgentTypes.IcpPricing {
@@ -180,9 +186,9 @@ mixin (
       let lowPhoneTime = billing.availableSeconds < AgentLib.lowPhoneTimeThresholdSeconds();
       let pricing = AgentLib.pricing(agentState);
       let message = if (lowPhoneTime) {
-        "Phone time is low. Tell the user the ICP package prices in this response and ask before purchasing more.";
+        "Phone time is low. Tell the user the ICP package prices in this response and ask before purchasing more. The same balance funds outbound agentQueueCall jobs and inbound AI answering.";
       } else {
-        "The account has enough phone time to queue a call.";
+        "The account has enough phone time for outbound calls and inbound AI answering.";
       };
       #ok({
         account;
@@ -931,8 +937,14 @@ mixin (
     purchase : AgentTypes.StoredIcpPurchase,
     blockIndex : Nat,
   ) : AgentTypes.IcpPurchaseResult {
+    // Record the ledger block before credit so retries after a credit-side
+    // failure can still prove payment and re-attempt phone-time credit.
+    purchase.blockIndex := ?blockIndex;
+    // Idempotent credit path: completed purchases never re-enter here.
     switch (BillingLib.creditPhoneSeconds(billingState, purchase.user, purchase.seconds)) {
       case (#err(message)) {
+        // Keep status pending (definitive=false) so the same idempotency key
+        // can retry credit after ICP has already left the deposit subaccount.
         AgentLib.failPurchase(purchase, message, false);
         #err(agentError("PHONE_TIME_CREDIT_FAILED", message # ". Retry with the same idempotency key.", true, purchase.user));
       };
@@ -941,7 +953,7 @@ mixin (
         CallsLib.addSystemLog(
           callsState,
           #info,
-          "Credited " # purchase.seconds.toText() # " seconds from ICP ledger block " # blockIndex.toText(),
+          "Credited " # purchase.seconds.toText() # " phone-time seconds (shared balance for calls and answering) from ICP ledger block " # blockIndex.toText(),
           null,
         );
         #ok(AgentLib.toPurchase(purchase));

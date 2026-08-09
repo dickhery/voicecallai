@@ -14,7 +14,7 @@ Candid interface: https://voicecallai.online/agent-api.did
 
 1. Use the official ICP MCP (Agent Identity) connector to resolve https://voicecallai.online.
 2. If discovery returns only the frontend asset canister, continue with backend canister 2dwhz-ziaaa-aaaak-qy2ia-cai. Do not conclude that phone calling is unavailable after inspecting only the asset canister.
-3. Read the backend Candid interface and call the public query getAgentGuide once for current workflow and safety instructions.
+3. Read the backend Candid interface and call the public query getAgentGuide (or getApiDoc) once for current workflow and safety instructions.
 4. Authorize the connector for this app with Internet Identity before authenticated updates. Call agentInitialize once for the authenticated app principal.
 
 ## Place a call
@@ -28,13 +28,31 @@ Candid interface: https://voicecallai.online/agent-api.did
 7. To stop a queued or live call you created, call agentEndCall with the job ID. Queued jobs cancel immediately; dispatched calls are hung up by the voice bridge within about 15 seconds. Prefer this over leaving farewell loops running.
 8. After completion, use agentGetCallArtifacts when the user requested and consented to saved artifacts.
 
+## Set up AI answering (inbound)
+
+1. Tell the user what you need: a Twilio number they own (E.164), answering AI instructions, capture/consent choices, and that they must paste a webhook into Twilio after creation.
+2. Confirm prepaid phone time exists (same balance as outbound). Buy with ICP only after the user authorizes a package.
+3. Call listMyAnsweringPresets before creating. Only one pendingVerification preset is allowed at a time.
+4. Generate a random webhookSecret (32–160 chars: A–Z a–z 0–9 - _). Call createAnsweringPreset with phoneNumber, systemPrompt, voice, turnDetection, audioFormat pcmu, sampleRate hz8000, captureOptions, enabled=false until verified, and webhookSecret.
+5. Give the user this Twilio Voice webhook URL (HTTP POST): https://voicecall.richardhery.com/answering/incoming/{webhookSecret} using the secret returned from createAnsweringPreset.
+6. Instruct the user to set that URL on the number in Twilio Console, save, then call the number once to verify. When verificationStatus is verified, call setAnsweringPresetEnabled(id, true) if they want the line live.
+7. Do not claim answering is live until verified and enabled. Incoming minutes consume the shared prepaid balance.
+
+## Fund phone time with ICP
+
+1. Call agentGetAccountIdentity and show the exact ICRC-1 depositAccount (never invent the subaccount).
+2. User transfers ICP to that deposit account.
+3. If pricing.isFresh is false, call agentRefreshIcpPricing once; otherwise use the cached quote.
+4. After the user chooses a package, call agentPurchasePhoneTime(packageId, uniqueIdempotencyKey). On success, seconds are credited to the shared phone-time balance used by web Stripe, outbound calls, and answering.
+5. Confirm with one agentGetAccountStatus read that availableSeconds increased.
+
 The off-chain VoiceCall AI bridge securely claims queued jobs and connects Twilio Media Streams to xAI Voice. Agents do not need a Twilio or xAI tool of their own.
 
 ## Important rules
 
 - An idempotency key identifies one intended call, purchase, or transfer. Reuse it only to retry that exact action.
-- Never buy phone time, transfer ICP, edit a preset, or queue a call without the user's authorization.
+- Never buy phone time, transfer ICP, edit a preset, queue a call, or create answering without the user's authorization.
 - consentConfirmed means the user affirmed that applicable participant consent requirements are satisfied. It is required when saving a transcript or audio.
 - Share a live-listen link only when the authorized user asks and remind them to follow applicable participant notice or consent rules.
 - Never use the app for threats, harassment, fraud, credential theft, unlawful impersonation, or other harmful activity.
-- Treat phone numbers, transcripts, live-listen links, recording links, account identifiers, and balances as sensitive.
+- Treat phone numbers, webhook secrets, transcripts, live-listen links, recording links, account identifiers, and balances as sensitive.

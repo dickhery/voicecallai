@@ -56,7 +56,11 @@ module {
     authentication : [Text];
     firstActions : [Text];
     requiredCallInformation : [Text];
+    /// What the human must supply before the agent creates an answering preset.
+    requiredAnsweringInformation : [Text];
     callWorkflow : [Text];
+    /// Inbound AI answering (Twilio number → Grok voice) setup steps for agents.
+    answeringWorkflow : [Text];
     paymentWorkflow : [Text];
     safetyAndConsent : [Text];
     capabilities : [AgentCapability];

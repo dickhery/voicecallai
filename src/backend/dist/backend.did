@@ -378,6 +378,7 @@ type Backend =
    getAnsweringPreset: (id: PresetId) -> (opt AnsweringPreset) query;
    getAnsweringPresetForServer: (webhookSecret: text, phoneNumber: text) ->
     (opt AnsweringPreset) query;
+   getApiDoc: () -> (text) query;
    getBillingPackages: () -> (vec BillingPackage) query;
    getCallRecord: (id: CallId) -> (opt CallRecordPublic) query;
    getCallerUserRole: () -> (UserRole) query;
@@ -522,6 +523,7 @@ type AgentInitializeResult =
  };
 type AgentGuide = 
  record {
+   answeringWorkflow: vec text;
    apiVersion: text;
    appName: text;
    authentication: vec text;
@@ -531,6 +533,7 @@ type AgentGuide =
    paymentWorkflow: vec text;
    pricing: IcpPricing;
    productionMcpUrl: text;
+   requiredAnsweringInformation: vec text;
    requiredCallInformation: vec text;
    safetyAndConsent: vec text;
    summary: text;
