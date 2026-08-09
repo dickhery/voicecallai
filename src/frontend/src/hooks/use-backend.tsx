@@ -464,6 +464,29 @@ export function useAdminListAllCalls() {
   });
 }
 
+export type NonAdminPhoneTimeSummary = {
+  balanceSeconds: bigint;
+  reservedSeconds: bigint;
+  availableSeconds: bigint;
+  userCount: bigint;
+};
+
+/** Admin-only aggregate of prepaid phone time held by non-admin users. */
+export function useAdminNonAdminPhoneTimeSummary() {
+  const { actor, isFetching } = useBackendActor();
+  return useQuery<NonAdminPhoneTimeSummary | null>({
+    queryKey: ["adminNonAdminPhoneTime"],
+    queryFn: async () => {
+      if (!actor) return null;
+      return actor.adminGetNonAdminPhoneTimeSummary();
+    },
+    enabled: !!actor && !isFetching,
+    // Query call; keep interval modest to limit admin dashboard chatter.
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+  });
+}
+
 export function useAdminListUserCalls(userId: Principal | null) {
   const { actor, isFetching } = useBackendActor();
   return useQuery<CallRecordPublic[]>({
@@ -603,6 +626,7 @@ export function useAdminAddPromoMinutes() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["myBillingStatus"] });
       qc.invalidateQueries({ queryKey: ["adminLogs"] });
+      qc.invalidateQueries({ queryKey: ["adminNonAdminPhoneTime"] });
     },
   });
 }

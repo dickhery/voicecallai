@@ -101,6 +101,35 @@ module {
     };
   };
 
+  /// Sum prepaid phone time for principals that are not admins.
+  /// `isAdminUser` must be cheap and must not trap (use a map lookup, not a trapping role API).
+  /// Query-only aggregation: O(balances) and no inter-canister calls.
+  public func summarizeNonAdminPhoneTime(
+    state : State,
+    isAdminUser : Principal -> Bool,
+  ) : Types.NonAdminPhoneTimeSummary {
+    var balanceSeconds : Nat = 0;
+    var reservedSeconds : Nat = 0;
+    var availableSeconds : Nat = 0;
+    var userCount : Nat = 0;
+    for ((user, balance) in state.balances.entries()) {
+      if (not isAdminUser(user) and balance > 0) {
+        let reserved = getReservedSeconds(state, user);
+        let available = if (balance > reserved) { balance - reserved } else { 0 };
+        balanceSeconds += balance;
+        reservedSeconds += reserved;
+        availableSeconds += available;
+        userCount += 1;
+      };
+    };
+    {
+      balanceSeconds;
+      reservedSeconds;
+      availableSeconds;
+      userCount;
+    };
+  };
+
   /// Move unreserved phone-time seconds from one principal to another.
   /// Reserved seconds stay with the source so open calls continue debiting there.
   public func moveAvailableBalance(

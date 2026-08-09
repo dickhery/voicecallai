@@ -31,6 +31,18 @@ module {
     packages : [BillingPackage];
   };
 
+  /// Aggregate prepaid phone time held by non-admin principals (admin query).
+  public type NonAdminPhoneTimeSummary = {
+    /// Sum of balanceSeconds across non-admin users with a positive balance.
+    balanceSeconds : Nat;
+    /// Sum of seconds currently reserved in active/open calls for those users.
+    reservedSeconds : Nat;
+    /// Sum of per-user available seconds (balance minus reserved, floored at 0).
+    availableSeconds : Nat;
+    /// Number of non-admin principals included in the totals.
+    userCount : Nat;
+  };
+
   public type PurchaseIntent = {
     id : Text;
     user : Principal;

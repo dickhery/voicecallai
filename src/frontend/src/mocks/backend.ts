@@ -178,6 +178,13 @@ export const mockBackend: Partial<backendInterface> = {
     ok: true,
   }),
 
+  adminGetNonAdminPhoneTimeSummary: async () => ({
+    balanceSeconds: 7200n,
+    reservedSeconds: 300n,
+    availableSeconds: 6900n,
+    userCount: 4n,
+  }),
+
   adminGetSystemLogs: async (_limit: bigint) => [
     {
       level: Variant_info_warn_error.info,

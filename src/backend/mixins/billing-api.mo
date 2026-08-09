@@ -138,6 +138,23 @@ mixin (
     result;
   };
 
+  /// Total prepaid phone time held by non-admin users (admin-only query).
+  /// Safe map role lookup avoids trapping getUserRole for unregistered principals.
+  public query ({ caller }) func adminGetNonAdminPhoneTimeSummary() : async BillingTypes.NonAdminPhoneTimeSummary {
+    if (not AccessControl.isAdmin(accessControlState, caller)) {
+      Runtime.trap("Unauthorized: admin only");
+    };
+    BillingLib.summarizeNonAdminPhoneTime(
+      billingState,
+      func(user : Principal) : Bool {
+        switch (accessControlState.userRoles.get(user)) {
+          case (?#admin) { true };
+          case _ { false };
+        };
+      },
+    );
+  };
+
   public shared ({ caller }) func reserveCall(
     input : CallTypes.InitiateCallInput,
   ) : async BillingTypes.ReserveCallResult {

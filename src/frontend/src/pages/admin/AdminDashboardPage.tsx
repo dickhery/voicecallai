@@ -18,6 +18,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   useAdminAddPromoMinutes,
   useAdminListAllCalls,
+  useAdminNonAdminPhoneTimeSummary,
   useAssignUserRole,
   useGetAdminConfig,
   useRemoveTwilioLine,
@@ -29,6 +30,7 @@ import { Principal } from "@icp-sdk/core/principal";
 import { useQuery } from "@tanstack/react-query";
 import {
   CheckCircle,
+  Clock,
   CreditCard,
   Gift,
   KeyRound,
@@ -38,12 +40,21 @@ import {
   Radio,
   ShieldCheck,
   Trash2,
+  Users,
   XCircle,
 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 
 const E164_REGEX = /^\+[1-9]\d{1,14}$/;
+
+function formatPhoneMinutes(seconds: bigint | number | undefined): string {
+  const value = Number(seconds ?? 0);
+  const minutes = Math.floor(value / 60);
+  const rem = value % 60;
+  if (rem === 0) return `${minutes} min`;
+  return `${minutes} min ${rem}s`;
+}
 
 function StatusBadge({
   configured,
@@ -76,6 +87,12 @@ function StatusBadge({
 export default function AdminDashboardPage() {
   const { data: config } = useGetAdminConfig();
   const { data: allCalls, isLoading: callsLoading } = useAdminListAllCalls();
+  const {
+    data: nonAdminPhoneTime,
+    isLoading: phoneTimeLoading,
+    isFetching: phoneTimeFetching,
+    refetch: refetchPhoneTime,
+  } = useAdminNonAdminPhoneTimeSummary();
   const setTwilioLine = useSetTwilioLine();
   const removeTwilioLine = useRemoveTwilioLine();
   const setTwilioLineEnabled = useSetTwilioLineEnabled();
@@ -243,6 +260,98 @@ export default function AdminDashboardPage() {
               Manage integrations and monitor all system calls
             </p>
           </div>
+
+          {/* Non-admin prepaid phone time aggregate */}
+          <Card
+            className="bg-card border-border"
+            data-ocid="admin.non_admin_phone_time.card"
+          >
+            <CardHeader className="pb-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-green-400" />
+                    User phone time
+                  </CardTitle>
+                  <CardDescription className="mt-1">
+                    Prepaid phone time currently held by non-admin users (admins
+                    and the payment server are excluded)
+                  </CardDescription>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 text-xs"
+                  onClick={() => void refetchPhoneTime()}
+                  disabled={phoneTimeFetching}
+                  data-ocid="admin.non_admin_phone_time.refresh_button"
+                >
+                  {phoneTimeFetching ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Clock className="w-3.5 h-3.5" />
+                  )}
+                  Refresh
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {phoneTimeLoading ? (
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  {[1, 2, 3, 4].map((i) => (
+                    <Skeleton key={i} className="h-20 w-full" />
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div
+                    className="rounded-lg border border-border bg-muted/20 p-3"
+                    data-ocid="admin.non_admin_phone_time.balance"
+                  >
+                    <p className="text-xs text-muted-foreground">
+                      Total balance
+                    </p>
+                    <p className="mt-1 text-lg font-semibold text-foreground tabular-nums">
+                      {formatPhoneMinutes(nonAdminPhoneTime?.balanceSeconds)}
+                    </p>
+                  </div>
+                  <div
+                    className="rounded-lg border border-border bg-muted/20 p-3"
+                    data-ocid="admin.non_admin_phone_time.available"
+                  >
+                    <p className="text-xs text-muted-foreground">Available</p>
+                    <p className="mt-1 text-lg font-semibold text-green-400 tabular-nums">
+                      {formatPhoneMinutes(nonAdminPhoneTime?.availableSeconds)}
+                    </p>
+                  </div>
+                  <div
+                    className="rounded-lg border border-border bg-muted/20 p-3"
+                    data-ocid="admin.non_admin_phone_time.reserved"
+                  >
+                    <p className="text-xs text-muted-foreground">
+                      Reserved in calls
+                    </p>
+                    <p className="mt-1 text-lg font-semibold text-amber-400 tabular-nums">
+                      {formatPhoneMinutes(nonAdminPhoneTime?.reservedSeconds)}
+                    </p>
+                  </div>
+                  <div
+                    className="rounded-lg border border-border bg-muted/20 p-3"
+                    data-ocid="admin.non_admin_phone_time.users"
+                  >
+                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Users className="w-3 h-3" />
+                      Users with balance
+                    </p>
+                    <p className="mt-1 text-lg font-semibold text-foreground tabular-nums">
+                      {Number(nonAdminPhoneTime?.userCount ?? 0n)}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Integration section label */}
           <div className="flex items-center gap-2">

@@ -108,6 +108,13 @@ type PendingCallEnd =
    reservationId: text;
    serverSessionId: opt text;
  };
+type NonAdminPhoneTimeSummary = 
+ record {
+   availableSeconds: nat;
+   balanceSeconds: nat;
+   reservedSeconds: nat;
+   userCount: nat;
+ };
 type InitiateCallResult = 
  variant {
    err: text;
@@ -317,6 +324,7 @@ type Backend =
    _initializeAccessControl: () -> ();
    adminAddPromoMinutes: (user: principal, minutes: nat) ->
     (BillingMutationResult);
+   adminGetNonAdminPhoneTimeSummary: () -> (NonAdminPhoneTimeSummary) query;
    adminGetSystemLogs: (limit: nat) -> (vec SystemLog) query;
    adminListAllCalls: () -> (vec CallRecordPublic) query;
    adminListUserCalls: (userId: principal) -> (vec CallRecordPublic) query;
