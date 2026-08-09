@@ -18,6 +18,8 @@ import {
 } from "@/lib/agent-presets";
 import {
   Briefcase,
+  ChevronDown,
+  ChevronUp,
   Laugh,
   Loader2,
   PhoneIncoming,
@@ -36,6 +38,10 @@ interface AgentPresetGalleryProps {
   onUseTemplate: (template: AgentPresetTemplate) => void | Promise<void>;
   dataOcidPrefix?: string;
   embedded?: boolean;
+  /** When true, show a compact summary until the user expands. */
+  collapsible?: boolean;
+  /** Initial open state when collapsible (default false). */
+  defaultOpen?: boolean;
 }
 
 export function AgentPresetGallery({
@@ -47,10 +53,13 @@ export function AgentPresetGallery({
   onUseTemplate,
   dataOcidPrefix = "agent_gallery",
   embedded = false,
+  collapsible = false,
+  defaultOpen = false,
 }: AgentPresetGalleryProps) {
   const [category, setCategory] = useState<AgentPresetCategory | "all">("all");
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [isOpen, setIsOpen] = useState(defaultOpen);
 
   const templates = useMemo(
     () => listAgentPresets({ kind, category, search }),
@@ -65,30 +74,84 @@ export function AgentPresetGallery({
     () => listAgentPresets({ kind, category: "fun" }).length,
     [kind],
   );
+  const totalCount = professionalCount + funCount;
+  const showContent = !collapsible || isOpen;
+
+  const toggleButton = collapsible ? (
+    <Button
+      type="button"
+      variant={isOpen ? "ghost" : "outline"}
+      size="sm"
+      className="h-8 gap-1.5 shrink-0 text-xs"
+      onClick={() => setIsOpen((open) => !open)}
+      aria-expanded={isOpen}
+      data-ocid={`${dataOcidPrefix}.toggle_button`}
+    >
+      {isOpen ? (
+        <>
+          <ChevronUp className="w-3.5 h-3.5" />
+          Collapse
+        </>
+      ) : (
+        <>
+          <ChevronDown className="w-3.5 h-3.5" />
+          Browse agents
+        </>
+      )}
+    </Button>
+  ) : null;
+
+  const countBadges = (
+    <div className="flex flex-wrap gap-1.5">
+      <Badge variant="outline" className="text-[10px] h-5 gap-1">
+        <Briefcase className="w-3 h-3" />
+        {professionalCount} pro
+      </Badge>
+      <Badge variant="outline" className="text-[10px] h-5 gap-1">
+        <Laugh className="w-3 h-3" />
+        {funCount} fun
+      </Badge>
+    </div>
+  );
 
   const galleryHeader = (
     <div className="space-y-1">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="space-y-1">
+        <div className="space-y-1 min-w-0">
           <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-primary" />
+            <Sparkles className="w-4 h-4 text-primary shrink-0" />
             {title}
           </CardTitle>
           <p className="text-xs text-muted-foreground leading-relaxed">
             {description}
           </p>
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          <Badge variant="outline" className="text-[10px] h-5 gap-1">
-            <Briefcase className="w-3 h-3" />
-            {professionalCount} pro
-          </Badge>
-          <Badge variant="outline" className="text-[10px] h-5 gap-1">
-            <Laugh className="w-3 h-3" />
-            {funCount} fun
-          </Badge>
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {countBadges}
+          {toggleButton}
         </div>
       </div>
+      {collapsible && !isOpen && (
+        <div
+          className="mt-3 rounded-lg border border-border bg-muted/20 px-3 py-2.5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
+          data-ocid={`${dataOcidPrefix}.collapsed_summary`}
+        >
+          <p className="text-xs text-muted-foreground">
+            {totalCount} ready-made agents available. Expand to browse and add
+            one in a click.
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 gap-1.5 shrink-0 text-xs"
+            onClick={() => setIsOpen(true)}
+            data-ocid={`${dataOcidPrefix}.expand_button`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            Show agents
+          </Button>
+        </div>
+      )}
     </div>
   );
 
@@ -249,7 +312,7 @@ export function AgentPresetGallery({
     return (
       <div className="space-y-4" data-ocid={`${dataOcidPrefix}.card`}>
         {galleryHeader}
-        {galleryContent}
+        {showContent ? galleryContent : null}
       </div>
     );
   }
@@ -260,7 +323,7 @@ export function AgentPresetGallery({
       data-ocid={`${dataOcidPrefix}.card`}
     >
       <CardHeader className="pb-3">{galleryHeader}</CardHeader>
-      <CardContent>{galleryContent}</CardContent>
+      {showContent ? <CardContent>{galleryContent}</CardContent> : null}
     </Card>
   );
 }

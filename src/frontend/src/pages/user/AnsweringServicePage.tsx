@@ -1183,6 +1183,8 @@ export default function AnsweringServicePage() {
             actionLabel="Use this agent"
             onUseTemplate={handleUseAgentTemplate}
             dataOcidPrefix="answering.agent_gallery"
+            collapsible
+            defaultOpen={false}
           />
 
           <div className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">

@@ -673,6 +673,8 @@ export default function DashboardPage() {
   const voice = useXaiVoice();
   const [buyingPackageId, setBuyingPackageId] = useState<string | null>(null);
   const [addingAgentId, setAddingAgentId] = useState<string | null>(null);
+  const [buyPackagesOpen, setBuyPackagesOpen] = useState(false);
+  const buyPackagesAutoOpened = useRef(false);
 
   const healthQuery = useQuery({
     queryKey: ["voiceServerHealth", "dashboard"],
@@ -803,6 +805,15 @@ export default function DashboardPage() {
       setSelectedPresetId(presets![0].id.toString());
     }
   }, [presets, selectedPresetId]);
+
+  // Auto-expand purchase packages once when the user has no available time.
+  useEffect(() => {
+    if (billingLoading || buyPackagesAutoOpened.current) return;
+    if (availableSeconds <= 0) {
+      setBuyPackagesOpen(true);
+      buyPackagesAutoOpened.current = true;
+    }
+  }, [billingLoading, availableSeconds]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: Stripe return polling must start once from the URL state and manage its own interval.
   useEffect(() => {
@@ -1190,6 +1201,7 @@ export default function DashboardPage() {
             hasPreset={activePresets > 0}
             hasCall={totalCalls > 0}
             onBuy={() => {
+              setBuyPackagesOpen(true);
               document
                 .querySelector('[data-ocid="dashboard.billing_card"]')
                 ?.scrollIntoView({ behavior: "smooth" });
@@ -1202,14 +1214,37 @@ export default function DashboardPage() {
             data-ocid="dashboard.billing_card"
           >
             <CardHeader className="pb-4">
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <CardTitle className="text-base font-semibold flex items-center gap-2">
                   <CreditCard className="w-4 h-4 text-green-400" />
                   Phone Time
                 </CardTitle>
-                <Badge variant="outline" className="font-mono">
-                  {formatMinutes(billingStatus?.availableSeconds)} available
-                </Badge>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline" className="font-mono">
+                    {formatMinutes(billingStatus?.availableSeconds)} available
+                  </Badge>
+                  <Button
+                    type="button"
+                    variant={buyPackagesOpen ? "ghost" : "outline"}
+                    size="sm"
+                    className="h-8 gap-1.5 text-xs"
+                    onClick={() => setBuyPackagesOpen((open) => !open)}
+                    aria-expanded={buyPackagesOpen}
+                    data-ocid="dashboard.billing.toggle_packages_button"
+                  >
+                    {buyPackagesOpen ? (
+                      <>
+                        <ChevronUp className="w-3.5 h-3.5" />
+                        Hide packages
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="w-3.5 h-3.5" />
+                        Buy phone time
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent>
@@ -1221,7 +1256,7 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <>
-                  <div className="mb-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="rounded-lg border border-border bg-muted/20 p-3">
                       <p className="text-xs text-muted-foreground">
                         Total balance
@@ -1251,47 +1286,52 @@ export default function DashboardPage() {
                       </p>
                     </div>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    {(billingStatus?.packages ?? []).map((pkg) => {
-                      const isBuying = buyingPackageId === pkg.id;
-                      return (
-                        <div
-                          key={pkg.id}
-                          className="rounded-lg border border-border bg-muted/25 p-3"
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
-                              <p className="text-sm font-semibold text-foreground">
-                                ${(Number(pkg.amountCents) / 100).toFixed(0)}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                {formatMinutes(pkg.seconds)}
-                              </p>
-                            </div>
-                            <Badge variant="outline" className="text-xs">
-                              {pkg.id.replace("pack_", "$")}
-                            </Badge>
-                          </div>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="mt-3 w-full gap-2"
-                            onClick={() => handleBuyPackage(pkg.id)}
-                            disabled={isBuying}
-                            data-ocid={`dashboard.billing.buy.${pkg.id}`}
+                  {buyPackagesOpen && (
+                    <div
+                      className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3"
+                      data-ocid="dashboard.billing.packages"
+                    >
+                      {(billingStatus?.packages ?? []).map((pkg) => {
+                        const isBuying = buyingPackageId === pkg.id;
+                        return (
+                          <div
+                            key={pkg.id}
+                            className="rounded-lg border border-border bg-muted/25 p-3"
                           >
-                            {isBuying ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <CreditCard className="w-3.5 h-3.5" />
-                            )}
-                            Buy
-                          </Button>
-                        </div>
-                      );
-                    })}
-                  </div>
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <p className="text-sm font-semibold text-foreground">
+                                  ${(Number(pkg.amountCents) / 100).toFixed(0)}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {formatMinutes(pkg.seconds)}
+                                </p>
+                              </div>
+                              <Badge variant="outline" className="text-xs">
+                                {pkg.id.replace("pack_", "$")}
+                              </Badge>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="mt-3 w-full gap-2"
+                              onClick={() => handleBuyPackage(pkg.id)}
+                              disabled={isBuying}
+                              data-ocid={`dashboard.billing.buy.${pkg.id}`}
+                            >
+                              {isBuying ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <CreditCard className="w-3.5 h-3.5" />
+                              )}
+                              Buy
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </>
               )}
             </CardContent>

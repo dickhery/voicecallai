@@ -637,78 +637,7 @@ export default function SettingsPage() {
             </p>
           </div>
 
-          <AgentAccessCard />
-
-          <AgentPresetGallery
-            kind="outbound"
-            title="Start from a ready-made agent"
-            description="Professional call agents and playful fictional characters. One click creates an editable preset you own."
-            actionLabel="Add to my presets"
-            busyTemplateId={addingAgentId}
-            onUseTemplate={handleUseAgentTemplate}
-            dataOcidPrefix="settings.agent_gallery"
-          />
-
-          {/* User Profile Section */}
-          <Card
-            className="bg-card border-border"
-            data-ocid="settings.profile.card"
-          >
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
-                  <User className="w-4 h-4 text-primary" />
-                </div>
-                <div>
-                  <CardTitle className="text-sm font-semibold">
-                    Your Profile
-                  </CardTitle>
-                  <CardDescription className="text-xs">
-                    {isAdmin ? "Administrator" : "Standard User"}
-                  </CardDescription>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3 pt-0">
-              <div className="flex flex-col gap-1">
-                <Label className="text-xs text-muted-foreground">User ID</Label>
-                <div className="flex items-center gap-2">
-                  <code
-                    className="flex-1 text-xs font-mono bg-muted/40 rounded-md px-3 py-2 text-foreground truncate"
-                    data-ocid="settings.profile.user_id"
-                    title={userId || "Not connected"}
-                  >
-                    {userId || "Not connected"}
-                  </code>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={handleCopyUserId}
-                    disabled={!userId}
-                    className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
-                    data-ocid="settings.profile.copy_user_id_button"
-                    title="Copy User ID"
-                    aria-label="Copy User ID"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                  </Button>
-                </div>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={logout}
-                className="gap-2 text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive"
-                data-ocid="settings.profile.logout_button"
-              >
-                <LogOut className="w-4 h-4" />
-                Sign out
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Presets Section — deep-link target for dashboard create flow */}
+          {/* Call Presets first — primary workflow, no scrolling past secondary cards */}
           <div
             ref={callPresetsRef}
             id="call-presets"
@@ -926,6 +855,79 @@ export default function SettingsPage() {
               </div>
             )}
           </div>
+
+          {/* Secondary sections — collapsed by default to keep the page short */}
+          <AgentPresetGallery
+            kind="outbound"
+            title="Start from a ready-made agent"
+            description="Professional call agents and playful fictional characters. One click creates an editable preset you own."
+            actionLabel="Add to my presets"
+            busyTemplateId={addingAgentId}
+            onUseTemplate={handleUseAgentTemplate}
+            dataOcidPrefix="settings.agent_gallery"
+            collapsible
+            defaultOpen={false}
+          />
+
+          <AgentAccessCard />
+
+          <Card
+            className="bg-card border-border"
+            data-ocid="settings.profile.card"
+          >
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
+                  <User className="w-4 h-4 text-primary" />
+                </div>
+                <div>
+                  <CardTitle className="text-sm font-semibold">
+                    Your Profile
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    {isAdmin ? "Administrator" : "Standard User"}
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3 pt-0">
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs text-muted-foreground">User ID</Label>
+                <div className="flex items-center gap-2">
+                  <code
+                    className="flex-1 text-xs font-mono bg-muted/40 rounded-md px-3 py-2 text-foreground truncate"
+                    data-ocid="settings.profile.user_id"
+                    title={userId || "Not connected"}
+                  >
+                    {userId || "Not connected"}
+                  </code>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={handleCopyUserId}
+                    disabled={!userId}
+                    className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+                    data-ocid="settings.profile.copy_user_id_button"
+                    title="Copy User ID"
+                    aria-label="Copy User ID"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={logout}
+                className="gap-2 text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive"
+                data-ocid="settings.profile.logout_button"
+              >
+                <LogOut className="w-4 h-4" />
+                Sign out
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       </AppLayout>
     </ProtectedRoute>
