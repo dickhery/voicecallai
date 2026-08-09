@@ -68,7 +68,7 @@ Use agentGetAccountIdentity to obtain the exact ICRC-1 depositAccount; never gue
 
 1. User sends ICP (ICRC-1) to depositAccount.
 2. If the cached quote is stale (pricing.isFresh false), call agentRefreshIcpPricing once. A real refresh uses the Exchange Rate Canister and is globally rate-limited and cached for six hours.
-3. Call agentPurchasePhoneTime only after the user chooses a package and authorizes payment. Pass a unique idempotency key.
+3. Call agentPurchasePhoneTime only after the user chooses a package and authorizes payment. Pass a unique idempotency key. Settlement pays operator treasury AccountIdentifier 0f69d493853ec6e60909141168644d3def072ec2569021317547195931b6dc7c (not the canister default account).
 4. On success, package seconds are credited to the shared prepaid phone-time balance (also used by Stripe web purchases). Confirm with one agentGetAccountStatus read.
 5. Use agentTransferIcp to move unspent ICP. Purchases and transfers require their own idempotency keys. Reuse a key only to retry the same action after a retryable failure.
 

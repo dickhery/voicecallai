@@ -111,7 +111,7 @@ Candid interface: ${productionOrigin}/agent-api.did
 1. Call agentGetAccountIdentity and show the exact ICRC-1 depositAccount (never invent the subaccount).
 2. User transfers ICP to that deposit account.
 3. If pricing.isFresh is false, call agentRefreshIcpPricing once; otherwise use the cached quote.
-4. After the user chooses a package, call agentPurchasePhoneTime(packageId, uniqueIdempotencyKey). On success, seconds are credited to the shared phone-time balance used by web Stripe, outbound calls, and answering.
+4. After the user chooses a package, call agentPurchasePhoneTime(packageId, uniqueIdempotencyKey). ICP moves from the user's deposit subaccount to treasury AccountIdentifier 0f69d493853ec6e60909141168644d3def072ec2569021317547195931b6dc7c; then seconds are credited to the shared phone-time balance used by web Stripe, outbound calls, and answering.
 5. Confirm with one agentGetAccountStatus read that availableSeconds increased.
 
 The off-chain VoiceCall AI bridge securely claims queued jobs and connects Twilio Media Streams to xAI Voice. Agents do not need a Twilio or xAI tool of their own.
@@ -196,7 +196,7 @@ Use agentGetAccountIdentity to obtain the exact ICRC-1 depositAccount; never gue
 
 1. User sends ICP (ICRC-1) to depositAccount.
 2. If the cached quote is stale (pricing.isFresh false), call agentRefreshIcpPricing once. A real refresh uses the Exchange Rate Canister and is globally rate-limited and cached for six hours.
-3. Call agentPurchasePhoneTime only after the user chooses a package and authorizes payment. Pass a unique idempotency key.
+3. Call agentPurchasePhoneTime only after the user chooses a package and authorizes payment. Pass a unique idempotency key. Settlement pays operator treasury AccountIdentifier 0f69d493853ec6e60909141168644d3def072ec2569021317547195931b6dc7c (not the canister default account).
 4. On success, package seconds are credited to the shared prepaid phone-time balance (also used by Stripe web purchases). Confirm with one agentGetAccountStatus read.
 5. Use agentTransferIcp to move unspent ICP. Purchases and transfers require their own idempotency keys. Reuse a key only to retry the same action after a retryable failure.
 
@@ -263,7 +263,7 @@ const structuredGuide = {
   payment_workflow: [
     "agentGetAccountIdentity for the exact ICRC-1 deposit account.",
     "User transfers ICP; agentRefreshIcpPricing only if the quote is stale.",
-    "agentPurchasePhoneTime after user authorization; confirm availableSeconds increased.",
+    "agentPurchasePhoneTime after user authorization; ICP settles to treasury AccountIdentifier 0f69d493853ec6e60909141168644d3def072ec2569021317547195931b6dc7c; confirm availableSeconds increased.",
     "Shared phone-time balance funds outbound calls and inbound answering.",
   ],
   required_answering_information: [

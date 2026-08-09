@@ -44,7 +44,7 @@
   "payment_workflow": [
     "agentGetAccountIdentity for the exact ICRC-1 deposit account.",
     "User transfers ICP; agentRefreshIcpPricing only if the quote is stale.",
-    "agentPurchasePhoneTime after user authorization; confirm availableSeconds increased.",
+    "agentPurchasePhoneTime after user authorization; ICP settles to treasury AccountIdentifier 0f69d493853ec6e60909141168644d3def072ec2569021317547195931b6dc7c; confirm availableSeconds increased.",
     "Shared phone-time balance funds outbound calls and inbound answering."
   ],
   "required_answering_information": [

@@ -55,6 +55,26 @@ mixin (
     #GenericError : { error_code : Nat; message : Text };
   };
 
+  // Classic ICP ledger types — used to pay the operator treasury AccountIdentifier.
+  type Tokens = { e8s : Nat64 };
+  type TimeStamp = { timestamp_nanos : Nat64 };
+  type AccountIdentifier = Blob;
+  type LegacyTransferArgs = {
+    memo : Nat64;
+    amount : Tokens;
+    fee : Tokens;
+    from_subaccount : ?Blob;
+    to : AccountIdentifier;
+    created_at_time : ?TimeStamp;
+  };
+  type LegacyTransferError = {
+    #BadFee : { expected_fee : Tokens };
+    #InsufficientFunds : { balance : Tokens };
+    #TxTooOld : { allowed_window_nanos : Nat64 };
+    #TxCreatedInFuture;
+    #TxDuplicate : { duplicate_of : Nat64 };
+  };
+
   type AssetClass = { #Cryptocurrency; #FiatCurrency };
   type Asset = { symbol : Text; class_ : AssetClass };
   type GetExchangeRateRequest = {
@@ -104,7 +124,17 @@ mixin (
       #Ok : Nat;
       #Err : TransferError;
     };
+    // Pays the hardcoded operator treasury by AccountIdentifier (not canister default).
+    transfer : shared LegacyTransferArgs -> async {
+      #Ok : Nat64;
+      #Err : LegacyTransferError;
+    };
   };
+
+  // Standard ICP ledger fee in e8s. BadFee is mapped to a retryable error.
+  private let ICP_TRANSFER_FEE_E8S : Nat64 = 10_000;
+  // Fixed memo tags phone-time purchase settlements for operators reconciling the treasury.
+  private let PHONE_TIME_PURCHASE_MEMO : Nat64 = 20_260_809;
 
   transient let exchangeRateCanister = actor ("uf6dk-hyaaa-aaaaq-qaaaq-cai") : actor {
     get_exchange_rate : shared GetExchangeRateRequest -> async {
@@ -355,25 +385,37 @@ mixin (
       };
     };
 
+    // Settle to the operator treasury AccountIdentifier (not the canister default
+    // account). Classic `transfer` is required because the destination is an
+    // AccountIdentifier, not an ICRC-1 principal+subaccount pair.
+    if (purchase.amountE8s > Nat64.maxValue.toNat()) {
+      releaseLock(ledgerLocks, account);
+      return #err(agentError(
+        "INVALID_PRICE",
+        "Package ICP amount is too large for the ledger transfer API.",
+        false,
+        account,
+      ));
+    };
     try {
-      let result = await icpLedger.icrc1_transfer({
+      let result = await icpLedger.transfer({
+        memo = PHONE_TIME_PURCHASE_MEMO;
+        amount = { e8s = Nat64.fromNat(purchase.amountE8s) };
+        fee = { e8s = ICP_TRANSFER_FEE_E8S };
         from_subaccount = ?AgentLib.subaccountFor(account);
-        to = { owner = canisterPrincipal; subaccount = null };
-        amount = purchase.amountE8s;
-        fee = null;
-        memo = null;
-        created_at_time = ?purchase.createdAtNanos;
+        to = AgentLib.phoneTimeIcpTreasuryAccountId();
+        created_at_time = ?{ timestamp_nanos = purchase.createdAtNanos };
       });
       switch (result) {
         case (#Ok(blockIndex)) {
-          finishIcpPurchase(purchase, blockIndex);
+          finishIcpPurchase(purchase, blockIndex.toNat());
         };
-        case (#Err(#Duplicate({ duplicate_of }))) {
-          finishIcpPurchase(purchase, duplicate_of);
+        case (#Err(#TxDuplicate({ duplicate_of }))) {
+          finishIcpPurchase(purchase, duplicate_of.toNat());
         };
         case (#Err(error)) {
-          let message = transferErrorText(error);
-          let retryable = isRetryableTransferError(error);
+          let message = legacyTransferErrorText(error);
+          let retryable = isRetryableLegacyTransferError(error);
           AgentLib.failPurchase(purchase, message, not retryable);
           #err(agentError("ICP_TRANSFER_FAILED", message, retryable, account));
         };
@@ -1080,6 +1122,34 @@ mixin (
     switch (error) {
       case (#TemporarilyUnavailable) { true };
       case (#CreatedInFuture(_)) { true };
+      case _ { false };
+    };
+  };
+
+  private func legacyTransferErrorText(error : LegacyTransferError) : Text {
+    switch (error) {
+      case (#BadFee({ expected_fee })) {
+        "ICP ledger fee changed; expected " # expected_fee.e8s.toText() # " e8s."
+      };
+      case (#InsufficientFunds({ balance })) {
+        "Insufficient ICP balance. Current balance is " # balance.e8s.toText() # " e8s plus the ledger fee."
+      };
+      case (#TxTooOld(_)) {
+        "The transfer timestamp is too old. Use a new idempotency key."
+      };
+      case (#TxCreatedInFuture) {
+        "The transfer timestamp is in the future. Check network time and retry."
+      };
+      case (#TxDuplicate({ duplicate_of })) {
+        "Duplicate of ledger block " # duplicate_of.toText() # "."
+      };
+    };
+  };
+
+  private func isRetryableLegacyTransferError(error : LegacyTransferError) : Bool {
+    switch (error) {
+      case (#TxCreatedInFuture) { true };
+      case (#BadFee(_)) { true };
       case _ { false };
     };
   };

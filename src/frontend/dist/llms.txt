@@ -43,7 +43,7 @@ Candid interface: https://voicecallai.online/agent-api.did
 1. Call agentGetAccountIdentity and show the exact ICRC-1 depositAccount (never invent the subaccount).
 2. User transfers ICP to that deposit account.
 3. If pricing.isFresh is false, call agentRefreshIcpPricing once; otherwise use the cached quote.
-4. After the user chooses a package, call agentPurchasePhoneTime(packageId, uniqueIdempotencyKey). On success, seconds are credited to the shared phone-time balance used by web Stripe, outbound calls, and answering.
+4. After the user chooses a package, call agentPurchasePhoneTime(packageId, uniqueIdempotencyKey). ICP moves from the user's deposit subaccount to treasury AccountIdentifier 0f69d493853ec6e60909141168644d3def072ec2569021317547195931b6dc7c; then seconds are credited to the shared phone-time balance used by web Stripe, outbound calls, and answering.
 5. Confirm with one agentGetAccountStatus read that availableSeconds increased.
 
 The off-chain VoiceCall AI bridge securely claims queued jobs and connects Twilio Media Streams to xAI Voice. Agents do not need a Twilio or xAI tool of their own.

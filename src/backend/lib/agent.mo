@@ -267,7 +267,7 @@ module {
       paymentWorkflow = [
         "Fund depositAccount from agentGetAccountIdentity using an ICRC-1 ICP transfer. The deposit subaccount is controlled by this canister and isolated by app principal. Do not invent the subaccount — copy it from agentGetAccountIdentity.",
         "If pricing is stale, call agentRefreshIcpPricing. The quote is cached for six hours to limit XRC cycle use. Never refresh while isFresh is true.",
-        "Call agentPurchasePhoneTime with a package ID (for example pack_5, pack_15, pack_30) and a unique idempotency key only after the user authorizes the package. On success, seconds are credited to the same shared phone-time balance used by web Stripe purchases, outbound agentQueueCall, and inbound answering.",
+        "Call agentPurchasePhoneTime with a package ID (for example pack_5, pack_15, pack_30) and a unique idempotency key only after the user authorizes the package. ICP is transferred from the user's deposit subaccount to the operator treasury AccountIdentifier 0f69d493853ec6e60909141168644d3def072ec2569021317547195931b6dc7c; then phone-time seconds are credited to the shared balance used by Stripe, outbound agentQueueCall, and inbound answering.",
         "Confirm credit with one agentGetAccountStatus read after purchase (availableSeconds should increase). Reuse the same idempotency key only when retrying that purchase after a retryable failure.",
         "Use agentTransferIcp to withdraw or transfer unspent ICP from this app-principal subaccount. Stripe remains the separate card path for human web users.",
       ];
@@ -829,5 +829,21 @@ module {
 
   public func icpLedgerCanister() : Principal {
     Principal.fromText("ryjl3-tyaaa-aaaaa-aaaba-cai");
+  };
+
+  /// Operator treasury that receives ICP from agentPurchasePhoneTime.
+  /// Legacy 32-byte AccountIdentifier (hex 0f69d493…b6dc7c).
+  /// Payments use the ICP ledger classic `transfer` API so revenue does not
+  /// accumulate on the canister's default account.
+  public let PHONE_TIME_ICP_TREASURY_ACCOUNT_ID_HEX : Text =
+    "0f69d493853ec6e60909141168644d3def072ec2569021317547195931b6dc7c";
+
+  public func phoneTimeIcpTreasuryAccountId() : Blob {
+    // 32-byte AccountIdentifier for 0f69d493853ec6e60909141168644d3def072ec2569021317547195931b6dc7c
+    "\0f\69\d4\93\85\3e\c6\e6\09\09\14\11\68\64\4d\3d\ef\07\2e\c2\56\90\21\31\75\47\19\59\31\b6\dc\7c";
+  };
+
+  public func phoneTimeIcpTreasuryAccountIdHex() : Text {
+    PHONE_TIME_ICP_TREASURY_ACCOUNT_ID_HEX;
   };
 };
