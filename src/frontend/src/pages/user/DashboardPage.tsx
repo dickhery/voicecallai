@@ -568,11 +568,12 @@ function OnboardingChecklist({
       label: "Create an AI call preset",
       action: !hasPreset ? (
         <Button
-          size="sm"
-          variant="outline"
-          className="h-7 text-xs"
+          size="default"
+          className="h-9 gap-1.5 px-3 text-sm font-semibold"
           onClick={onCreatePreset}
+          data-ocid="dashboard.onboarding.create_preset_button"
         >
+          <Plus className="w-4 h-4" />
           Create preset
         </Button>
       ) : null,
@@ -990,6 +991,14 @@ export default function DashboardPage() {
     });
   };
 
+  /** Navigate to Settings focused on creating a new call preset. */
+  const goCreateCustomPreset = () => {
+    void navigate({
+      to: "/user/settings",
+      search: { newPreset: "1" } as never,
+    });
+  };
+
   const handleBuyPackage = async (packageId: string) => {
     setBuyingPackageId(packageId);
     try {
@@ -1020,7 +1029,7 @@ export default function DashboardPage() {
     <ProtectedRoute>
       <AppLayout>
         <div className="p-6 space-y-5" data-ocid="dashboard.page">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
             <div>
               <h1 className="font-display text-2xl font-bold text-foreground">
                 Dashboard
@@ -1030,14 +1039,13 @@ export default function DashboardPage() {
               </p>
             </div>
             <Button
-              variant="outline"
-              size="sm"
-              onClick={() => navigate({ to: "/user/settings" })}
+              onClick={goCreateCustomPreset}
               data-ocid="dashboard.new_preset_button"
-              className="gap-2"
+              className="gap-2 h-11 px-5 text-sm font-semibold shadow-sm"
+              size="default"
             >
-              <Plus className="w-3.5 h-3.5" />
-              New Preset
+              <Plus className="w-5 h-5" />
+              Create Preset
             </Button>
           </div>
 
@@ -1186,9 +1194,7 @@ export default function DashboardPage() {
                 .querySelector('[data-ocid="dashboard.billing_card"]')
                 ?.scrollIntoView({ behavior: "smooth" });
             }}
-            onCreatePreset={() => {
-              openPresetLibrary("built-in");
-            }}
+            onCreatePreset={goCreateCustomPreset}
           />
 
           <Card
@@ -1461,17 +1467,27 @@ export default function DashboardPage() {
                     <Skeleton className="h-9 w-full" />
                   ) : (presets ?? []).length === 0 ? (
                     <div
-                      className="text-xs text-muted-foreground py-2 px-3 rounded-lg bg-muted/40"
+                      className="flex flex-col gap-3 rounded-lg border border-dashed border-primary/40 bg-primary/5 p-4"
                       data-ocid="dashboard.presets.empty_state"
                     >
-                      No presets yet.{" "}
-                      <button
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">
+                          No presets yet
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Create a call preset to choose how the AI sounds and
+                          what it should say.
+                        </p>
+                      </div>
+                      <Button
                         type="button"
-                        onClick={() => navigate({ to: "/user/settings" })}
-                        className="text-primary hover:underline"
+                        onClick={goCreateCustomPreset}
+                        className="w-full gap-2 h-11 text-sm font-semibold"
+                        data-ocid="dashboard.presets.create_one_button"
                       >
-                        Create one
-                      </button>
+                        <Plus className="w-5 h-5" />
+                        Create Preset
+                      </Button>
                     </div>
                   ) : (
                     <Select
@@ -1769,13 +1785,12 @@ export default function DashboardPage() {
                       </div>
                       {presetLibraryView === "saved" && (
                         <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => navigate({ to: "/user/settings" })}
-                          className="gap-1.5 text-xs h-7"
+                          size="default"
+                          onClick={goCreateCustomPreset}
+                          className="gap-1.5 h-9 px-3 text-sm font-semibold"
                           data-ocid="dashboard.presets.new_button"
                         >
-                          <Plus className="w-3 h-3" />
+                          <Plus className="w-4 h-4" />
                           New custom preset
                         </Button>
                       )}
@@ -1814,18 +1829,21 @@ export default function DashboardPage() {
                         </p>
                         <div className="flex flex-wrap justify-center gap-2">
                           <Button
-                            size="sm"
+                            size="default"
+                            variant="outline"
+                            className="h-10 gap-1.5"
                             onClick={() => setPresetLibraryView("built-in")}
                             data-ocid="dashboard.presets.browse_empty_button"
                           >
                             Browse built-in agents
                           </Button>
                           <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => navigate({ to: "/user/settings" })}
+                            size="default"
+                            className="h-10 gap-1.5 font-semibold"
+                            onClick={goCreateCustomPreset}
                             data-ocid="dashboard.presets.create_button"
                           >
+                            <Plus className="w-4 h-4" />
                             Create custom preset
                           </Button>
                         </div>

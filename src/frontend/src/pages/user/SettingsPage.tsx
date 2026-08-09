@@ -53,6 +53,7 @@ import {
   normalizeTurnDetection,
 } from "@/lib/natural-phone";
 import type { CallPreset, CallPresetInput } from "@/types";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import {
   ChevronDown,
   ChevronUp,
@@ -65,7 +66,7 @@ import {
   Trash2,
   User,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 
@@ -513,6 +514,11 @@ function PresetForm({ initial, onSave, onCancel, isLoading }: PresetFormProps) {
 
 // ── Settings Page ──────────────────────────────────────────────────────────────
 export default function SettingsPage() {
+  const navigate = useNavigate();
+  // Deep-link from dashboard create-preset CTAs (?newPreset=1)
+  const search = useSearch({ strict: false }) as { newPreset?: boolean };
+  const openNewPreset = Boolean(search?.newPreset);
+
   const { data: presets, isLoading: presetsLoading } = useListMyPresets();
   const createPreset = useCreatePreset();
   const updatePreset = useUpdatePreset();
@@ -522,8 +528,46 @@ export default function SettingsPage() {
   const userId = principal?.toString() ?? "";
 
   const [expandedPreset, setExpandedPreset] = useState<string | null>(null);
-  const [showNewForm, setShowNewForm] = useState(false);
+  const [showNewForm, setShowNewForm] = useState(openNewPreset);
+  const [highlightPresets, setHighlightPresets] = useState(openNewPreset);
   const [addingAgentId, setAddingAgentId] = useState<string | null>(null);
+  const callPresetsRef = useRef<HTMLDivElement>(null);
+  const focusedFromDeepLink = useRef(false);
+
+  // When arriving from the dashboard create flow, focus Call Presets and open
+  // the new-preset form so users don't have to scroll and click again.
+  useEffect(() => {
+    if (!openNewPreset || focusedFromDeepLink.current) return;
+    focusedFromDeepLink.current = true;
+    setShowNewForm(true);
+    setHighlightPresets(true);
+
+    const scrollTimer = window.setTimeout(() => {
+      callPresetsRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 80);
+
+    // Clear the query param so refresh/back doesn't keep re-opening the form.
+    const clearTimer = window.setTimeout(() => {
+      void navigate({
+        to: "/user/settings",
+        search: {} as never,
+        replace: true,
+      });
+    }, 400);
+
+    const highlightTimer = window.setTimeout(() => {
+      setHighlightPresets(false);
+    }, 3200);
+
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(clearTimer);
+      window.clearTimeout(highlightTimer);
+    };
+  }, [openNewPreset, navigate]);
 
   const handleCreate = async (input: CallPresetInput) => {
     await createPreset.mutateAsync(input);
@@ -664,9 +708,18 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
-          {/* Presets Section */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
+          {/* Presets Section — deep-link target for dashboard create flow */}
+          <div
+            ref={callPresetsRef}
+            id="call-presets"
+            className={`space-y-4 scroll-mt-6 rounded-xl transition-all duration-500 ${
+              highlightPresets
+                ? "ring-2 ring-primary/50 bg-primary/5 p-4 -mx-1"
+                : ""
+            }`}
+            data-ocid="settings.call_presets.section"
+          >
+            <div className="flex items-center justify-between gap-3 flex-wrap">
               <div>
                 <h2 className="font-display text-lg font-semibold text-foreground">
                   Call Presets
@@ -679,8 +732,8 @@ export default function SettingsPage() {
               <Button
                 onClick={() => setShowNewForm(!showNewForm)}
                 data-ocid="settings.new_preset_button"
-                className="gap-2"
-                size="sm"
+                className="gap-2 shrink-0"
+                size="default"
               >
                 <Plus className="w-4 h-4" />
                 New Preset
@@ -740,12 +793,12 @@ export default function SettingsPage() {
                     Create your first call preset to get started
                   </p>
                   <Button
-                    size="sm"
+                    size="default"
                     onClick={() => setShowNewForm(true)}
-                    className="gap-2"
+                    className="gap-2 h-11 px-5 text-sm font-semibold"
                     data-ocid="settings.empty_state.create_button"
                   >
-                    <Plus className="w-4 h-4" />
+                    <Plus className="w-5 h-5" />
                     Create Preset
                   </Button>
                 </div>

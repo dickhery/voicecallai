@@ -316,6 +316,7 @@ actor {
       presets :
         Map__254296833<PresetId__8920344, StoredCallPreset__999262307>
     };
+  stable hardcodedAdmins : [Principal];
   stable identityState :
     {
       aliases : Map__254296833<Principal, Principal>;

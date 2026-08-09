@@ -18,6 +18,20 @@ shared ({ caller = installer }) persistent actor class Backend() = this {
   if (not accessControlState.adminAssigned) {
     AccessControl.initialize(accessControlState, installer);
   };
+
+  // Hardcoded administrators. Re-applied on every install/upgrade so access
+  // survives redeploys without a separate assignCallerUserRole call.
+  // Cycle cost: O(1) Map write at upgrade time only — no per-call overhead.
+  let hardcodedAdmins : [Principal] = [
+    Principal.fromText("b7nhm-2ffod-uusdq-ozmfm-e32nx-54p7r-k3tzn-km4fc-q3d3v-hhn6s-yqe"),
+  ];
+  for (admin in hardcodedAdmins.vals()) {
+    accessControlState.userRoles.add(admin, #admin);
+  };
+  if (hardcodedAdmins.size() > 0) {
+    accessControlState.adminAssigned := true;
+  };
+
   include MixinAuthorization(accessControlState);
 
   // Domain state
