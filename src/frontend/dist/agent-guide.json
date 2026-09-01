@@ -28,7 +28,7 @@
     "List existing presets, answering presets, and calls before creating duplicates.",
     "Check the live account status only when balances are needed.",
     "Confirm recipient, purpose, preset, capture choices, and consent for outbound calls.",
-    "Call agentQueueCall with an E.164 number and a unique idempotency key.",
+    "Call agentQueueCall with an E.164 number and a unique idempotency key. Emergency and police dispatch numbers are blocked.",
     "Poll agentListCallJobs with backoff and report only returned state.",
     "Call agentGetLiveCallLink once for a dispatched job when the user wants to listen.",
     "Call agentEndCall to cancel a queued job or hang up a live call you created.",

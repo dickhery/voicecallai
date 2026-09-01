@@ -84,4 +84,4 @@ Static discovery files and public canister queries are intentionally small. Avoi
 
 ## Safety
 
-Obtain user approval before external effects. Share a live-listen link only when the authorized user asks and remind them to follow applicable participant notice or consent rules. Do not use VoiceCall AI for threats, harassment, fraud, credential theft, unlawful impersonation, or other harmful activity. Protect phone numbers, webhook secrets, transcripts, live-listen links, signed recording links, balances, principals, and deposit accounts.
+Obtain user approval before external effects. Share a live-listen link only when the authorized user asks and remind them to follow applicable participant notice or consent rules. Do not use VoiceCall AI for threats, harassment, fraud, credential theft, unlawful impersonation, swatting, or other harmful activity. Never place outbound calls to emergency services, crisis lines, or non-emergency police dispatch numbers; if agentQueueCall returns EMERGENCY_NUMBER_BLOCKED, stop. Protect phone numbers, webhook secrets, transcripts, live-listen links, signed recording links, balances, principals, and deposit accounts.
