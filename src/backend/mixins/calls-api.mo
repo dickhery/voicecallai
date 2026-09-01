@@ -6,6 +6,7 @@ import AccessControl "mo:caffeineai-authorization/access-control";
 import BillingLib "../lib/billing";
 import CallsLib "../lib/calls";
 import ConfigLib "../lib/config";
+import EmergencyLib "../lib/emergency";
 import IdentityLib "../lib/identity";
 import CallTypes "../types/calls";
 import Common "../types/common";
@@ -34,7 +35,9 @@ mixin (
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
     };
-    ignore input;
+    if (EmergencyLib.isBlockedDestination(input.recipientPhone)) {
+      return #err(EmergencyLib.BLOCKED_MESSAGE);
+    };
     #err("Billing is enabled. Reserve prepaid phone time with reserveCall before starting a call.");
   };
 

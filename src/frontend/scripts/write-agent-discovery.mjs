@@ -90,7 +90,7 @@ Candid interface: ${productionOrigin}/agent-api.did
 1. Call listMyPresets and reuse an appropriate user-owned preset, or create one with createPreset.
 2. Call agentGetAccountStatus once when a live balance check is needed. If phone time is low, explain the current packages before buying any.
 3. Confirm recipient, purpose, preset, transcript choice, recording choice, and applicable consent with the user.
-4. Call agentQueueCall with an E.164 phone number, preset ID, capture options, and a unique idempotency key.
+4. Call agentQueueCall with an E.164 phone number, preset ID, capture options, and a unique idempotency key. Emergency, crisis, and non-emergency police dispatch numbers are rejected (EMERGENCY_NUMBER_BLOCKED).
 5. Track the durable job with agentListCallJobs. Start at a 10-second polling interval and back off to 30 seconds. Never claim the call completed merely because it was queued.
 6. When the job is dispatched, call agentGetLiveCallLink once if the user wants to hear the active call. Give them the returned HTTPS URL; it is listen-only and stops working when the call ends.
 7. To stop a queued or live call you created, call agentEndCall with the job ID. Queued jobs cancel immediately; dispatched calls are hung up by the voice bridge within about 15 seconds. Prefer this over leaving farewell loops running.
@@ -122,7 +122,8 @@ The off-chain VoiceCall AI bridge securely claims queued jobs and connects Twili
 - Never buy phone time, transfer ICP, edit a preset, queue a call, or create answering without the user's authorization.
 - consentConfirmed means the user affirmed that applicable participant consent requirements are satisfied. It is required when saving a transcript or audio.
 - Share a live-listen link only when the authorized user asks and remind them to follow applicable participant notice or consent rules.
-- Never use the app for threats, harassment, fraud, credential theft, unlawful impersonation, or other harmful activity.
+- Never use the app for threats, harassment, fraud, credential theft, unlawful impersonation, swatting, or other harmful activity.
+- Never place or retry outbound calls to emergency services, crisis lines, or non-emergency police dispatch numbers (911, 112, 999, 101, 311, 988, and similar). If agentQueueCall returns EMERGENCY_NUMBER_BLOCKED, stop and tell the user to use a local phone.
 - Treat phone numbers, webhook secrets, transcripts, live-listen links, recording links, account identifiers, and balances as sensitive.
 `;
 
@@ -212,7 +213,7 @@ Static discovery files and public canister queries are intentionally small. Avoi
 
 ## Safety
 
-Obtain user approval before external effects. Share a live-listen link only when the authorized user asks and remind them to follow applicable participant notice or consent rules. Do not use VoiceCall AI for threats, harassment, fraud, credential theft, unlawful impersonation, or other harmful activity. Protect phone numbers, webhook secrets, transcripts, live-listen links, signed recording links, balances, principals, and deposit accounts.
+Obtain user approval before external effects. Share a live-listen link only when the authorized user asks and remind them to follow applicable participant notice or consent rules. Do not use VoiceCall AI for threats, harassment, fraud, credential theft, unlawful impersonation, swatting, or other harmful activity. Never place outbound calls to emergency services, crisis lines, or non-emergency police dispatch numbers; if agentQueueCall returns EMERGENCY_NUMBER_BLOCKED, stop. Protect phone numbers, webhook secrets, transcripts, live-listen links, signed recording links, balances, principals, and deposit accounts.
 `;
 
 const structuredGuide = {
@@ -247,7 +248,7 @@ const structuredGuide = {
     "List existing presets, answering presets, and calls before creating duplicates.",
     "Check the live account status only when balances are needed.",
     "Confirm recipient, purpose, preset, capture choices, and consent for outbound calls.",
-    "Call agentQueueCall with an E.164 number and a unique idempotency key.",
+    "Call agentQueueCall with an E.164 number and a unique idempotency key. Emergency and police dispatch numbers are blocked.",
     "Poll agentListCallJobs with backoff and report only returned state.",
     "Call agentGetLiveCallLink once for a dispatched job when the user wants to listen.",
     "Call agentEndCall to cancel a queued job or hang up a live call you created.",

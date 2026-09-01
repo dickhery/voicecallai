@@ -10,6 +10,10 @@
 
 import { CallStatus } from "@/bindings/backend";
 import { useReserveCall, useUpdateCallStatus } from "@/hooks/use-backend";
+import {
+  EMERGENCY_BLOCKED_MESSAGE,
+  isEmergencyDestination,
+} from "@/lib/emergency-numbers";
 import { rememberRecentPhone } from "@/lib/phone";
 import {
   endVoiceServerCall,
@@ -636,6 +640,9 @@ export function useXaiVoice(): XaiVoiceState & XaiVoiceControls {
       billingStartedAtRef.current = null;
 
       try {
+        if (isEmergencyDestination(recipientPhone)) {
+          throw new Error(EMERGENCY_BLOCKED_MESSAGE);
+        }
         const reservationResult = await reserveCall.mutateAsync({
           recipientPhone,
           presetId: preset.id,

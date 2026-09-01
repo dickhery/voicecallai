@@ -9,6 +9,7 @@ import AccessControl "mo:caffeineai-authorization/access-control";
 import BillingLib "../lib/billing";
 import CallsLib "../lib/calls";
 import ConfigLib "../lib/config";
+import EmergencyLib "../lib/emergency";
 import IdentityLib "../lib/identity";
 import BillingTypes "../types/billing";
 import CallTypes "../types/calls";
@@ -164,6 +165,17 @@ mixin (
     let account = billingAccountOf(caller);
     if (not ConfigLib.isE164(input.recipientPhone)) {
       return #err("Phone number must be E.164 format, for example +15551234567.");
+    };
+    // Reject before Random.blob / call-record writes so blocked attempts
+    // do not spend entropy or grow history.
+    if (EmergencyLib.isBlockedDestination(input.recipientPhone)) {
+      CallsLib.addSystemLog(
+        callsState,
+        #warn,
+        "Blocked emergency destination " # input.recipientPhone # " PID " # account.toText(),
+        null,
+      );
+      return #err(EmergencyLib.BLOCKED_MESSAGE);
     };
     switch (ConfigLib.getPreset(configState, callPresetVoiceIds, input.presetId)) {
       case null { return #err("Preset not found") };

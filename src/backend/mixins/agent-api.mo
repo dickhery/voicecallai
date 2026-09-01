@@ -18,6 +18,7 @@ import AgentLib "../lib/agent";
 import BillingLib "../lib/billing";
 import CallsLib "../lib/calls";
 import ConfigLib "../lib/config";
+import EmergencyLib "../lib/emergency";
 import IdentityLib "../lib/identity";
 import AgentTypes "../types/agent";
 
@@ -557,6 +558,14 @@ mixin (
       return #err(agentError(
         "INVALID_PHONE_NUMBER",
         "Phone number must be E.164 format, for example +15551234567.",
+        false,
+        account,
+      ));
+    };
+    if (EmergencyLib.isBlockedDestination(input.recipientPhone)) {
+      return #err(agentError(
+        "EMERGENCY_NUMBER_BLOCKED",
+        EmergencyLib.BLOCKED_MESSAGE,
         false,
         account,
       ));

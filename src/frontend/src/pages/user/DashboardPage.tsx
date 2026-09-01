@@ -60,6 +60,10 @@ import {
   stripVoiceSessionBlock,
 } from "@/lib/agent-presets";
 import {
+  EMERGENCY_BLOCKED_MESSAGE,
+  isEmergencyDestination,
+} from "@/lib/emergency-numbers";
+import {
   formatPhoneDisplay,
   isValidE164,
   loadRecentPhones,
@@ -884,7 +888,14 @@ export default function DashboardPage() {
   const handleRecipientChange = (value: string) => {
     setRecipient(value);
     setRecipientHint(phoneInputHint(value));
-    if (recipientError) setRecipientError("");
+    if (
+      isEmergencyDestination(value) ||
+      isEmergencyDestination(normalizeToE164(value))
+    ) {
+      setRecipientError(EMERGENCY_BLOCKED_MESSAGE);
+    } else if (recipientError) {
+      setRecipientError("");
+    }
   };
 
   const handleRecipientBlur = () => {
@@ -893,7 +904,10 @@ export default function DashboardPage() {
       setRecipient(normalized);
     }
     const check = normalized || recipient;
-    if (check && !isValidE164(check.replace(/\s/g, ""))) {
+    if (check && isEmergencyDestination(check)) {
+      setRecipientError(EMERGENCY_BLOCKED_MESSAGE);
+      setRecipientHint(null);
+    } else if (check && !isValidE164(check.replace(/\s/g, ""))) {
       setRecipientError("Enter a valid number, e.g. +15551234567");
     } else {
       setRecipientError("");
@@ -911,6 +925,11 @@ export default function DashboardPage() {
       return;
     }
     const cleaned = normalizeToE164(recipient.replace(/\s/g, ""));
+    if (isEmergencyDestination(recipient) || isEmergencyDestination(cleaned)) {
+      setRecipientError(EMERGENCY_BLOCKED_MESSAGE);
+      toast.error(EMERGENCY_BLOCKED_MESSAGE);
+      return;
+    }
     if (!isValidE164(cleaned)) {
       setRecipientError("Enter a valid number, e.g. +15551234567");
       return;
@@ -1487,8 +1506,13 @@ export default function DashboardPage() {
                           type="button"
                           onClick={() => {
                             setRecipient(phone);
-                            setRecipientError("");
-                            setRecipientHint(null);
+                            if (isEmergencyDestination(phone)) {
+                              setRecipientError(EMERGENCY_BLOCKED_MESSAGE);
+                              setRecipientHint(null);
+                            } else {
+                              setRecipientError("");
+                              setRecipientHint(null);
+                            }
                           }}
                           className="text-[11px] font-mono px-2 py-1 rounded-md border border-border bg-muted/30 hover:border-primary/40 text-muted-foreground hover:text-foreground transition-colors"
                           data-ocid="dashboard.recipient.recent"
@@ -1661,6 +1685,7 @@ export default function DashboardPage() {
                     isCallActive ||
                     !recipient ||
                     !selectedPresetId ||
+                    Boolean(recipientError) ||
                     availableSeconds <= 0 ||
                     bridgeDown ||
                     (savesCallArtifacts && !capturePermissionConfirmed)

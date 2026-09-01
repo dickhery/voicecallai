@@ -23,6 +23,10 @@ import {
   stripeModeToCandid,
   unwrapOptional,
 } from "./ic-backend.js";
+import {
+  EMERGENCY_BLOCKED_MESSAGE,
+  isEmergencyDestination,
+} from "./emergency-numbers.js";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -3514,6 +3518,9 @@ async function createTwilioCallForSession(session, lineNumber, actor) {
     if (lineOwner !== session.id) {
       assignLineToSession(session, lineNumber);
     }
+    if (isEmergencyDestination(session.recipientPhone)) {
+      throw new Error(EMERGENCY_BLOCKED_MESSAGE);
+    }
 
     const callCreateOptions = {
       to: session.recipientPhone,
@@ -3983,6 +3990,9 @@ app.post("/initiate-call", async (req, res) => {
       okOrThrow(verified, "Unable to verify paid call reservation."),
     );
     const recipientPhone = normalizePhone(reservation.recipientPhone);
+    if (isEmergencyDestination(recipientPhone)) {
+      throw new Error(EMERGENCY_BLOCKED_MESSAGE);
+    }
     const rawPreset = unwrapOptional(
       await actor.getPresetForServer(BigInt(reservation.presetId)),
     );

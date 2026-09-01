@@ -215,7 +215,7 @@ module {
   public func guide(state : State) : AgentTypes.AgentGuide {
     {
       appName = "VoiceCall AI";
-      apiVersion = "2026-08-agent-v5";
+      apiVersion = "2026-08-agent-v6";
       summary = "Place real outbound AI phone calls, end stuck or completed calls, configure voice presets, fund prepaid phone time with ICP, retrieve a listen-only live call link, set up inbound AI answering on a user-owned Twilio number, and retrieve approved call transcripts or recording links through ICP MCP.";
       productionMcpUrl = "https://mcp.internetcomputer.org/mcp";
       authentication = [
@@ -232,7 +232,7 @@ module {
         "Call agentGetAccountStatus only when a current ICP, ledger-fee, phone-time, or pricing check is relevant.",
       ];
       requiredCallInformation = [
-        "Recipient phone number in E.164 format, such as +15551234567.",
+        "Recipient phone number in E.164 format, such as +15551234567. Emergency, crisis, and non-emergency police dispatch numbers (911, 112, 999, 101, 311, 988, and similar) are rejected.",
         "A user-owned outbound preset ID. Create one with createPreset when none fits.",
         "Whether transcripts or audio may be saved. consentConfirmed must be true whenever either capture option is enabled.",
         "A unique idempotencyKey for every intended purchase, transfer, or call. Reuse the same key only when retrying that same action.",
@@ -248,7 +248,7 @@ module {
       ];
       callWorkflow = [
         "Check agentGetAccountStatus once when a live balance is needed. If available phone time is low, tell the user the exact ICP package prices before purchasing.",
-        "Create or select a call preset, confirm the recipient, purpose, preset, capture choices, and consent, then call agentQueueCall. Agents do not need separate Twilio or xAI tools: the off-chain voice bridge securely claims the job and places the call.",
+        "Create or select a call preset, confirm the recipient, purpose, preset, capture choices, and consent, then call agentQueueCall. If the result is EMERGENCY_NUMBER_BLOCKED, stop and tell the user to use a local phone for emergency or police dispatch numbers. Agents do not need separate Twilio or xAI tools: the off-chain voice bridge securely claims the job and places the call.",
         "Poll agentListCallJobs after about 10 seconds, then back off to 20 and 30 seconds while waiting. Once a job is dispatched, call agentGetLiveCallLink once if the user wants to hear the call. Use agentGetCallArtifacts after completion for the transcript and a signed audio URL when capture was enabled.",
         "To stop a live or queued call you created, call agentEndCall with the job ID. Queued jobs cancel immediately; dispatched calls are hung up by the voice bridge within about 15 seconds. Prefer this over leaving farewell loops running.",
         "Report queued, dispatched, in-progress, or completed according to returned state. Never claim a call was placed or completed without supporting job or call-record state.",
@@ -276,7 +276,8 @@ module {
         "For answering, confirm the Twilio number belongs to the user and that they understand callers will reach an AI.",
         "Do not enable transcript or audio capture without the user's confirmation that applicable participant consent requirements are satisfied.",
         "Only request or share a live-listen link when the authorized user asks, and remind them to satisfy applicable participant notice or consent requirements.",
-        "Do not use the app for threats, harassment, fraud, credential theft, unlawful impersonation, or other harmful activity.",
+        "Do not use the app for threats, harassment, fraud, credential theft, unlawful impersonation, swatting, or other harmful activity.",
+        "Never place or retry outbound calls to emergency services, crisis lines, or non-emergency police dispatch numbers. If agentQueueCall returns EMERGENCY_NUMBER_BLOCKED, do not try a rewritten form of the same number.",
         "Phone numbers, webhook secrets, transcripts, live-listen links, and recording links are sensitive. Reveal them only in the authorized user's chat.",
       ];
       capabilities = [

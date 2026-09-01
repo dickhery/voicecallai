@@ -2,6 +2,8 @@
  * Phone number helpers for E.164 validation, normalization, and display.
  */
 
+import { isEmergencyDestination } from "@/lib/emergency-numbers";
+
 const DEFAULT_COUNTRY_DIAL = "1";
 
 /** Strip everything except digits and a leading +. */
@@ -61,6 +63,12 @@ export function formatPhoneDisplay(phone: string): string {
 export function phoneInputHint(value: string): string | null {
   const cleaned = value.replace(/\s/g, "");
   if (!cleaned) return null;
+  if (
+    isEmergencyDestination(cleaned) ||
+    isEmergencyDestination(normalizeToE164(cleaned))
+  ) {
+    return null;
+  }
   if (isValidE164(cleaned) || isValidE164(normalizeToE164(cleaned))) {
     return null;
   }
@@ -82,6 +90,7 @@ export function loadRecentPhones(): string[] {
     return parsed
       .filter((item): item is string => typeof item === "string")
       .filter(isValidE164)
+      .filter((phone) => !isEmergencyDestination(phone))
       .slice(0, MAX_RECENT_PHONES);
   } catch {
     return [];
@@ -89,7 +98,7 @@ export function loadRecentPhones(): string[] {
 }
 
 export function rememberRecentPhone(phone: string): void {
-  if (!isValidE164(phone)) return;
+  if (!isValidE164(phone) || isEmergencyDestination(phone)) return;
   try {
     const existing = loadRecentPhones().filter((p) => p !== phone);
     const next = [phone, ...existing].slice(0, MAX_RECENT_PHONES);
