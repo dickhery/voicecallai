@@ -73,7 +73,9 @@ function WaveformCanvas() {
         ctx.fill();
       }
       t++;
-      animRef.current = requestAnimationFrame(draw);
+      if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        animRef.current = requestAnimationFrame(draw);
+      }
     }
 
     draw();
@@ -136,7 +138,7 @@ export default function LoginPage({
   const isLoading = isInitializing;
 
   return (
-    <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4">
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4 py-12">
       {/* Ambient background */}
       <div
         className="fixed inset-0 overflow-hidden pointer-events-none"
@@ -247,13 +249,57 @@ export default function LoginPage({
                   : "Sign in with Internet Identity"}
               </Button>
               <p className="text-xs text-muted-foreground/60 text-center mt-4 leading-relaxed">
-                New accounts are registered as users. The identity that deploys
-                the backend is the initial administrator and can promote other
-                users.
+                Buy phone time with Stripe, then call here or connect your AI
+                assistant. Use the same Internet Identity for shared phone time.
               </p>
             </>
           )}
         </div>
+
+        <section
+          className="mt-6 rounded-2xl border border-border bg-card p-6 space-y-4"
+          aria-labelledby="agent-start"
+        >
+          <h2 id="agent-start" className="font-display text-lg font-semibold">
+            Your assistant can make the call
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Appointment follow-ups, business inquiries, and AI answering. Start
+            with prepaid time: $5 / 30 minutes, $10 / 60 minutes, or $20 / 120
+            minutes.
+          </p>
+          <ol className="list-decimal pl-5 space-y-3 text-sm text-muted-foreground">
+            <li>
+              Sign in and buy phone time with Stripe, or authorize an ICP
+              purchase through your assistant.
+            </li>
+            <li>
+              Add the official ICP MCP connector to an MCP-compatible assistant
+              and authorize VoiceCall AI through Internet Identity.
+            </li>
+            <li>
+              Confirm who to call, the purpose, and whether to save a transcript
+              or recording. Your assistant queues and tracks the call.
+            </li>
+          </ol>
+          <p className="text-xs text-muted-foreground">Connector URL</p>
+          <code className="block select-all break-all rounded-lg bg-muted p-3 text-xs">
+            https://mcp.internetcomputer.org/mcp
+          </code>
+          <div className="flex flex-wrap gap-4 text-sm text-primary">
+            <a className="underline underline-offset-4" href="/guide.html">
+              Setup, pricing & FAQ
+            </a>
+            <a className="underline underline-offset-4" href="/llms.txt">
+              Agent instructions
+            </a>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Not an emergency service. Emergency calls, false reports, swatting,
+            and harassment are prohibited. Capture requires applicable
+            participant consent.
+          </p>
+        </section>
 
         <p className="text-center text-xs text-muted-foreground/40 mt-6">
           © {new Date().getFullYear()}.{" "}

@@ -1,3 +1,4 @@
+import { assertAllowedDestination, parseBlockedDestinations, FALSE_REPORT_RULES, findRuleViolation } from "./call-safety.js";
 import "dotenv/config";
 import http from "node:http";
 import crypto from "node:crypto";
@@ -124,7 +125,8 @@ const VOICE_PREVIEW_RATE_LIMIT_WINDOW_MS = Number(
 const VOICE_PREVIEW_RATE_LIMIT_MAX = Number(
   process.env.VOICE_PREVIEW_RATE_LIMIT_MAX || 12,
 );
-const SERVER_VERSION = "2026-07-31-durable-bridge-recordings";
+const SERVER_VERSION = "2026-09-07-agent-onboarding-call-safety";
+const BLOCKED_OUTBOUND_NUMBERS = parseBlockedDestinations(process.env.BLOCKED_OUTBOUND_NUMBERS);
 const VOICE_SESSION_START = "[[vc:session]]";
 const VOICE_SESSION_END = "[[/vc:session]]";
 const SERVER_STARTED_AT = new Date().toISOString();
@@ -183,9 +185,12 @@ const APP_SAFETY_INSTRUCTIONS = [
   "Do not provide instructions that enable malware, credential theft, fraud, evasion of security controls, weapons, explosives, poisoning, or other malicious activity.",
   "If the caller or operator asks for unsafe content, refuse briefly and redirect to a safe, lawful alternative.",
   "Never claim you will harm someone or help anyone harm someone.",
+  "Never fabricate an emergency, crime, bomb threat, hostage situation, or request for police dispatch. Never participate in swatting or false reports, including fictional scenarios presented to real recipients.",
+  "If you reach emergency services or police dispatch, identify yourself as an AI, explain that you cannot use this service for emergency calls, and end the conversation without making a report.",
 ].join("\n");
 
 const SAFETY_RULES = [
+  ...FALSE_REPORT_RULES,
   {
     category: "threats",
     pattern:
@@ -507,28 +512,8 @@ function log(level, message, meta = {}) {
   }
 }
 
-function hasSafetyNegationBefore(text, index) {
-  const before = text.slice(Math.max(0, index - 36), index);
-  return /\b(?:do not|don't|dont|never|avoid|refuse|stop|prevent|block|moderate|without|not)\b[\s.:;,-]*$/i.test(
-    before,
-  );
-}
-
 function findSafetyViolation(text) {
-  const normalized = String(text || "").replace(/\s+/g, " ").trim();
-  if (!normalized) return null;
-
-  for (const rule of SAFETY_RULES) {
-    const match = rule.pattern.exec(normalized);
-    if (match && !hasSafetyNegationBefore(normalized, match.index)) {
-      return {
-        category: rule.category,
-        phrase: match[0].slice(0, 120),
-      };
-    }
-  }
-
-  return null;
+  return findRuleViolation(text, SAFETY_RULES);
 }
 
 function assertSafeInstructionText(text, label) {
@@ -3518,9 +3503,9 @@ async function createTwilioCallForSession(session, lineNumber, actor) {
     if (lineOwner !== session.id) {
       assignLineToSession(session, lineNumber);
     }
-    if (isEmergencyDestination(session.recipientPhone)) {
-      throw new Error(EMERGENCY_BLOCKED_MESSAGE);
-    }
+    assertAllowedDestination(session.recipientPhone, BLOCKED_OUTBOUND_NUMBERS);
+    // Both browser and MCP queued jobs converge here, immediately before dial.
+    assertSafeInstructionText(session.preset?.systemPrompt, "Call preset instructions");
 
     const callCreateOptions = {
       to: session.recipientPhone,
@@ -4001,6 +3986,7 @@ app.post("/initiate-call", async (req, res) => {
       throw new Error("Reserved call preset was not found.");
     }
     const preset = toPlainPreset(storedPreset);
+    assertAllowedDestination(recipientPhone, BLOCKED_OUTBOUND_NUMBERS);
     assertSafeInstructionText(preset.systemPrompt, "Call preset instructions");
     const callId = String(req.body.callId || reservation.callId || "");
     if (callId && callId !== reservation.callId) {

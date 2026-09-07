@@ -16,13 +16,13 @@ const productionMcpUrl = "https://mcp.internetcomputer.org/mcp";
 
 function loadCanisterIds() {
   const requestedEnvironment =
-    process.env.ICP_ENVIRONMENT?.trim() || "ic";
+    process.env.ICP_ENVIRONMENT?.trim() || process.env.ICP_CLI_ENVIRONMENT?.trim() || "ic";
   const candidates = [
     resolve(
       workspaceDirectory,
       `.icp/data/mappings/${requestedEnvironment}.ids.json`,
     ),
-    resolve(workspaceDirectory, ".icp/data/mappings/ic.ids.json"),
+
   ];
   const mappingFile = candidates.find((candidate) => existsSync(candidate));
   if (!mappingFile) {
@@ -78,10 +78,17 @@ Full instructions: ${productionOrigin}/llms-full.txt
 Structured guide: ${productionOrigin}/agent-guide.json
 Candid interface: ${productionOrigin}/agent-api.did
 
+## About the service and payment choices
+
+VoiceCall AI offers outbound AI phone conversations and inbound answering on a user-owned Twilio number. Human setup and FAQ: ${productionOrigin}/guide.html
+Packages: pack_5 = $5 / 30 minutes; pack_10 = $10 / 60 minutes; pack_20 = $20 / 120 minutes. Verify current packages with getAgentGuide before purchase. ICP quotes vary and ledger fees apply.
+A user can sign in at ${productionOrigin}, buy time through Stripe in the dashboard, then connect an MCP assistant using the same Internet Identity for this app. Existing phone time needs no ICP deposit. Compare the app account identity if balances differ; Settings offers account linking.
+Without an authenticated MCP connector or another authorized IC client, an assistant can explain the site but cannot execute calls or purchases.
+
 ## Required discovery path
 
 1. Use the official ICP MCP (Agent Identity) connector to resolve ${productionOrigin}.
-2. If discovery returns only the frontend asset canister, continue with backend canister ${canisters.backend}. Do not conclude that phone calling is unavailable after inspecting only the asset canister.
+2. Resolve the published /.well-known/ic-architecture manifest. The calling API is on backend ${canisters.backend}, not the frontend asset canister. If the connector reports that the manifest is missing or invalid, stop and report the discovery configuration issue; do not bypass the connector restriction.
 3. Read the backend Candid interface and call the public query getAgentGuide (or getApiDoc) once for current workflow and safety instructions.
 4. Authorize the connector for this app with Internet Identity before authenticated updates. Call agentInitialize once for the authenticated app principal.
 
@@ -90,7 +97,7 @@ Candid interface: ${productionOrigin}/agent-api.did
 1. Call listMyPresets and reuse an appropriate user-owned preset, or create one with createPreset.
 2. Call agentGetAccountStatus once when a live balance check is needed. If phone time is low, explain the current packages before buying any.
 3. Confirm recipient, purpose, preset, transcript choice, recording choice, and applicable consent with the user.
-4. Call agentQueueCall with an E.164 phone number, preset ID, capture options, and a unique idempotency key. Emergency, crisis, and non-emergency police dispatch numbers are rejected (EMERGENCY_NUMBER_BLOCKED).
+4. Call agentQueueCall with an E.164 phone number, preset ID, capture options, and a unique idempotency key. Known emergency short codes and reserved number patterns are rejected (EMERGENCY_NUMBER_BLOCKED); the filter cannot identify every full-length dispatch number.
 5. Track the durable job with agentListCallJobs. Start at a 10-second polling interval and back off to 30 seconds. Never claim the call completed merely because it was queued.
 6. When the job is dispatched, call agentGetLiveCallLink once if the user wants to hear the active call. Give them the returned HTTPS URL; it is listen-only and stops working when the call ends.
 7. To stop a queued or live call you created, call agentEndCall with the job ID. Queued jobs cancel immediately; dispatched calls are hung up by the voice bridge within about 15 seconds. Prefer this over leaving farewell loops running.
@@ -140,7 +147,11 @@ VoiceCall AI is an Internet Computer application with a Motoko backend, a certif
 - Backend Candid: ${productionOrigin}/agent-api.did
 - Structured discovery: ${productionOrigin}/.well-known/ic-app.json
 
-If an app-resolution tool finds only ${canisters.frontend}, target ${canisters.backend} explicitly, obtain its Candid metadata, and call getAgentGuide. The absence of a dialing method on the asset canister does not mean that VoiceCall AI lacks telephony.
+The calling API belongs to ${canisters.backend}; ${canisters.frontend} serves assets. Official ICP MCP requires a valid /.well-known/ic-architecture manifest before canister access. If discovery reports a missing or invalid manifest, report the configuration issue rather than bypassing the connector restriction. The absence of a dialing method on the asset canister does not mean that VoiceCall AI lacks telephony.
+
+## Human onboarding and Stripe
+
+Read ${productionOrigin}/guide.html for setup and FAQ. Users can sign in on the website, buy prepaid time with Stripe, then authorize an MCP assistant for the same app account. Stripe-funded time needs no ICP deposit. Packages are $5 / 30 minutes, $10 / 60 minutes, and $20 / 120 minutes; verify the current guide before payment. ICP prices depend on the live quote and ledger fee. If balances differ, compare account identities and use the Settings account-linking flow instead of buying twice.
 
 ## Authentication
 
@@ -248,7 +259,7 @@ const structuredGuide = {
     "List existing presets, answering presets, and calls before creating duplicates.",
     "Check the live account status only when balances are needed.",
     "Confirm recipient, purpose, preset, capture choices, and consent for outbound calls.",
-    "Call agentQueueCall with an E.164 number and a unique idempotency key. Emergency and police dispatch numbers are blocked.",
+    "Call agentQueueCall with an E.164 number and a unique idempotency key. Known emergency short codes and reserved patterns are blocked; all emergency and police dispatch calls are prohibited.",
     "Poll agentListCallJobs with backoff and report only returned state.",
     "Call agentGetLiveCallLink once for a dispatched job when the user wants to listen.",
     "Call agentEndCall to cancel a queued job or hang up a live call you created.",
@@ -261,6 +272,13 @@ const structuredGuide = {
     "Give the user https://voicecall.richardhery.com/answering/incoming/{webhookSecret} for Twilio Voice POST.",
     "User verifies by calling the number once; then setAnsweringPresetEnabled when verified.",
   ],
+  human_guide: `${productionOrigin}/guide.html`,
+  stripe_workflow: [
+    "Sign in on the website with Internet Identity and buy phone time using Stripe in the dashboard.",
+    "Authorize the MCP connector for voicecallai.online with the same Internet Identity and compare app account identities.",
+    "Use existing phone time without depositing ICP; resolve account differences in Settings before buying again.",
+  ],
+  safety_limitations: "Known short codes and reserved patterns are blocked; this does not identify every full-length dispatch number or guarantee prevention of deceptive calls.",
   payment_workflow: [
     "agentGetAccountIdentity for the exact ICRC-1 deposit account.",
     "User transfers ICP; agentRefreshIcpPricing only if the quote is stale.",
@@ -330,6 +348,11 @@ const icAppManifest = {
   instructions: structuredGuide.instructions,
 };
 
+const runtime = JSON.parse(readFileSync(resolve(frontendDirectory, "public/env.json"), "utf8"));
+const derivationOrigin = new URL(runtime.ii_derivation_origin).origin;
+writeOutput(".well-known/ii-derivation-origin", `${derivationOrigin}\n`);
+writeOutput("sitemap.xml", `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${productionOrigin}/</loc></url><url><loc>${productionOrigin}/guide.html</loc></url></urlset>\n`);
 writeOutput("llms.txt", llmsText);
 writeOutput("llms-full.txt", llmsFullText);
 writeOutput("agent-guide.json", `${JSON.stringify(structuredGuide, null, 2)}\n`);
@@ -341,7 +364,7 @@ writeOutput("ic-app.json", `${JSON.stringify(icAppManifest, null, 2)}\n`);
 writeOutput("agent-api.did", candid);
 writeOutput(
   "robots.txt",
-  `User-agent: *\nAllow: /\n\n# AI usage instructions\n# ${productionOrigin}/llms.txt\n`,
+  `User-agent: *\nAllow: /\nSitemap: ${productionOrigin}/sitemap.xml\n\n# AI usage instructions\n# ${productionOrigin}/llms.txt\n`,
 );
 
 console.log(

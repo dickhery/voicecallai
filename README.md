@@ -920,3 +920,26 @@ All packages:
 pnpm build
 pnpm build:ic
 ```
+
+## Public onboarding and call safety (September 2026)
+
+`/guide.html` explains Stripe-first onboarding, ICP deposits, account matching,
+AI answering, capture processing, and limitations without requiring JavaScript
+or authentication. The root HTML contains a public summary and discovery links
+before React starts; the login page links to the same guide. Discovery is static
+and cached: it adds no timers, stable state, or paid inter-canister calls.
+
+The bridge checks strict E.164 destinations, emergency patterns, an optional
+`BLOCKED_OUTBOUND_NUMBERS` list, and unsafe preset instructions immediately before
+its sole Twilio dialing call. This covers both browser and MCP dispatch paths.
+False-report and swatting checks also apply to existing live-guidance checks.
+Local text filtering is defense in depth, not a guarantee of intent detection.
+The number filter cannot identify all full-length dispatch lines; operators can
+add verified numbers to the environment list. No third-party lookup or model
+moderation request is added, keeping cycle and per-call costs unchanged.
+
+Run `node --test src/server/call-safety.test.js` for the safety regression suite.
+Server changes require updating/restarting the separate Windows voice bridge via
+`scripts/update-voicecall-service.ps1`; deploying IC assets alone does not update
+that process. The safety policy is enforced locally without storing a new copy
+of call content on-chain.

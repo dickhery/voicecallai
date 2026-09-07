@@ -10,6 +10,9 @@ const expectedFiles = [
   "ic-app.json",
   "agent-api.did",
   "robots.txt",
+  "guide.html",
+  "sitemap.xml",
+  ".well-known/ii-derivation-origin",
 ];
 const isRemoteTarget =
   target.startsWith("http://") || target.startsWith("https://");
@@ -21,12 +24,19 @@ function assertValid(relativePath, body, contentType = "") {
   if (isRemoteTarget) {
     const expectedContentType = relativePath.endsWith(".json")
       ? "application/json"
-      : "text/plain";
+      : relativePath.endsWith(".html") ? "text/html"
+      : relativePath.endsWith(".xml") ? "application/xml" : "text/plain";
     if (!contentType.includes(expectedContentType)) {
       throw new Error(
         `${relativePath} returned ${contentType || "no content type"} instead of ${expectedContentType}.`,
       );
     }
+  }
+  if (relativePath === "guide.html" && (!body.includes("Stripe") || !body.includes("mcp.internetcomputer.org/mcp"))) {
+    throw new Error("Public guide is missing payment or connector setup.");
+  }
+  if (relativePath === ".well-known/ii-derivation-origin" && body.trim() !== "https://voicecallai.online") {
+    throw new Error("Unexpected production derivation origin.");
   }
   if (
     relativePath === "llms.txt" &&
@@ -65,7 +75,7 @@ if (isRemoteTarget) {
       throw new Error(`${url} returned HTTP ${response.status}.`);
     }
     const body = await response.text();
-    if (response.headers.get("access-control-allow-origin") !== "*") {
+    if (!relativePath.endsWith(".html") && response.headers.get("access-control-allow-origin") !== "*") {
       throw new Error(`${url} does not allow cross-origin agent reads.`);
     }
     assertValid(

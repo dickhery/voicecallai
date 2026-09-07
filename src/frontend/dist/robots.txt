@@ -1,5 +1,6 @@
 User-agent: *
 Allow: /
+Sitemap: https://voicecallai.online/sitemap.xml
 
 # AI usage instructions
 # https://voicecallai.online/llms.txt

@@ -88,6 +88,15 @@ const assetConfig = [
     ignore: false,
   },
   {
+    match: ".well-known/ii-derivation-origin",
+    headers: { ...machineReadableHeaders, "Content-Type": "text/plain; charset=utf-8" },
+    ignore: false,
+  },
+  {
+    match: "sitemap.xml",
+    headers: { ...machineReadableHeaders, "Content-Type": "application/xml; charset=utf-8" },
+  },
+  {
     match: "ic-app.json",
     headers: {
       ...machineReadableHeaders,

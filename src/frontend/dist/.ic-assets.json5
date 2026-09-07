@@ -37,6 +37,23 @@
     "ignore": false
   },
   {
+    "match": ".well-known/ii-derivation-origin",
+    "headers": {
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": "public, max-age=300",
+      "Content-Type": "text/plain; charset=utf-8"
+    },
+    "ignore": false
+  },
+  {
+    "match": "sitemap.xml",
+    "headers": {
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": "public, max-age=300",
+      "Content-Type": "application/xml; charset=utf-8"
+    }
+  },
+  {
     "match": "ic-app.json",
     "headers": {
       "Access-Control-Allow-Origin": "*",

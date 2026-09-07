@@ -11,7 +11,11 @@ VoiceCall AI is an Internet Computer application with a Motoko backend, a certif
 - Backend Candid: https://voicecallai.online/agent-api.did
 - Structured discovery: https://voicecallai.online/.well-known/ic-app.json
 
-If an app-resolution tool finds only 2nukr-cyaaa-aaaak-qy2ja-cai, target 2dwhz-ziaaa-aaaak-qy2ia-cai explicitly, obtain its Candid metadata, and call getAgentGuide. The absence of a dialing method on the asset canister does not mean that VoiceCall AI lacks telephony.
+The calling API belongs to 2dwhz-ziaaa-aaaak-qy2ia-cai; 2nukr-cyaaa-aaaak-qy2ja-cai serves assets. Official ICP MCP requires a valid /.well-known/ic-architecture manifest before canister access. If discovery reports a missing or invalid manifest, report the configuration issue rather than bypassing the connector restriction. The absence of a dialing method on the asset canister does not mean that VoiceCall AI lacks telephony.
+
+## Human onboarding and Stripe
+
+Read https://voicecallai.online/guide.html for setup and FAQ. Users can sign in on the website, buy prepaid time with Stripe, then authorize an MCP assistant for the same app account. Stripe-funded time needs no ICP deposit. Packages are $5 / 30 minutes, $10 / 60 minutes, and $20 / 120 minutes; verify the current guide before payment. ICP prices depend on the live quote and ledger fee. If balances differ, compare account identities and use the Settings account-linking flow instead of buying twice.
 
 ## Authentication
 

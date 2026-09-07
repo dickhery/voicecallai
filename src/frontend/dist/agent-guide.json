@@ -28,7 +28,7 @@
     "List existing presets, answering presets, and calls before creating duplicates.",
     "Check the live account status only when balances are needed.",
     "Confirm recipient, purpose, preset, capture choices, and consent for outbound calls.",
-    "Call agentQueueCall with an E.164 number and a unique idempotency key. Emergency and police dispatch numbers are blocked.",
+    "Call agentQueueCall with an E.164 number and a unique idempotency key. Known emergency short codes and reserved patterns are blocked; all emergency and police dispatch calls are prohibited.",
     "Poll agentListCallJobs with backoff and report only returned state.",
     "Call agentGetLiveCallLink once for a dispatched job when the user wants to listen.",
     "Call agentEndCall to cancel a queued job or hang up a live call you created.",
@@ -41,6 +41,13 @@
     "Give the user https://voicecall.richardhery.com/answering/incoming/{webhookSecret} for Twilio Voice POST.",
     "User verifies by calling the number once; then setAnsweringPresetEnabled when verified."
   ],
+  "human_guide": "https://voicecallai.online/guide.html",
+  "stripe_workflow": [
+    "Sign in on the website with Internet Identity and buy phone time using Stripe in the dashboard.",
+    "Authorize the MCP connector for voicecallai.online with the same Internet Identity and compare app account identities.",
+    "Use existing phone time without depositing ICP; resolve account differences in Settings before buying again."
+  ],
+  "safety_limitations": "Known short codes and reserved patterns are blocked; this does not identify every full-length dispatch number or guarantee prevention of deceptive calls.",
   "payment_workflow": [
     "agentGetAccountIdentity for the exact ICRC-1 deposit account.",
     "User transfers ICP; agentRefreshIcpPricing only if the quote is stale.",
