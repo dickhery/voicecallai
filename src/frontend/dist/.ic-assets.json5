@@ -37,6 +37,15 @@
     "ignore": false
   },
   {
+    "match": ".well-known/ic-architecture",
+    "headers": {
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": "public, max-age=300",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "ignore": false
+  },
+  {
     "match": ".well-known/ii-derivation-origin",
     "headers": {
       "Access-Control-Allow-Origin": "*",

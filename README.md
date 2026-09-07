@@ -943,3 +943,19 @@ Server changes require updating/restarting the separate Windows voice bridge via
 `scripts/update-voicecall-service.ps1`; deploying IC assets alone does not update
 that process. The safety policy is enforced locally without storing a new copy
 of call content on-chain.
+
+### Official ICP MCP opt-in
+
+The operator explicitly accepted ICP MCP App Operator Terms v1.1 and authorized
+publication of `/.well-known/ic-architecture` in this project's Codex task on
+September 7, 2026. The frontend build generates the manifest from the selected
+ICP environment's committed canister mapping, declaring only this app's frontend
+and backend. The extensionless file is served as JSON with cross-origin reads
+and five-minute caching. `pnpm verify:agent-discovery` validates its schema and
+production IDs alongside the other discovery files.
+
+Publishing this manifest enables official MCP discovery and constitutes the
+operator's acceptance of https://internetcomputer.org/icp-mcp/app-operator-terms/.
+Removing it deactivates participation once MCP observes the change; termination
+of the agreement is separate and requires notice to DFINITY. No backend upgrade,
+new timers, or additional inter-canister calls are needed for this static file.

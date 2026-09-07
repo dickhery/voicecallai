@@ -1,0 +1,16 @@
+{
+  "version": "1.0.0",
+  "canisters": [
+    {
+      "id": "2nukr-cyaaa-aaaak-qy2ja-cai",
+      "name": "frontend",
+      "role": "Certified website and public agent documentation"
+    },
+    {
+      "id": "2dwhz-ziaaa-aaaak-qy2ia-cai",
+      "name": "backend",
+      "role": "Authenticated phone calls, prepaid billing, presets, and call history",
+      "description": "Read getApiDoc or getAgentGuide first. Updates can purchase phone time with deposited ICP or place real phone calls; require user authorization."
+    }
+  ]
+}

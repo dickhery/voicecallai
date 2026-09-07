@@ -13,6 +13,7 @@ const expectedFiles = [
   "guide.html",
   "sitemap.xml",
   ".well-known/ii-derivation-origin",
+  ".well-known/ic-architecture",
 ];
 const isRemoteTarget =
   target.startsWith("http://") || target.startsWith("https://");
@@ -22,7 +23,7 @@ function assertValid(relativePath, body, contentType = "") {
     throw new Error(`${relativePath} is empty.`);
   }
   if (isRemoteTarget) {
-    const expectedContentType = relativePath.endsWith(".json")
+    const expectedContentType = (relativePath.endsWith(".json") || relativePath === ".well-known/ic-architecture")
       ? "application/json"
       : relativePath.endsWith(".html") ? "text/html"
       : relativePath.endsWith(".xml") ? "application/xml" : "text/plain";
@@ -30,6 +31,17 @@ function assertValid(relativePath, body, contentType = "") {
       throw new Error(
         `${relativePath} returned ${contentType || "no content type"} instead of ${expectedContentType}.`,
       );
+    }
+  }
+  if (relativePath === ".well-known/ic-architecture") {
+    const manifest = JSON.parse(body);
+    const expected = JSON.parse(readFileSync(resolve(".icp/data/mappings/ic.ids.json"), "utf8"));
+    if (manifest.version !== "1.0.0" || !Array.isArray(manifest.canisters) ||
+        manifest.canisters.length !== 2 ||
+        !["frontend", "backend"].every((name) => manifest.canisters.some(
+          (entry) => entry.name === name && entry.id === expected[name] && entry.role,
+        ))) {
+      throw new Error("ICP MCP manifest must declare exactly the deployed frontend and backend with their roles.");
     }
   }
   if (relativePath === "guide.html" && (!body.includes("Stripe") || !body.includes("mcp.internetcomputer.org/mcp"))) {

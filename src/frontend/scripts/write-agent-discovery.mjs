@@ -349,6 +349,24 @@ const icAppManifest = {
 };
 
 const runtime = JSON.parse(readFileSync(resolve(frontendDirectory, "public/env.json"), "utf8"));
+// The operator accepted ICP MCP App Operator Terms v1.1 and explicitly
+// authorized publication. Declare only this application's own canisters.
+writeOutput(".well-known/ic-architecture", `${JSON.stringify({
+  version: "1.0.0",
+  canisters: [
+    {
+      id: canisters.frontend,
+      name: "frontend",
+      role: "Certified website and public agent documentation",
+    },
+    {
+      id: canisters.backend,
+      name: "backend",
+      role: "Authenticated phone calls, prepaid billing, presets, and call history",
+      description: "Read getApiDoc or getAgentGuide first. Updates can purchase phone time with deposited ICP or place real phone calls; require user authorization.",
+    },
+  ],
+}, null, 2)}\n`);
 const derivationOrigin = new URL(runtime.ii_derivation_origin).origin;
 writeOutput(".well-known/ii-derivation-origin", `${derivationOrigin}\n`);
 writeOutput("sitemap.xml", `<?xml version="1.0" encoding="UTF-8"?>

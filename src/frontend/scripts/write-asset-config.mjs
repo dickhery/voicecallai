@@ -88,6 +88,14 @@ const assetConfig = [
     ignore: false,
   },
   {
+    match: ".well-known/ic-architecture",
+    headers: {
+      ...machineReadableHeaders,
+      "Content-Type": "application/json; charset=utf-8",
+    },
+    ignore: false,
+  },
+  {
     match: ".well-known/ii-derivation-origin",
     headers: { ...machineReadableHeaders, "Content-Type": "text/plain; charset=utf-8" },
     ignore: false,
