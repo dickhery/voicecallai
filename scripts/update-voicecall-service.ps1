@@ -79,6 +79,9 @@ try {
   Push-Location $ServerDir
   try {
     node --check server.js
+    if ($LASTEXITCODE -ne 0) { throw "Server syntax check failed." }
+    pnpm test
+    if ($LASTEXITCODE -ne 0) { throw "Server regression tests failed." }
   } finally {
     Pop-Location
   }

@@ -959,3 +959,51 @@ operator's acceptance of https://internetcomputer.org/icp-mcp/app-operator-terms
 Removing it deactivates participation once MCP observes the change; termination
 of the agreement is separate and requires notice to DFINITY. No backend upgrade,
 new timers, or additional inter-canister calls are needed for this static file.
+
+
+### Automated phone menus / keypad support
+
+Outbound Grok sessions now expose `press_phone_keys` from their first response.
+The agent hears the menu directly (no extra transcription request), selects one
+announced option using the preset's goal, and listens for the next prompt. The
+outbound greeting-only override has been removed so it cannot force an
+introduction over an IVR; inbound greeting behavior is unchanged.
+
+`src/server/phone-keypad.js` generates dual-frequency DTMF as raw 8 kHz mu-law
+and sends it over the existing authenticated Twilio media stream. Twilio does
+not support outbound DTMF WebSocket events, so these are **in-band audio tones**,
+not a `dtmf` message. No stream reconnect, TwiML redirect, REST call, canister
+update, HTTPS outcall, or extra model session is needed. Per-keypress IC cycle
+usage is zero; normal connected call time and voice provider charges still apply.
+
+Each request allows 1–12 characters (`0–9`, `*`, `#`), with 200 ms tones and
+100 ms gaps. A call allows 20 sequences / 80 total digits, at least 1.5 seconds
+between requests, and at most two uses of the same sequence. Duplicate tool IDs
+are ignored and overlapping requests are rejected. Speech-start events do not
+clear pending tones; assistant audio is suppressed during keypad playback.
+Twilio's matching mark acknowledges playback, not IVR acceptance. An 8-second
+acknowledgement timeout reports uncertainty without an automatic retry.
+Function results leave the agent listening rather than triggering speech over
+the menu. Keypad arguments are not added to logs or canister state.
+
+Run `pnpm --dir src/server test` for signal-frequency, validation, lifecycle,
+budget, and voice-session regression tests. The frontend guide documents the
+feature; the Motoko backend and Candid interface are unchanged, so no backend
+upgrade or binding regeneration is required for this release.
+
+After pulling this revision on the Windows voice host, run
+`scripts/update-voicecall-service.ps1`. The `/health` JSON will include
+`phoneKeypad: { enabled: true, transport: "inband-pcmu", version: 1 }`.
+Deploying IC frontend assets alone does not activate server changes.
+
+Acceptance test on a number you control: configure a menu with customer service
+on 1, a nested option on 2, and voicemail on 3; call with a preset targeting each
+route. Confirm received digits and successful routing in the receiving system,
+that the agent waits for menus and the voicemail beep, and that a normal human
+answer still gets an introduction. Repeat with capture disabled. In-band tone
+recognition varies by carrier/IVR; if a system cannot detect audio tones, this
+implementation cannot guarantee navigation. Test the real route before relying
+on it. No paid live call was made as part of the automated tests.
+
+References: [xAI custom voice tools](https://docs.x.ai/developers/model-capabilities/audio/speech-to-speech)
+and [Twilio media messages](https://www.twilio.com/docs/voice/media-streams/websocket-messages).

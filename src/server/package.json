@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "test": "node --test *.test.js",
     "dev": "node --watch server.js",
     "start": "node server.js",
     "check:identity": "node scripts/check-ic-server-identity.mjs"
