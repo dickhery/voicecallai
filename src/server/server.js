@@ -1,6 +1,7 @@
 import { assertAllowedDestination, parseBlockedDestinations, FALSE_REPORT_RULES, findRuleViolation } from "./call-safety.js";
 import "dotenv/config";
 import { KEYPAD_TOOL, KEYPAD_INSTRUCTIONS, createPhoneKeypad } from "./phone-keypad.js";
+import { CALL_LIFECYCLE_TOOLS, CALL_LIFECYCLE_INSTRUCTIONS, CALL_LIFECYCLE_LIMITS, createCallLifecycle } from "./call-lifecycle.js";
 import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -126,7 +127,7 @@ const VOICE_PREVIEW_RATE_LIMIT_WINDOW_MS = Number(
 const VOICE_PREVIEW_RATE_LIMIT_MAX = Number(
   process.env.VOICE_PREVIEW_RATE_LIMIT_MAX || 12,
 );
-const SERVER_VERSION = "2026-09-07-agent-onboarding-call-safety";
+const SERVER_VERSION = "2026-09-20-voicemail-call-lifecycle";
 const BLOCKED_OUTBOUND_NUMBERS = parseBlockedDestinations(process.env.BLOCKED_OUTBOUND_NUMBERS);
 const VOICE_SESSION_START = "[[vc:session]]";
 const VOICE_SESSION_END = "[[/vc:session]]";
@@ -1426,7 +1427,7 @@ function buildXaiSessionUpdate(
   if (preset.toolsEnabled.webSearch) tools.push({ type: "web_search" });
   if (preset.toolsEnabled.xSearch) tools.push({ type: "x_search" });
   const callDirection = normalizeCallDirection(direction);
-  if (callDirection === CALL_DIRECTIONS.OUTBOUND) tools.push(KEYPAD_TOOL);
+  if (callDirection === CALL_DIRECTIONS.OUTBOUND) tools.push(KEYPAD_TOOL, ...CALL_LIFECYCLE_TOOLS);
   const openingLine =
     callDirection === CALL_DIRECTIONS.INBOUND
       ? normalizeInboundGreeting(preset.inboundGreeting) ||
@@ -1461,6 +1462,7 @@ function buildXaiSessionUpdate(
           systemPrompt: cleanPrompt,
         }),
         callDirection === CALL_DIRECTIONS.OUTBOUND ? KEYPAD_INSTRUCTIONS : "",
+        callDirection === CALL_DIRECTIONS.OUTBOUND ? CALL_LIFECYCLE_INSTRUCTIONS : "",
       );
 
   const idleTimeoutMs = normalizeIdleTimeoutMs(voiceSession.idleTimeoutMs);
@@ -1489,7 +1491,8 @@ function buildXaiSessionUpdate(
       threshold: clamp(preset.turnDetection.threshold, 0.1, 0.9),
       silence_duration_ms: clamp(preset.turnDetection.silenceDurationMs, 0, 10000),
       prefix_padding_ms: clamp(preset.turnDetection.prefixPaddingMs, 0, 10000),
-      ...(idleTimeoutMs ? { idle_timeout_ms: idleTimeoutMs } : {}),
+      // Outbound re-engagement is bounded by the bridge's VAD watchdog.
+      ...(idleTimeoutMs && callDirection !== CALL_DIRECTIONS.OUTBOUND ? { idle_timeout_ms: idleTimeoutMs } : {}),
     },
     audio: {
       input: audioInput,
@@ -1719,6 +1722,11 @@ async function endSessionForGoodbyeLoop(session) {
     reservationId: session.reservationId || null,
     goodbyeUtteranceCount: session.goodbyeUtteranceCount || 0,
   });
+
+  if (session.callLifecycle) {
+    session.callLifecycle.endAfterPlayback("goodbye_loop_threshold");
+    return;
+  }
 
   try {
     if (session.callSid && twilioClient) {
@@ -3674,6 +3682,7 @@ app.get("/health", async (req, res) => {
   res.json({
     ok: true,
     phoneKeypad: { enabled: true, transport: "inband-pcmu", version: 1 },
+    callLifecycle: { enabled: true, version: 1, ...CALL_LIFECYCLE_LIMITS },
     ready:
       setupIssues.length === 0 &&
       xaiConfigured &&
@@ -4750,11 +4759,27 @@ mediaWss.on("connection", (twilioWs, request) => {
   let suppressKeypadResponseAudio = false;
   const keypad = createPhoneKeypad({
     ready: () => !closed && session?.direction === CALL_DIRECTIONS.OUTBOUND &&
-      !session.billingStoppedAt && Boolean(streamSid) &&
+      !session.billingStoppedAt && !lifecycle.ending && Boolean(streamSid) &&
       isWebSocketOpen(twilioWs) && isWebSocketOpen(xaiWs),
     sendTwilio: (payload) => sendToTwilio({ ...payload, streamSid }),
     sendXai: (payload) => {
       if (isWebSocketOpen(xaiWs)) xaiWs.send(JSON.stringify(payload));
+    },
+  });
+  const lifecycle = createCallLifecycle({
+    ready: () => !closed && session?.direction === CALL_DIRECTIONS.OUTBOUND &&
+      !session.finished && !session.billingStoppedAt && Boolean(streamSid) &&
+      isWebSocketOpen(twilioWs) && isWebSocketOpen(xaiWs),
+    busy: () => keypad.busy,
+    sendXai: (payload) => {
+      if (isWebSocketOpen(xaiWs)) xaiWs.send(JSON.stringify(payload));
+    },
+    sendMark: (name) => sendToTwilio({ event: "mark", streamSid, mark: { name } }),
+    endCall: (reason) => {
+      log("info", "Ending outbound call from lifecycle controller", { sessionId: session?.id, reason });
+      endSessionFromRemoteRequest(session, reason).catch((error) => {
+        log("error", "Unable to finalize lifecycle call end", { sessionId: session?.id, error: error.message });
+      });
     },
   });
 
@@ -4762,11 +4787,13 @@ mediaWss.on("connection", (twilioWs, request) => {
     if (closed) return;
     closed = true;
     keypad.close();
+    lifecycle.close();
     if (xaiWs && xaiWs.readyState === WebSocket.OPEN) xaiWs.close();
     if (twilioWs.readyState === WebSocket.OPEN) twilioWs.close();
   }
 
   function sendToTwilio(payload) {
+    if (payload.event === "clear") lifecycle.clear();
     if (twilioWs.readyState === WebSocket.OPEN) {
       twilioWs.send(JSON.stringify(payload));
     }
@@ -4925,6 +4952,7 @@ mediaWss.on("connection", (twilioWs, request) => {
       // Outbound calls need the goal and keypad from the first heard menu.
       // Keep the greeting-only phase for inbound answering.
       const outbound = session.direction === CALL_DIRECTIONS.OUTBOUND;
+      if (outbound) lifecycle.start();
       session.fullInstructionsApplied = outbound;
       session.openingTurnSent = outbound;
       xaiWs.send(
@@ -4964,6 +4992,7 @@ mediaWss.on("connection", (twilioWs, request) => {
       }
 
       if (event.type === "response.function_call_arguments.done") {
+        if (lifecycle.handle(event)) return;
         if (event.name === KEYPAD_TOOL.name) {
           suppressKeypadResponseAudio = true;
           keypad.handle(event);
@@ -4973,6 +5002,7 @@ mediaWss.on("connection", (twilioWs, request) => {
 
       if (event.type === "response.output_audio.delta" && event.delta && streamSid) {
         if (keypad.busy || suppressKeypadResponseAudio) return;
+        lifecycle.audio(event.delta);
         if (session.metrics) {
           session.metrics.assistantAudioChunks += 1;
           session.metrics.firstAssistantAudioAt ||= Date.now();
@@ -4994,6 +5024,7 @@ mediaWss.on("connection", (twilioWs, request) => {
       }
 
       if (event.type === "response.created") {
+        lifecycle.responseCreated();
         suppressKeypadResponseAudio = false;
         const direction = normalizeCallDirection(session.direction);
         if (session.openingCanceledByCaller && isWebSocketOpen(xaiWs)) {
@@ -5056,6 +5087,7 @@ mediaWss.on("connection", (twilioWs, request) => {
             !responseId ||
             session.openingResponseId === responseId);
         session.xaiResponseInProgress = false;
+        lifecycle.responseDone(event.response?.status);
         if (completedOpening) {
           applyFullSessionInstructions("opening_response_done");
         } else if (session.fullInstructionsApplied && !suppressKeypadResponseAudio && !keypad.busy) {
@@ -5070,6 +5102,7 @@ mediaWss.on("connection", (twilioWs, request) => {
       }
 
       if (event.type === "input_audio_buffer.speech_started" && streamSid) {
+        lifecycle.speechStarted();
         if (session.saveTranscript && session.permissionConfirmed) {
           session.awaitingCallerTranscript = true;
         }
@@ -5089,6 +5122,11 @@ mediaWss.on("connection", (twilioWs, request) => {
         }
         // A menu may keep talking while tones play. Do not truncate a keypress.
         if (!keypad.busy) sendToTwilio({ event: "clear", streamSid });
+        return;
+      }
+
+      if (event.type === "input_audio_buffer.speech_stopped") {
+        lifecycle.speechStopped();
         return;
       }
 
@@ -5130,6 +5168,7 @@ mediaWss.on("connection", (twilioWs, request) => {
 
     xaiWs.on("close", () => {
       keypad.close();
+      lifecycle.close();
       log("info", "xAI WebSocket closed", {
         sessionId: session?.id,
         streamSid,
@@ -5184,6 +5223,7 @@ mediaWss.on("connection", (twilioWs, request) => {
       }
       session.twilioWs = twilioWs;
       session.phoneKeypad = keypad;
+      if (session.direction === CALL_DIRECTIONS.OUTBOUND) session.callLifecycle = lifecycle;
       session.streamSid = streamSid;
       markBillingActivity(session, "lastStreamEventAt");
       if (session.metrics) session.metrics.streamStartedAt ||= Date.now();
@@ -5217,6 +5257,7 @@ mediaWss.on("connection", (twilioWs, request) => {
 
     if (data.event === "mark") {
       keypad.onMark(data.mark?.name);
+      lifecycle.onMark(data.mark?.name);
       return;
     }
 
@@ -5248,6 +5289,7 @@ mediaWss.on("connection", (twilioWs, request) => {
 
   twilioWs.on("close", () => {
     keypad.close();
+    lifecycle.close();
     if (xaiWs && xaiWs.readyState === WebSocket.OPEN) xaiWs.close();
     if (session?.twilioWs === twilioWs) session.twilioWs = null;
     if (session) {

@@ -1007,3 +1007,53 @@ on it. No paid live call was made as part of the automated tests.
 
 References: [xAI custom voice tools](https://docs.x.ai/developers/model-capabilities/audio/speech-to-speech)
 and [Twilio media messages](https://www.twilio.com/docs/voice/media-streams/websocket-messages).
+
+## Voicemail and silent outbound calls
+
+The voice bridge supplies `set_call_state` and `end_call` to every outbound
+session, including existing saved presets and MCP-dispatched calls. No preset
+migration is required. Inbound answering retains its existing behavior.
+
+xAI identifies the line from the audio it already receives: a live person,
+menu/hold, voicemail greeting, or voicemail recording cue. It waits for the
+greeting and beep, leaves one short message using supplied facts, and requests
+hangup. A completed spoken response in the voicemail-recording state also
+triggers hangup if the model omits `end_call`. Full/unavailable mailboxes can
+be ended without speaking. This is model-based recognition, not a guarantee
+that a remote mailbox recorded the message; silence alone is not voicemail.
+
+The bridge waits for the final Twilio playback mark, not just xAI's generation
+completion. If a mark is lost, PCMU audio duration plus a 3-second grace provides
+a fallback. An ending call has a 60-second maximum drain wait. Caller barge-in
+cancels a pending hangup, and acknowledgments of cleared audio cannot count as
+delivered speech. Canceled/failed responses do not count as completed messages.
+
+Outbound xAI idle re-engagement is replaced by a local VAD watchdog. After 20
+seconds without remote speech it requests at most one check-in; at 45 seconds
+it starts hangup. Assistant speech does not reset this deadline. Menus/hold get
+180 seconds of silence without check-ins. Recognized voicemail gets a 90-second
+overall deadline, including its greeting; reporting the same state cannot
+extend it. Returning to a live human clears that voicemail deadline. These
+deadlines allow the playback drain described above before disconnecting.
+The existing paid-time cap and media-loss safeguards remain in force.
+
+All detection state and timers live in Node memory. There are no new canister
+timers, writes, HTTPS outcalls, transcript requirements, or paid Twilio AMD
+requests. Normal call finalization/debit is reused once at hangup. Runtime
+limits and `callLifecycle.version: 1` are exposed in `/health`.
+
+Deployment: sync the updated frontend guide to the IC, then update the separate
+Windows voice host with `scripts/update-voicecall-service.ps1`. Confirm its
+`/health` reports `serverVersion: 2026-09-20-voicemail-call-lifecycle` and
+`callLifecycle.enabled: true`. IC deployment alone cannot activate bridge code.
+
+Run `pnpm --dir src/server test` for deterministic silence, voicemail, playback,
+interruption, tool validation, and actual bridge-handler regression tests.
+Before relying on recognition, test a number you control with a normal greeting
+and beep, long greeting, full mailbox, silent answer, nested IVR/hold, and a live
+person interrupting a farewell. Repeat with recording/transcripts disabled.
+Check that the message finishes before disconnect and the paid reservation
+settles once. Automated tests do not place paid phone calls.
+
+Protocol references: [xAI Voice API events](https://docs.x.ai/developers/rest-api-reference/inference/voice)
+and [Twilio playback marks and clears](https://www.twilio.com/docs/voice/media-streams/websocket-messages).

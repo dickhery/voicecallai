@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { EventEmitter } from "node:events";
 import { createPhoneKeypad, makeKeypadAudio, KEYPAD_TOOL, KEYPAD_INSTRUCTIONS } from "./phone-keypad.js";
+import { createCallLifecycle, CALL_LIFECYCLE_TOOLS, CALL_LIFECYCLE_INSTRUCTIONS } from "./call-lifecycle.js";
 
 function harness(overrides = {}) {
   const sent = [], results = [], timers = new Map();
@@ -106,13 +107,14 @@ test("production session builder exposes keypad only on full outbound sessions",
   const start = source.indexOf("function buildXaiSessionUpdate(");
   const end = source.indexOf("function wantsForceOpening", start);
   const context = vm.createContext({
-    KEYPAD_TOOL, KEYPAD_INSTRUCTIONS, CALL_DIRECTIONS: { OUTBOUND: "outbound", INBOUND: "inbound" },
+    KEYPAD_TOOL, KEYPAD_INSTRUCTIONS, CALL_LIFECYCLE_TOOLS, CALL_LIFECYCLE_INSTRUCTIONS,
+    CALL_DIRECTIONS: { OUTBOUND: "outbound", INBOUND: "inbound" },
     extractVoiceSessionOptions: () => ({ cleanPrompt: "Call customer service", options: {} }),
     normalizeCallDirection: x => x, normalizeInboundGreeting: x => x,
     normalizeOptionalInstructionText: x => x, buildSafeInstructions: (...x) => x.join("\n"),
     buildOpeningOnlySessionInstructions: () => "Greeting", buildVoiceStyleInstructions: () => "Style",
     buildNaturalVoiceInstructions: x => x, buildCallDirectionInstructions: () => "Direction",
-    normalizeIdleTimeoutMs: () => null, normalizeKeyterms: () => [],
+    normalizeIdleTimeoutMs: () => 14000, normalizeKeyterms: () => [],
     normalizeSpeechSpeed: () => 1, normalizeReasoningEffort: () => "high",
     clamp: x => x, XAI_SESSION_RESUMPTION: false, process: { env: {} },
   });
@@ -121,6 +123,12 @@ test("production session builder exposes keypad only on full outbound sessions",
   const outbound = context.buildXaiSessionUpdate(preset).session;
   assert.ok(outbound.tools.some(x => x.name === "press_phone_keys"));
   assert.ok(outbound.instructions.includes(KEYPAD_INSTRUCTIONS));
+  assert.ok(outbound.instructions.includes(CALL_LIFECYCLE_INSTRUCTIONS));
+  assert.ok(outbound.tools.some(x => x.name === "end_call"));
+  assert.ok(outbound.tools.some(x => x.name === "set_call_state"));
+  assert.equal(outbound.turn_detection.idle_timeout_ms, undefined);
+  assert.equal(outbound.audio.input.transcription, undefined);
+  assert.equal(context.buildXaiSessionUpdate(preset, { direction: "inbound" }).session.turn_detection.idle_timeout_ms, 14000);
   for (const options of [{ direction: "inbound" }, { openingOnly: true }]) {
     assert.equal(context.buildXaiSessionUpdate(preset, options).session.tools.length, 0);
   }
@@ -141,9 +149,10 @@ test("real bridge event handlers navigate the first menu and protect tones from 
   }
   const mediaWss = new EventEmitter();
   const session = { id: "test", direction: "outbound", mediaToken: "secret", preset: {} };
+  const ended = [];
   const noop = () => {};
   const context = vm.createContext({
-    mediaWss, WebSocket: Socket, createPhoneKeypad, KEYPAD_TOOL,
+    mediaWss, WebSocket: Socket, createPhoneKeypad, createCallLifecycle, KEYPAD_TOOL,
     CALL_DIRECTIONS: { OUTBOUND: "outbound", INBOUND: "inbound" },
     callSessions: new Map([["test", session]]),
     isWebSocketOpen: ws => ws?.readyState === 1, safeTokenEqual: (a,b) => a === b,
@@ -154,6 +163,7 @@ test("real bridge event handlers navigate the first menu and protect tones from 
     getXaiResponseId: e => e.response?.id, getLatestTranscriptText: () => "", noteGoodbyeUtterance: noop,
     broadcastMonitorAudio: noop, appendBridgeRecordingAudio: noop, STREAM_MARK_PREFIX: "xai-audio",
     scheduleFinishPaidSession: noop,
+    endSessionFromRemoteRequest: async (session, reason) => ended.push({ session, reason }),
   });
   vm.runInContext(source.slice(start, end), context);
   const phone = new Socket(); mediaWss.emit("connection", phone, { socket: {} });
@@ -177,5 +187,13 @@ test("real bridge event handlers navigate the first menu and protect tones from 
   emitXai({ type: "response.created", response: { id: "r2" } });
   emitXai({ type: "response.output_audio.delta", delta: "human-greeting" });
   assert.equal(phone.sent[3].media.payload, "human-greeting");
+  emitXai({ type: "response.function_call_arguments.done", name: "end_call", call_id: "end1", arguments: '{"reason":"conversation_complete"}' });
+  assert.equal(ended.length, 0);
+  emitXai({ type: "response.done", response: { id: "r2", status: "completed" } });
+  assert.equal(ended.length, 0);
+  emitPhone({ event: "mark", mark: phone.sent.at(-1).mark });
+  assert.equal(ended.length, 1);
+  assert.equal(ended[0].reason, "conversation_complete");
+  assert.equal(ended[0].session, session);
   phone.close();
 });
