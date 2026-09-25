@@ -584,6 +584,8 @@ type AgentCallJob =
    error: opt text;
    expiresAt: int;
    id: text;
+   liveAudioNote: opt text;
+   liveAudioUrl: opt text;
    presetId: nat;
    recipientPhone: text;
    reservationId: text;

@@ -537,6 +537,23 @@ mixin (
     };
   };
 
+  /// Copies a stored listen URL onto the job the agent already receives.
+  /// Query-only and update callers share this; it does not allocate or call out.
+  private func withLiveAudio(job : AgentTypes.AgentCallJob) : AgentTypes.AgentCallJob {
+    switch (liveCallLinks.get(job.id)) {
+      case (?link) {
+        if (link.expiresAt > Time.now()) {
+          {
+            job with
+            liveAudioUrl = ?link.url;
+            liveAudioNote = ?link.note;
+          };
+        } else { job };
+      };
+      case null { job };
+    };
+  };
+
   /// Reserves prepaid phone time and queues a call for the external voice
   /// bridge. It never exposes Twilio/xAI secrets or the reservation token.
   public shared ({ caller }) func agentQueueCall(
@@ -551,7 +568,7 @@ mixin (
       case null {};
     };
     switch (AgentLib.getCallJobByIdempotency(agentState, account, input.idempotencyKey)) {
-      case (?existing) { return #ok(AgentLib.toCallJob(existing)) };
+      case (?existing) { return #ok(withLiveAudio(AgentLib.toCallJob(existing))) };
       case null {};
     };
     if (not ConfigLib.isE164(input.recipientPhone)) {
@@ -618,7 +635,7 @@ mixin (
     try {
       let callToken = await agentRandomCallToken();
       switch (AgentLib.getCallJobByIdempotency(agentState, account, input.idempotencyKey)) {
-        case (?existing) { #ok(AgentLib.toCallJob(existing)) };
+        case (?existing) { #ok(withLiveAudio(AgentLib.toCallJob(existing))) };
         case null {
           let callRecord = CallsLib.createCallRecord(
             callsState,
@@ -661,7 +678,7 @@ mixin (
                 "Queued MCP agent call job " # job.id # " for call " # callRecord.id.toText() # " owner PID " # account.toText(),
                 ?callRecord.id,
               );
-              #ok(AgentLib.toCallJob(job));
+              #ok(withLiveAudio(AgentLib.toCallJob(job)));
             };
           };
         };
@@ -681,7 +698,9 @@ mixin (
   /// Lists the authenticated principal's recent MCP-created call jobs.
   public query ({ caller }) func agentListCallJobs() : async [AgentTypes.AgentCallJob] {
     requireAgent(caller);
-    AgentLib.listCallJobsForUser(agentState, agentAccountOf(caller));
+    AgentLib.listCallJobsForUser(agentState, agentAccountOf(caller)).map(
+      func job = withLiveAudio(job),
+    );
   };
 
   /// Returns a listen-only HTTPS page for an active MCP-created call. The
@@ -765,7 +784,7 @@ mixin (
           case (#queued) {
             if (agentCancelQueuedCallInternal(jobId, caller)) {
               switch (AgentLib.getCallJob(agentState, jobId)) {
-                case (?updated) { return #ok(AgentLib.toCallJob(updated)) };
+                case (?updated) { return #ok(withLiveAudio(AgentLib.toCallJob(updated))) };
                 case null {
                   return #err(agentError("CALL_JOB_NOT_FOUND", "Call job not found after cancel.", true, caller));
                 };
@@ -776,7 +795,7 @@ mixin (
           case (#claimed) {
             if (agentCancelQueuedCallInternal(jobId, caller)) {
               switch (AgentLib.getCallJob(agentState, jobId)) {
-                case (?updated) { return #ok(AgentLib.toCallJob(updated)) };
+                case (?updated) { return #ok(withLiveAudio(AgentLib.toCallJob(updated))) };
                 case null {
                   return #err(agentError("CALL_JOB_NOT_FOUND", "Call job not found after cancel.", true, caller));
                 };
@@ -793,7 +812,7 @@ mixin (
           case (#dispatched) {
             let endId = "job:" # jobId;
             switch (CallsLib.getPendingCallEnd(callEndState, endId)) {
-              case (?_) { return #ok(AgentLib.toCallJob(job)) };
+              case (?_) { return #ok(withLiveAudio(AgentLib.toCallJob(job))) };
               case null {};
             };
             ignore CallsLib.requestCallEnd(
@@ -811,7 +830,7 @@ mixin (
               "Queued remote hang-up for MCP call job " # jobId,
               ?job.callId,
             );
-            #ok(AgentLib.toCallJob(job));
+            #ok(withLiveAudio(AgentLib.toCallJob(job)));
           };
         };
       };
@@ -911,7 +930,7 @@ mixin (
                 callId = job.callId;
                 url;
                 expiresAt = Time.now() + LIVE_AUDIO_LINK_TTL_NS;
-                note = "Listen-only live audio. The link stops working when the call ends and may be invalidated by a backend or voice-server upgrade.";
+                note = "Show this listen-only URL to the user now. It stops working when the call ends and may be invalidated by a backend or voice-server upgrade.";
               });
             };
             case null {};

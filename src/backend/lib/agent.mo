@@ -249,7 +249,7 @@ module {
       callWorkflow = [
         "Check agentGetAccountStatus once when a live balance is needed. If available phone time is low, tell the user the exact ICP package prices before purchasing.",
         "Create or select a call preset, confirm the recipient, purpose, preset, capture choices, and consent, then call agentQueueCall. If the result is EMERGENCY_NUMBER_BLOCKED, stop and tell the user to use a local phone for emergency or police dispatch numbers. Agents do not need separate Twilio or xAI tools: the off-chain voice bridge securely claims the job and places the call.",
-        "Poll agentListCallJobs after about 10 seconds, then back off to 20 and 30 seconds while waiting. Once a job is dispatched, call agentGetLiveCallLink once if the user wants to hear the call. Use agentGetCallArtifacts after completion for the transcript and a signed audio URL when capture was enabled.",
+        "Poll agentListCallJobs after about 10 seconds, then back off to 20 and 30 seconds while waiting. As soon as a job includes liveAudioUrl, put that exact HTTPS URL in your reply so the user can listen. Do not wait for them to ask and do not replace it with a promise to fetch it later. If status is dispatched and liveAudioUrl is empty, call agentGetLiveCallLink once and present its url the same way. Use agentGetCallArtifacts after completion for the transcript and a signed audio URL when capture was enabled.",
         "To stop a live or queued call you created, call agentEndCall with the job ID. Queued jobs cancel immediately; dispatched calls are hung up by the voice bridge within about 15 seconds. Prefer this over leaving farewell loops running.",
         "Report queued, dispatched, in-progress, or completed according to returned state. Never claim a call was placed or completed without supporting job or call-record state.",
       ];
@@ -275,7 +275,7 @@ module {
         "Confirm the recipient, purpose, preset, and capture choices with the user before placing a call.",
         "For answering, confirm the Twilio number belongs to the user and that they understand callers will reach an AI.",
         "Do not enable transcript or audio capture without the user's confirmation that applicable participant consent requirements are satisfied.",
-        "Only request or share a live-listen link when the authorized user asks, and remind them to satisfy applicable participant notice or consent requirements.",
+        "When a call response includes liveAudioUrl, show that exact listen-only URL to the authorized user immediately. Remind them it stops working when the call ends. Do not post it in a public channel.",
         "Do not use the app for threats, harassment, fraud, credential theft, unlawful impersonation, swatting, or other harmful activity.",
         "Never place or retry outbound calls to emergency services, crisis lines, or non-emergency police dispatch numbers. If agentQueueCall returns EMERGENCY_NUMBER_BLOCKED, do not try a rewritten form of the same number.",
         "Phone numbers, webhook secrets, transcripts, live-listen links, and recording links are sensitive. Reveal them only in the authorized user's chat.",
@@ -289,7 +289,7 @@ module {
         capability("Manage outbound presets", "createPreset", "Create, list, update, duplicate, and delete outbound call presets.", true),
         capability("Queue a call", "agentQueueCall", "Reserve phone time and queue an idempotent outbound voice-server job.", true),
         capability("End a call", "agentEndCall", "Cancel a queued MCP call or request hang-up of a dispatched/in-progress call you created.", true),
-        capability("Listen to a live call", "agentGetLiveCallLink", "Return a short-lived, listen-only HTTPS page for an active MCP-created call.", false),
+        capability("Listen to a live call", "agentGetLiveCallLink", "Return the listen-only URL if agentListCallJobs did not already include liveAudioUrl. Present whichever URL you receive without waiting to be asked.", false),
         capability("Call history", "listMyCalls", "Read the authenticated principal's bounded call history.", false),
         capability("Call artifacts", "agentGetCallArtifacts", "Return a completed call's transcript and signed recording URL when available.", false),
         capability("List answering presets", "listMyAnsweringPresets", "List the user's inbound AI answering presets and verification status.", false),
@@ -586,6 +586,8 @@ module {
       callSid = job.callSid;
       serverSessionId = job.serverSessionId;
       error = job.error;
+      liveAudioUrl = null;
+      liveAudioNote = null;
     };
   };
 

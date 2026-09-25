@@ -211,6 +211,10 @@ module {
     callSid : ?Text;
     serverSessionId : ?Text;
     error : ?Text;
+    /// Present only after the voice bridge has started the call. Agents should
+    /// show this listen-only URL to the user without waiting to be asked.
+    liveAudioUrl : ?Text;
+    liveAudioNote : ?Text;
   };
 
   public type StoredAgentCallJob = {

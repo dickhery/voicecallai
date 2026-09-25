@@ -99,7 +99,7 @@ Without an authenticated MCP connector or another authorized IC client, an assis
 3. Confirm recipient, purpose, preset, transcript choice, recording choice, and applicable consent with the user. Include any extension as "extension 104" and the callback number to leave if voicemail answers. The voice bridge presses announced menu keys, waits for the beep before leaving one message, and does this without extra ICP cycles. Deploying the website does not update the separate voice bridge.
 4. Call agentQueueCall with an E.164 phone number, preset ID, capture options, and a unique idempotency key. Known emergency short codes and reserved number patterns are rejected (EMERGENCY_NUMBER_BLOCKED); the filter cannot identify every full-length dispatch number.
 5. Track the durable job with agentListCallJobs. Start at a 10-second polling interval and back off to 30 seconds. Never claim the call completed merely because it was queued.
-6. When the job is dispatched, call agentGetLiveCallLink once if the user wants to hear the active call. Give them the returned HTTPS URL; it is listen-only and stops working when the call ends.
+6. On each agentListCallJobs result, if a job includes liveAudioUrl, give the user that exact HTTPS URL in the same reply. Do not wait for them to ask. If the job is dispatched and liveAudioUrl is empty, call agentGetLiveCallLink once and present its url the same way. The page is listen-only and stops working when the call ends.
 7. To stop a queued or live call you created, call agentEndCall with the job ID. Queued jobs cancel immediately; dispatched calls are hung up by the voice bridge within about 15 seconds. Prefer this over leaving farewell loops running.
 8. After completion, use agentGetCallArtifacts when the user requested and consented to saved artifacts.
 
@@ -128,7 +128,7 @@ The off-chain VoiceCall AI bridge securely claims queued jobs and connects Twili
 - An idempotency key identifies one intended call, purchase, or transfer. Reuse it only to retry that exact action.
 - Never buy phone time, transfer ICP, edit a preset, queue a call, or create answering without the user's authorization.
 - consentConfirmed means the user affirmed that applicable participant consent requirements are satisfied. It is required when saving a transcript or audio.
-- Share a live-listen link only when the authorized user asks and remind them to follow applicable participant notice or consent rules.
+- When a call job includes liveAudioUrl, show that exact listen-only URL to the authorized user immediately. Do not wait to be asked, and do not post it in a public channel.
 - Never use the app for threats, harassment, fraud, credential theft, unlawful impersonation, swatting, or other harmful activity.
 - Never place or retry outbound calls to emergency services, crisis lines, or non-emergency police dispatch numbers (911, 112, 999, 101, 311, 988, and similar). If agentQueueCall returns EMERGENCY_NUMBER_BLOCKED, stop and tell the user to use a local phone.
 - Treat phone numbers, webhook secrets, transcripts, live-listen links, recording links, account identifiers, and balances as sensitive.
@@ -174,7 +174,7 @@ Always specify that linked identity and the mainnet environment on later calls. 
 7. Generate one unique idempotency key for this intended call and call agentQueueCall.
 8. Read agentListCallJobs after about 10 seconds. Back off to 20 and then 30 seconds while waiting. Use listMyCalls or getCallRecord for the resulting call record.
 9. Say "queued", "dispatched", "in progress", or "completed" according to returned state. Do not report a successful live call without supporting state.
-10. If the user wants to hear a dispatched call, call agentGetLiveCallLink once and present its listen-only HTTPS URL. Treat the link as sensitive and do not poll this method.
+10. As soon as agentListCallJobs returns liveAudioUrl, paste that exact URL into the reply. If the job is dispatched and the field is empty, call agentGetLiveCallLink once and present its url the same way. Do not wait for the user to ask. Treat the link as sensitive and do not poll the listen method.
 11. If the user asks to hang up, or a call is stuck exchanging goodbyes, call agentEndCall with the job ID. Do not leave prepaid time burning on a finished conversation.
 12. Call agentGetCallArtifacts only after completion and only when the user is authorized to see the artifacts.
 
@@ -224,7 +224,7 @@ Static discovery files and public canister queries are intentionally small. Avoi
 
 ## Safety
 
-Obtain user approval before external effects. Share a live-listen link only when the authorized user asks and remind them to follow applicable participant notice or consent rules. Do not use VoiceCall AI for threats, harassment, fraud, credential theft, unlawful impersonation, swatting, or other harmful activity. Never place outbound calls to emergency services, crisis lines, or non-emergency police dispatch numbers; if agentQueueCall returns EMERGENCY_NUMBER_BLOCKED, stop. Protect phone numbers, webhook secrets, transcripts, live-listen links, signed recording links, balances, principals, and deposit accounts.
+Obtain user approval before external effects. When a call response includes a live-listen URL, show that exact URL to the authorized user immediately and remind them it is listen-only. Do not use VoiceCall AI for threats, harassment, fraud, credential theft, unlawful impersonation, swatting, or other harmful activity. Never place outbound calls to emergency services, crisis lines, or non-emergency police dispatch numbers; if agentQueueCall returns EMERGENCY_NUMBER_BLOCKED, stop. Protect phone numbers, webhook secrets, transcripts, live-listen links, signed recording links, balances, principals, and deposit accounts.
 `;
 
 const structuredGuide = {
@@ -260,8 +260,8 @@ const structuredGuide = {
     "Check the live account status only when balances are needed.",
     "Confirm recipient, purpose, preset, capture choices, and consent for outbound calls.",
     "Call agentQueueCall with an E.164 number and a unique idempotency key. Known emergency short codes and reserved patterns are blocked; all emergency and police dispatch calls are prohibited.",
-    "Poll agentListCallJobs with backoff and report only returned state.",
-    "Call agentGetLiveCallLink once for a dispatched job when the user wants to listen.",
+    "Poll agentListCallJobs with backoff. As soon as liveAudioUrl is present, give that exact URL to the user without waiting to be asked.",
+    "If a dispatched job has no liveAudioUrl, call agentGetLiveCallLink once and present its url the same way.",
     "Call agentEndCall to cancel a queued job or hang up a live call you created.",
     "Retrieve artifacts after completion only when capture was approved.",
   ],

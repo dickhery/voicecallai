@@ -34,11 +34,11 @@ Always specify that linked identity and the mainnet environment on later calls. 
 3. Call listMyPresets and listMyCalls before creating duplicates.
 4. Use agentGetAccountStatus only when a current ICP or phone-time balance is relevant. Do not repeatedly refresh it.
 5. If a preset is needed, call createPreset with user-approved instructions. The voice bridge treats the preset as private source material and asks xAI Voice to speak naturally rather than read it verbatim.
-6. Confirm the exact recipient in E.164 format, call purpose, preset, transcript choice, recording choice, and consent status.
+6. Confirm the exact recipient in E.164 format, call purpose, preset, transcript choice, recording choice, and consent status. If the call may hit a menu or voicemail, include the extension as "extension 104" and the callback number the agent may leave. The voice bridge handles keypad entry and the beep without extra ICP cycles.
 7. Generate one unique idempotency key for this intended call and call agentQueueCall.
 8. Read agentListCallJobs after about 10 seconds. Back off to 20 and then 30 seconds while waiting. Use listMyCalls or getCallRecord for the resulting call record.
 9. Say "queued", "dispatched", "in progress", or "completed" according to returned state. Do not report a successful live call without supporting state.
-10. If the user wants to hear a dispatched call, call agentGetLiveCallLink once and present its listen-only HTTPS URL. Treat the link as sensitive and do not poll this method.
+10. As soon as agentListCallJobs returns liveAudioUrl, paste that exact URL into the reply. If the job is dispatched and the field is empty, call agentGetLiveCallLink once and present its url the same way. Do not wait for the user to ask. Treat the link as sensitive and do not poll the listen method.
 11. If the user asks to hang up, or a call is stuck exchanging goodbyes, call agentEndCall with the job ID. Do not leave prepaid time burning on a finished conversation.
 12. Call agentGetCallArtifacts only after completion and only when the user is authorized to see the artifacts.
 
@@ -88,4 +88,4 @@ Static discovery files and public canister queries are intentionally small. Avoi
 
 ## Safety
 
-Obtain user approval before external effects. Share a live-listen link only when the authorized user asks and remind them to follow applicable participant notice or consent rules. Do not use VoiceCall AI for threats, harassment, fraud, credential theft, unlawful impersonation, swatting, or other harmful activity. Never place outbound calls to emergency services, crisis lines, or non-emergency police dispatch numbers; if agentQueueCall returns EMERGENCY_NUMBER_BLOCKED, stop. Protect phone numbers, webhook secrets, transcripts, live-listen links, signed recording links, balances, principals, and deposit accounts.
+Obtain user approval before external effects. When a call response includes a live-listen URL, show that exact URL to the authorized user immediately and remind them it is listen-only. Do not use VoiceCall AI for threats, harassment, fraud, credential theft, unlawful impersonation, swatting, or other harmful activity. Never place outbound calls to emergency services, crisis lines, or non-emergency police dispatch numbers; if agentQueueCall returns EMERGENCY_NUMBER_BLOCKED, stop. Protect phone numbers, webhook secrets, transcripts, live-listen links, signed recording links, balances, principals, and deposit accounts.

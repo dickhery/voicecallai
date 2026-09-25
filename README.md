@@ -199,8 +199,10 @@ The agent should discover and call these methods in order:
    voice server. It requires E.164 phone number, preset ID, capture choices,
    consent confirmation when saving artifacts, and an idempotency key.
 7. `agentListCallJobs` and `listMyCalls` — track dispatch and call state.
-8. `agentGetLiveCallLink` — after dispatch, returns a short-lived,
-   listen-only HTTPS page that the agent can give the authorized user.
+   Once the voice bridge starts the call, each job includes `liveAudioUrl`.
+   Agents are instructed to show that URL in the same reply.
+8. `agentGetLiveCallLink` — fallback query for the same short-lived,
+   listen-only page when a dispatched job does not yet include the URL.
 9. `agentGetCallArtifacts` — after completion, returns approved transcripts
    and a signed recording link.
 

@@ -193,6 +193,8 @@ const AgentCallJob = IDL.Record({
   callSid: IDL.Opt(IDL.Text),
   serverSessionId: IDL.Opt(IDL.Text),
   error: IDL.Opt(IDL.Text),
+  liveAudioUrl: IDL.Opt(IDL.Text),
+  liveAudioNote: IDL.Opt(IDL.Text),
 });
 
 const AgentCallDispatch = IDL.Record({

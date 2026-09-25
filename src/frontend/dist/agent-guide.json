@@ -29,8 +29,8 @@
     "Check the live account status only when balances are needed.",
     "Confirm recipient, purpose, preset, capture choices, and consent for outbound calls.",
     "Call agentQueueCall with an E.164 number and a unique idempotency key. Known emergency short codes and reserved patterns are blocked; all emergency and police dispatch calls are prohibited.",
-    "Poll agentListCallJobs with backoff and report only returned state.",
-    "Call agentGetLiveCallLink once for a dispatched job when the user wants to listen.",
+    "Poll agentListCallJobs with backoff. As soon as liveAudioUrl is present, give that exact URL to the user without waiting to be asked.",
+    "If a dispatched job has no liveAudioUrl, call agentGetLiveCallLink once and present its url the same way.",
     "Call agentEndCall to cancel a queued job or hang up a live call you created.",
     "Retrieve artifacts after completion only when capture was approved."
   ],
