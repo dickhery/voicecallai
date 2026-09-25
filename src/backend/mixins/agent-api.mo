@@ -32,6 +32,7 @@ mixin (
   callEndState : CallsLib.CallEndState,
   configState : ConfigLib.State,
   callPresetVoiceIds : ConfigLib.VoiceIdState,
+  termsState : AgentLib.TermsState,
 ) {
   private func agentAccountOf(caller : Principal) : Principal {
     IdentityLib.resolve(identityState, caller);
@@ -177,6 +178,28 @@ mixin (
     let account = agentAccountOf(caller);
     ignore AgentLib.register(agentState, caller, displayName);
     #ok(AgentLib.register(agentState, account, displayName));
+  };
+
+  private func requireSignedIn(caller : Principal) {
+    if (caller.isAnonymous()) {
+      Runtime.trap("Unauthorized: authenticate through Internet Identity");
+    };
+    if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
+      Runtime.trap("Unauthorized: must be logged in");
+    };
+  };
+
+  /// One query, no ledger or XRC call. The web app and MCP agents share it.
+  public query ({ caller }) func agentGetTermsStatus() : async AgentTypes.TermsStatus {
+    requireSignedIn(caller);
+    AgentLib.termsStatus(termsState, agentAccountOf(caller));
+  };
+
+  /// One map write when acceptance is missing, expired, or for an older version.
+  public shared ({ caller }) func agentAcceptTerms() : async AgentTypes.TermsStatus {
+    requireSignedIn(caller);
+    ignore AgentLib.acceptTerms(termsState, agentAccountOf(caller));
+    AgentLib.termsStatus(termsState, agentAccountOf(caller));
   };
 
   /// Agent-readable onboarding, workflow, consent rules, current packages,
@@ -583,6 +606,14 @@ mixin (
       return #err(agentError(
         "EMERGENCY_NUMBER_BLOCKED",
         EmergencyLib.BLOCKED_MESSAGE,
+        false,
+        account,
+      ));
+    };
+    if (not AgentLib.termsCurrent(termsState, account)) {
+      return #err(agentError(
+        "TERMS_ACCEPTANCE_REQUIRED",
+        "Accept the current VoiceCall AI terms before placing a call. Call agentGetTermsStatus, show the text, and call agentAcceptTerms only after the user agrees.",
         false,
         account,
       ));

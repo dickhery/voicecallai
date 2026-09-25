@@ -173,6 +173,20 @@ module {
 
   /// Kept for stable-memory layout compatibility with canisters that already
   /// upgraded past cbb93ff. Not used by this restored cbb93ff-behavior build.
+  public type TermsAcceptance = {
+    version : Text;
+    acceptedAt : Int;
+  };
+
+  public type TermsStatus = {
+    version : Text;
+    text : Text;
+    acceptedVersion : ?Text;
+    acceptedAt : ?Int;
+    expiresAt : ?Int;
+    current : Bool;
+  };
+
   public type AgentConsentGrant = {
     placeCalls : Bool;
     saveTranscript : Bool;

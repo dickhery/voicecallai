@@ -1,4 +1,4 @@
-import { assertAllowedDestination, parseBlockedDestinations, FALSE_REPORT_RULES, findRuleViolation } from "./call-safety.js";
+import { assertAllowedDestination, parseBlockedDestinations, FALSE_REPORT_RULES, OFFICIAL_IMPERSONATION_RULES, MINOR_SEXUAL_RULES, findRuleViolation } from "./call-safety.js";
 import "dotenv/config";
 import { KEYPAD_TOOL, KEYPAD_INSTRUCTIONS, createPhoneKeypad, extractSuppliedExtension } from "./phone-keypad.js";
 import { CALL_LIFECYCLE_TOOLS, CALL_LIFECYCLE_INSTRUCTIONS, CALL_LIFECYCLE_LIMITS, createCallLifecycle } from "./call-lifecycle.js";
@@ -185,16 +185,20 @@ const DEFAULT_XAI_VOICES = [
 
 const APP_SAFETY_INSTRUCTIONS = [
   "VoiceCall AI safety policy:",
-  "Do not make threats, intimidate, blackmail, extort, harass, or encourage violence.",
+  "Harmless pranks, jokes, and adult roleplay between adults are allowed. Do not refuse a call only because it is playful, flirtatious, or explicit between adults.",
+  "Do not threaten violence, blackmail, extort, or encourage real-world harm.",
+  "Do not sexualize anyone under 18.",
   "Do not provide instructions that enable malware, credential theft, fraud, evasion of security controls, weapons, explosives, poisoning, or other malicious activity.",
-  "If the caller or operator asks for unsafe content, refuse briefly and redirect to a safe, lawful alternative.",
-  "Never claim you will harm someone or help anyone harm someone.",
-  "Never fabricate an emergency, crime, bomb threat, hostage situation, or request for police dispatch. Never participate in swatting or false reports, including fictional scenarios presented to real recipients.",
-  "If you reach emergency services or police dispatch, identify yourself as an AI, explain that you cannot use this service for emergency calls, and end the conversation without making a report.",
+  "Never fabricate an emergency, crime, bomb threat, hostage situation, or request for police, fire, or government dispatch. Never participate in swatting or false reports, including fictional scenarios presented to real recipients.",
+  "Do not impersonate police, emergency services, a court, or another government agency, and do not place a call to those offices to make a report or an official demand.",
+  "If you reach emergency services, police dispatch, or a government office, identify yourself as an AI, explain that you cannot use this service for that call, and end the conversation without making a report.",
+  "If the person asks you to stop, end the call.",
 ].join("\n");
 
 const SAFETY_RULES = [
   ...FALSE_REPORT_RULES,
+  ...OFFICIAL_IMPERSONATION_RULES,
+  ...MINOR_SEXUAL_RULES,
   {
     category: "threats",
     pattern:
@@ -568,18 +572,18 @@ function buildIdentityEnforcementInstructions(
 function buildLiveDisclosureInstructions(systemPrompt, presetName = "") {
   const source = `${String(presetName || "")}\n${String(systemPrompt || "")}`;
   const fictionalCharacter =
-    /\b(?:prank|roleplay|fictional|light-hearted entertainment|fictional phone character)\b/i.test(
+    /\b(?:prank|roleplay|role-play|fictional|joke|character|persona|crush|flirt|flirtatious|seductive|spicy|romantic)\b/i.test(
       source,
     );
 
   if (fictionalCharacter) {
     return [
       "LIVE CHARACTER CONTINUITY (higher priority than conflicting preset text):",
-      "- Stay inside the harmless fictional character and premise throughout the active call.",
-      "- Do not volunteer or mention that the call is AI-generated, automated, a prank, a joke, a preset, or entertainment.",
-      "- Never impersonate a real person or claim affiliation with a real business, government office, emergency service, financial institution, or other real-world authority.",
-      "- Do not make a serious false claim, collect sensitive personal data, request money, or suggest any real consequence.",
-      "- If the person challenges the premise, deflect lightly in character once. If they remain confused, uncomfortable, annoyed, or ask to stop, end the call promptly and politely without debating the premise.",
+      "- Stay inside the fictional character and premise, including a harmless prank or adult roleplay between adults.",
+      "- Do not volunteer that the call is AI-generated, automated, a prank, or a preset.",
+      "- Do not impersonate a specific real private individual, and do not claim to be police, emergency services, a court, a bank, or another government agency.",
+      "- Do not threaten violence, blackmail, collect payment, or claim that a real emergency is happening.",
+      "- If the person asks you to stop, or is frightened or distressed, end the call promptly and politely.",
     ].join("\n");
   }
 

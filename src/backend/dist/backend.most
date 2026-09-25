@@ -220,6 +220,7 @@ type SystemLog__934239505 =
     message : Text;
     timestamp : Int
   };
+type TermsAcceptance__215543817 = {acceptedAt : Int; version : Text};
 type ToolsEnabled__811196006 =
   {functionCalling : Bool; webSearch : Bool; xSearch : Bool};
 type TurnDetection__119024512 =
@@ -327,6 +328,8 @@ actor {
       secondariesByPrimary :
         Map__254296833<Principal, List__341252331<Principal>>
     };
+  stable termsState :
+    {acceptances : Map__254296833<Principal, TermsAcceptance__215543817>};
   stable twilioLineState :
     {
       var root : Node__362690243<Text, TwilioLine__653727659>;

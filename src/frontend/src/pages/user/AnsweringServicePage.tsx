@@ -651,12 +651,10 @@ function AnsweringPresetCard({
       return;
     }
     if (
-      (cleanInput.captureOptions.saveTranscript ||
-        cleanInput.captureOptions.recordAudio) &&
-      !cleanInput.captureOptions.consentConfirmed
+      cleanInput.captureOptions.saveTranscript ||
+      cleanInput.captureOptions.recordAudio
     ) {
-      toast.error("Confirm caller consent before saving call artifacts");
-      return;
+      cleanInput.captureOptions.consentConfirmed = true;
     }
     const result = await updatePreset.mutateAsync({
       id: preset.id,
@@ -999,28 +997,11 @@ function AnsweringPresetCard({
             </div>
 
             {draftCaptureRequested && (
-              <div className="flex items-start gap-3 rounded-md border border-border bg-muted/20 p-3">
-                <Checkbox
-                  id={`answering-preset-consent-${preset.id}`}
-                  checked={draftPreset.captureOptions.consentConfirmed}
-                  onCheckedChange={(checked) =>
-                    setDraftPreset({
-                      ...draftPreset,
-                      captureOptions: {
-                        ...draftPreset.captureOptions,
-                        consentConfirmed: checked === true,
-                      },
-                    })
-                  }
-                />
-                <Label
-                  htmlFor={`answering-preset-consent-${preset.id}`}
-                  className="text-sm leading-relaxed text-muted-foreground"
-                >
-                  I confirm this preset will only save recordings or transcripts
-                  where caller consent requirements are met.
-                </Label>
-              </div>
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                The terms you accepted explain that some places require every
+                person on the call to agree before a recording or transcript is
+                saved. You are responsible for that rule.
+              </p>
             )}
 
             <div className="flex items-center justify-between rounded-md border border-border p-3">
@@ -1113,12 +1094,10 @@ export default function AnsweringServicePage() {
       return;
     }
     if (
-      (cleanInput.captureOptions.saveTranscript ||
-        cleanInput.captureOptions.recordAudio) &&
-      !cleanInput.captureOptions.consentConfirmed
+      cleanInput.captureOptions.saveTranscript ||
+      cleanInput.captureOptions.recordAudio
     ) {
-      toast.error("Confirm caller consent before saving call artifacts");
-      return;
+      cleanInput.captureOptions.consentConfirmed = true;
     }
     const result = await createPreset.mutateAsync(cleanInput);
     if (result.__kind__ === "err") {
@@ -1355,28 +1334,11 @@ export default function AnsweringServicePage() {
                       </div>
                     </div>
                     {captureRequested && (
-                      <div className="flex items-start gap-3 rounded-md border border-border bg-muted/20 p-3">
-                        <Checkbox
-                          id="answering-consent"
-                          checked={input.captureOptions.consentConfirmed}
-                          onCheckedChange={(checked) =>
-                            setInput({
-                              ...input,
-                              captureOptions: {
-                                ...input.captureOptions,
-                                consentConfirmed: checked === true,
-                              },
-                            })
-                          }
-                        />
-                        <Label
-                          htmlFor="answering-consent"
-                          className="text-sm leading-relaxed text-muted-foreground"
-                        >
-                          I confirm this preset will only save recordings or
-                          transcripts where caller consent requirements are met.
-                        </Label>
-                      </div>
+                      <p className="text-sm leading-relaxed text-muted-foreground">
+                        The terms you accepted explain that some places require
+                        every person on the call to agree before a recording or
+                        transcript is saved. You are responsible for that rule.
+                      </p>
                     )}
                     <div className="flex items-center justify-between rounded-md border border-border p-3">
                       <Label htmlFor="answering-enable" className="text-sm">

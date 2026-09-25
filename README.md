@@ -182,7 +182,7 @@ needs to buy phone time, transfer ICP, edit presets, or place calls.
 
 The agent should discover and call these methods in order:
 
-1. `getAgentGuide` — public onboarding, consent rules, required call inputs,
+1. `getAgentGuide` — public onboarding, terms, required call inputs,
    current packages, and the rest of the agent API.
 2. `agentInitialize` — registers the authenticated app principal. Internet
    Identity for `voicecallai.online` (web app derivation origin) is the account
@@ -197,7 +197,8 @@ The agent should discover and call these methods in order:
    credits the same `$5 / $10 / $20` packages used by Stripe.
 6. `agentQueueCall` — reserves time and writes a durable job for the external
    voice server. It requires E.164 phone number, preset ID, capture choices,
-   consent confirmation when saving artifacts, and an idempotency key.
+   a current terms acceptance, and an idempotency key. Harmless pranks are
+   allowed. Emergency numbers, threats, and government impersonation stay blocked.
 7. `agentListCallJobs` and `listMyCalls` — track dispatch and call state.
    Once the voice bridge starts the call, each job includes `liveAudioUrl`.
    Agents are instructed to show that URL in the same reply.

@@ -24,6 +24,24 @@ export function assertAllowedDestination(phone, blocked = new Set()) {
   }
 }
 
+export const OFFICIAL_IMPERSONATION_RULES = [
+  {
+    category: 'official impersonation',
+    pattern: /\b(?:impersonate|pretend to be|pose as|act as|you are)\b.{0,60}\b(?:police|a cop|an officer|the fbi|the irs|the cia|ice|sheriff|a marshal|a judge|the court|a government official|911 dispatcher|emergency services)\b/gi,
+  },
+];
+
+export const MINOR_SEXUAL_RULES = [
+  {
+    category: 'sexual content involving minors',
+    pattern: /\b(?:child|children|minor|minors|underage|preteen|toddler|infant)\b.{0,50}\b(?:sex|sexual|nude|naked|porn|explicit)\b/gi,
+  },
+  {
+    category: 'sexual content involving minors',
+    pattern: /\b(?:[1-9]|1[0-7])\s*(?:year|yr)s?\s*old\b.{0,40}\b(?:sex|sexual|nude|naked|porn)\b/gi,
+  },
+];
+
 export const FALSE_REPORT_RULES = [
   { category: 'false emergency reports', pattern: /\b(?:swatting|swat)\b/gi },
   { category: 'false emergency reports', pattern: /\b(?:fake|false|fabricate|invent|pretend|hoax)\b.{0,100}\b(?:emergency|bomb|hostage|shooting|crime|police report|dispatch)\b/gi },

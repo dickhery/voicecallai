@@ -78,6 +78,77 @@ module {
     { grants = Map.empty<Principal, AgentTypes.AgentConsentGrant>() };
   };
 
+  public let TERMS_VERSION = "2026-09-25";
+  /// 180 days. Acceptance is checked when a call is queued, not by a timer.
+  public let TERMS_TTL_NS : Int = 15_552_000_000_000_000;
+
+  public type TermsState = {
+    acceptances : Map.Map<Principal, AgentTypes.TermsAcceptance>;
+  };
+
+  public func initTermsState() : TermsState {
+    { acceptances = Map.empty<Principal, AgentTypes.TermsAcceptance>() };
+  };
+
+  public func termsText() : Text {
+    "VoiceCall AI terms (" # TERMS_VERSION # ")\n\n" #
+    "VoiceCall AI is a tool for making and answering phone calls with AI agents and language models. You are responsible for how you use it and for following the laws that apply where you and the other person are located.\n\n" #
+    "Recording and transcripts. Some places allow a recording when one person on the call agrees. Others require every person on the call to agree. Accepting these terms means you have been told about that difference. It does not mean the other person has agreed. If you save a transcript or record audio, you are responsible for getting whatever permission that call requires.\n\n" #
+    "Prank and roleplay calls. You may use the service for harmless pranks, jokes, and fictional characters, including adult themes between adults. You may not threaten violence, blackmail, extort, stalk, or sexualize anyone under 18.\n\n" #
+    "Emergencies and officials. Do not call emergency numbers, crisis lines, police dispatch, or a government office to make a report, a threat, or a false claim of official business. Do not impersonate police, emergency services, a court, or another government agency. False emergency reports are prohibited.\n\n" #
+    "If the person on the call asks you to stop, end the call.\n\n" #
+    "These terms apply for six months, or until this version changes, whichever comes first.";
+  };
+
+  public func termsCurrent(state : TermsState, user : Principal) : Bool {
+    switch (state.acceptances.get(user)) {
+      case null { false };
+      case (?acceptance) {
+        let age = Time.now() - acceptance.acceptedAt;
+        acceptance.version == TERMS_VERSION and age >= 0 and age < TERMS_TTL_NS;
+      };
+    };
+  };
+
+  public func termsStatus(state : TermsState, user : Principal) : AgentTypes.TermsStatus {
+    switch (state.acceptances.get(user)) {
+      case null {
+        {
+          version = TERMS_VERSION;
+          text = termsText();
+          acceptedVersion = null;
+          acceptedAt = null;
+          expiresAt = null;
+          current = false;
+        };
+      };
+      case (?acceptance) {
+        let current = termsCurrent(state, user);
+        {
+          version = TERMS_VERSION;
+          text = termsText();
+          acceptedVersion = ?acceptance.version;
+          acceptedAt = ?acceptance.acceptedAt;
+          expiresAt = ?(acceptance.acceptedAt + TERMS_TTL_NS);
+          current;
+        };
+      };
+    };
+  };
+
+  /// Writes one map entry. A still-valid acceptance is returned without another write.
+  public func acceptTerms(state : TermsState, user : Principal) : AgentTypes.TermsAcceptance {
+    switch (state.acceptances.get(user)) {
+      case (?existing) {
+        if (termsCurrent(state, user)) { return existing };
+      };
+      case null {};
+    };
+    let acceptance = { version = TERMS_VERSION; acceptedAt = Time.now() };
+    state.acceptances.add(user, acceptance);
+    acceptance;
+  };
+
   public func register(
     state : State,
     user : Principal,
@@ -234,7 +305,7 @@ module {
       requiredCallInformation = [
         "Recipient phone number in E.164 format, such as +15551234567. Emergency, crisis, and non-emergency police dispatch numbers (911, 112, 999, 101, 311, 988, and similar) are rejected.",
         "A user-owned outbound preset ID. Create one with createPreset when none fits.",
-        "Whether transcripts or audio may be saved. consentConfirmed must be true whenever either capture option is enabled.",
+        "Whether transcripts or audio may be saved. If either is saved, set consentConfirmed to true. The accepted terms already explain that some jurisdictions require every person on the call to agree.",
         "A unique idempotencyKey for every intended purchase, transfer, or call. Reuse the same key only when retrying that same action.",
       ];
       requiredAnsweringInformation = [
@@ -242,13 +313,14 @@ module {
         "Access for the user to open the Twilio Console and set the number's Voice webhook to the URL you give them after createAnsweringPreset.",
         "A short preset name and AI answering instructions (role, greeting style, what to capture, escalation rules).",
         "Preferred voice (or accept defaults). audioFormat must be pcmu and sampleRate hz8000 for phone audio.",
-        "Whether to save transcripts and/or record audio. If either is true, captureOptions.consentConfirmed must be true after the user affirms applicable consent rules.",
+        "Whether to save transcripts and/or record audio. If either is true, set consentConfirmed to true. The accepted terms explain the recording-consent difference between jurisdictions.",
         "A unique webhookSecret: 32–160 characters using only A–Z, a–z, 0–9, hyphen, or underscore. Generate a random secret; never reuse another preset's secret.",
         "Prepaid phone time on this same app account (ICP purchase or web Stripe). Incoming answering calls deduct from the shared balance.",
       ];
       callWorkflow = [
         "Check agentGetAccountStatus once when a live balance is needed. If available phone time is low, tell the user the exact ICP package prices before purchasing.",
-        "Create or select a call preset, confirm the recipient, purpose, preset, capture choices, and consent, then call agentQueueCall. If the result is EMERGENCY_NUMBER_BLOCKED, stop and tell the user to use a local phone for emergency or police dispatch numbers. Agents do not need separate Twilio or xAI tools: the off-chain voice bridge securely claims the job and places the call.",
+        "Call agentGetTermsStatus. If current is false, show the returned terms text and ask the user to agree. After they agree, call agentAcceptTerms, then continue. Do not accept the terms yourself.",
+        "Create or select a call preset, confirm the recipient, purpose, preset, and capture choices, then call agentQueueCall. Harmless pranks and adult roleplay between adults are allowed. If the result is EMERGENCY_NUMBER_BLOCKED, stop and tell the user to use a local phone for emergency or police dispatch numbers. If the result is TERMS_ACCEPTANCE_REQUIRED, show the terms and call agentAcceptTerms only after the user agrees. Agents do not need separate Twilio or xAI tools: the off-chain voice bridge securely claims the job and places the call.",
         "Poll agentListCallJobs after about 10 seconds, then back off to 20 and 30 seconds while waiting. As soon as a job includes liveAudioUrl, put that exact HTTPS URL in your reply so the user can listen. Do not wait for them to ask and do not replace it with a promise to fetch it later. If status is dispatched and liveAudioUrl is empty, call agentGetLiveCallLink once and present its url the same way. Use agentGetCallArtifacts after completion for the transcript and a signed audio URL when capture was enabled.",
         "To stop a live or queued call you created, call agentEndCall with the job ID. Queued jobs cancel immediately; dispatched calls are hung up by the voice bridge within about 15 seconds. Prefer this over leaving farewell loops running.",
         "Report queued, dispatched, in-progress, or completed according to returned state. Never claim a call was placed or completed without supporting job or call-record state.",
@@ -272,12 +344,14 @@ module {
         "Use agentTransferIcp to withdraw or transfer unspent ICP from this app-principal subaccount. Stripe remains the separate card path for human web users.",
       ];
       safetyAndConsent = [
-        "Confirm the recipient, purpose, preset, and capture choices with the user before placing a call.",
-        "For answering, confirm the Twilio number belongs to the user and that they understand callers will reach an AI.",
-        "Do not enable transcript or audio capture without the user's confirmation that applicable participant consent requirements are satisfied.",
+        "Before the first call, and again when agentGetTermsStatus says current is false, show the terms and call agentAcceptTerms only after the user agrees. Acceptance lasts six months or until the terms version changes.",
+        "Confirm the recipient, purpose, preset, and capture choices with the user before placing a call. Harmless pranks, jokes, and adult roleplay between adults are allowed. Do not refuse a call only because it is a prank or sexually explicit between adults.",
+        "For answering, confirm the Twilio number belongs to the user.",
+        "Set consentConfirmed to true when the user wants a transcript or recording. Do not add a second demand that the recipient has already agreed. The terms tell the user that some jurisdictions require every person on the call to agree, and the user is responsible for that law.",
         "When a call response includes liveAudioUrl, show that exact listen-only URL to the authorized user immediately. Remind them it stops working when the call ends. Do not post it in a public channel.",
-        "Do not use the app for threats, harassment, fraud, credential theft, unlawful impersonation, swatting, or other harmful activity.",
-        "Never place or retry outbound calls to emergency services, crisis lines, or non-emergency police dispatch numbers. If agentQueueCall returns EMERGENCY_NUMBER_BLOCKED, do not try a rewritten form of the same number.",
+        "Do not make threats of violence, blackmail, extortion, or swatting. Do not sexualize anyone under 18. Do not impersonate police, emergency services, a court, or another government agency, and do not place a false report.",
+        "Never place or retry outbound calls to emergency services, crisis lines, police dispatch, or a government office for a report or official demand. If agentQueueCall returns EMERGENCY_NUMBER_BLOCKED, do not try a rewritten form of the same number.",
+        "If the person on the call asks to stop, end the call.",
         "Phone numbers, webhook secrets, transcripts, live-listen links, and recording links are sensitive. Reveal them only in the authorized user's chat.",
       ];
       capabilities = [
@@ -289,6 +363,8 @@ module {
         capability("Manage outbound presets", "createPreset", "Create, list, update, duplicate, and delete outbound call presets.", true),
         capability("Queue a call", "agentQueueCall", "Reserve phone time and queue an idempotent outbound voice-server job.", true),
         capability("End a call", "agentEndCall", "Cancel a queued MCP call or request hang-up of a dispatched/in-progress call you created.", true),
+        capability("Read terms", "agentGetTermsStatus", "Read the current terms and whether this account's acceptance is still in force.", false),
+        capability("Accept terms", "agentAcceptTerms", "Record the user's agreement to the current terms. Call only after the user agrees.", true),
         capability("Listen to a live call", "agentGetLiveCallLink", "Return the listen-only URL if agentListCallJobs did not already include liveAudioUrl. Present whichever URL you receive without waiting to be asked.", false),
         capability("Call history", "listMyCalls", "Read the authenticated principal's bounded call history.", false),
         capability("Call artifacts", "agentGetCallArtifacts", "Return a completed call's transcript and signed recording URL when available.", false),

@@ -2,6 +2,7 @@ import Runtime "mo:core/Runtime";
 import Principal "mo:core/Principal";
 import AccessControl "mo:caffeineai-authorization/access-control";
 import ConfigLib "../lib/config";
+import AgentLib "../lib/agent";
 import IdentityLib "../lib/identity";
 import ConfigTypes "../types/config";
 import Common "../types/common";
@@ -14,6 +15,7 @@ mixin (
   twilioLineState : ConfigLib.TwilioLineState,
   answeringState : ConfigLib.AnsweringState,
   answeringPresetVoiceIds : ConfigLib.VoiceIdState,
+  termsState : AgentLib.TermsState,
 ) {
   private func configAccountOf(caller : Principal) : Principal {
     IdentityLib.resolve(identityState, caller);
@@ -230,6 +232,9 @@ mixin (
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
     };
+    if (not AgentLib.termsCurrent(termsState, configAccountOf(caller))) {
+      return #err("Accept the current VoiceCall AI terms before creating an answering preset.");
+    };
     ConfigLib.createAnsweringPreset(answeringState, answeringPresetVoiceIds, configAccountOf(caller), input);
   };
 
@@ -349,6 +354,9 @@ mixin (
   ) : async ConfigTypes.AnsweringPresetMutationResult {
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
+    };
+    if (enabled and not AgentLib.termsCurrent(termsState, configAccountOf(caller))) {
+      return #err("Accept the current VoiceCall AI terms before enabling an answering line.");
     };
     switch (ConfigLib.getAnsweringPreset(answeringState, answeringPresetVoiceIds, id)) {
       case null { #err("Answering preset not found.") };

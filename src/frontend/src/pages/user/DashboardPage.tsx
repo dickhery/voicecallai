@@ -17,7 +17,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -635,8 +634,6 @@ export default function DashboardPage() {
   const [instructionDraft, setInstructionDraft] = useState("");
   const [saveTranscript, setSaveTranscript] = useState(false);
   const [recordAudio, setRecordAudio] = useState(false);
-  const [capturePermissionConfirmed, setCapturePermissionConfirmed] =
-    useState(false);
   const [confirmEndOpen, setConfirmEndOpen] = useState(false);
   const [presetLibraryOpen, setPresetLibraryOpen] = useState(false);
   const [presetLibraryView, setPresetLibraryView] = useState<
@@ -934,10 +931,6 @@ export default function DashboardPage() {
       setRecipientError("Enter a valid number, e.g. +15551234567");
       return;
     }
-    if (savesCallArtifacts && !capturePermissionConfirmed) {
-      toast.error("Confirm permission before saving call artifacts");
-      return;
-    }
     if (bridgeDown) {
       toast.error("Voice bridge is unavailable", {
         description: "Check the system status banner and try again shortly.",
@@ -949,7 +942,7 @@ export default function DashboardPage() {
     await voice.startCall(selectedPreset, cleaned, {
       saveTranscript,
       recordAudio,
-      permissionConfirmed: capturePermissionConfirmed,
+      permissionConfirmed: savesCallArtifacts,
     });
     setRecentPhones(loadRecentPhones());
     refetchBilling();
@@ -1656,26 +1649,11 @@ export default function DashboardPage() {
                     />
                   </div>
                   {savesCallArtifacts && (
-                    <div className="flex items-start gap-2 rounded-md bg-background/60 border border-border p-2 text-[11px] leading-relaxed text-muted-foreground">
-                      <Checkbox
-                        id="call-artifacts-permission"
-                        checked={capturePermissionConfirmed}
-                        onCheckedChange={(checked) =>
-                          setCapturePermissionConfirmed(checked === true)
-                        }
-                        disabled={isCallActive}
-                        data-ocid="dashboard.call_artifacts.permission_checkbox"
-                        className="mt-0.5"
-                      />
-                      <Label
-                        htmlFor="call-artifacts-permission"
-                        className="text-[11px] leading-relaxed text-muted-foreground"
-                      >
-                        I confirm I have permission to record or save this
-                        conversation, or that consent is not required where it
-                        takes place.
-                      </Label>
-                    </div>
+                    <p className="text-[11px] leading-relaxed text-muted-foreground">
+                      The terms you accepted explain that some places require
+                      every person on the call to agree before a recording or
+                      transcript is saved. You are responsible for that rule.
+                    </p>
                   )}
                 </div>
 
@@ -1687,8 +1665,7 @@ export default function DashboardPage() {
                     !selectedPresetId ||
                     Boolean(recipientError) ||
                     availableSeconds <= 0 ||
-                    bridgeDown ||
-                    (savesCallArtifacts && !capturePermissionConfirmed)
+                    bridgeDown
                   }
                   data-ocid="dashboard.call.submit_button"
                   className="w-full gap-2"

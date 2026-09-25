@@ -1,3 +1,4 @@
+import { TermsGate } from "@/components/TermsGate";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { useNavigate } from "@tanstack/react-router";
@@ -49,5 +50,5 @@ export function ProtectedRoute({
   if (!isAuthenticated) return null;
   if (requireAdmin && !isAdmin) return null;
 
-  return <>{children}</>;
+  return <TermsGate>{children}</TermsGate>;
 }

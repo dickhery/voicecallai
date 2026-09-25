@@ -10,6 +10,7 @@ import BillingLib "../lib/billing";
 import CallsLib "../lib/calls";
 import ConfigLib "../lib/config";
 import EmergencyLib "../lib/emergency";
+import AgentLib "../lib/agent";
 import IdentityLib "../lib/identity";
 import BillingTypes "../types/billing";
 import CallTypes "../types/calls";
@@ -23,6 +24,7 @@ mixin (
   callPresetVoiceIds : ConfigLib.VoiceIdState,
   answeringState : ConfigLib.AnsweringState,
   answeringPresetVoiceIds : ConfigLib.VoiceIdState,
+  termsState : AgentLib.TermsState,
 ) {
   let ANSWERING_PRESET_ID_OFFSET : Nat = 1_000_000_000;
 
@@ -168,6 +170,9 @@ mixin (
     };
     // Reject before Random.blob / call-record writes so blocked attempts
     // do not spend entropy or grow history.
+    if (not AgentLib.termsCurrent(termsState, account)) {
+      return #err("Accept the current VoiceCall AI terms before placing a call.");
+    };
     if (EmergencyLib.isBlockedDestination(input.recipientPhone)) {
       CallsLib.addSystemLog(
         callsState,

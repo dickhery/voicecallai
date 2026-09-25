@@ -47,6 +47,9 @@ shared ({ caller = installer }) persistent actor class Backend() = this {
   let callEndState = CallsLib.initCallEndState();
   let billingState = BillingLib.initState();
   let agentState = AgentLib.initState();
+  // Empty on upgrade. Acceptance is one map entry per account, checked on call
+  // queue, with no canister timer.
+  let termsState = AgentLib.initTermsState();
   // Retained for memory-compatible upgrade onto post-cbb93ff canisters.
   // Behavior matches cbb93ff; consent APIs are not exposed.
   let agentConsentState = AgentLib.initConsentState();
@@ -55,9 +58,9 @@ shared ({ caller = installer }) persistent actor class Backend() = this {
 
   // Domain mixins
   include IdentityApi(accessControlState, identityState, billingState);
-  include ConfigApi(accessControlState, identityState, configState, callPresetVoiceIds, twilioLineState, answeringState, answeringPresetVoiceIds);
+  include ConfigApi(accessControlState, identityState, configState, callPresetVoiceIds, twilioLineState, answeringState, answeringPresetVoiceIds, termsState);
   include CallsApi(accessControlState, identityState, callsState, answeringLiveState, callEndState, configState, callPresetVoiceIds, billingState);
-  include BillingApi(accessControlState, identityState, billingState, callsState, configState, callPresetVoiceIds, answeringState, answeringPresetVoiceIds);
+  include BillingApi(accessControlState, identityState, billingState, callsState, configState, callPresetVoiceIds, answeringState, answeringPresetVoiceIds, termsState);
   include AgentApi(
     Principal.fromActor(this),
     accessControlState,
@@ -68,6 +71,7 @@ shared ({ caller = installer }) persistent actor class Backend() = this {
     callEndState,
     configState,
     callPresetVoiceIds,
+    termsState,
   );
 
   // Keep the binding live so the Motoko compiler does not drop it.

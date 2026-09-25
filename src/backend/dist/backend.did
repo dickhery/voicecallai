@@ -42,6 +42,15 @@ type ToolsEnabled =
    webSearch: bool;
    xSearch: bool;
  };
+type TermsStatus = 
+ record {
+   acceptedAt: opt int;
+   acceptedVersion: opt text;
+   current: bool;
+   expiresAt: opt int;
+   "text": text;
+   version: text;
+ };
 type SystemLog = 
  record {
    callId: opt nat;
@@ -330,12 +339,14 @@ type Backend =
    adminListUserCalls: (userId: principal) -> (vec CallRecordPublic) query;
    adminSetIcpUsdRate: (rate: nat64, decimals: nat32, sourceTimestampSeconds:
     nat64) -> (IcpPricingResult);
+   agentAcceptTerms: () -> (TermsStatus);
    agentCancelQueuedCall: (jobId: text) -> (bool);
    agentEndCall: (jobId: text) -> (AgentCallResult);
    agentGetAccountIdentity: () -> (AgentAccount) query;
    agentGetAccountStatus: () -> (AgentAccountStatusResult);
    agentGetCallArtifacts: (callId: nat) -> (opt AgentCallArtifacts) query;
    agentGetLiveCallLink: (jobId: text) -> (opt AgentLiveCallLink) query;
+   agentGetTermsStatus: () -> (TermsStatus) query;
    agentInitialize: (displayName: text) -> (AgentInitializeResult);
    agentListCallJobs: () -> (vec AgentCallJob) query;
    agentPurchasePhoneTime: (packageId: text, idempotencyKey: text) ->

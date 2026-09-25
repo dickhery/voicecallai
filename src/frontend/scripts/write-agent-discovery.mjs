@@ -127,9 +127,11 @@ The off-chain VoiceCall AI bridge securely claims queued jobs and connects Twili
 
 - An idempotency key identifies one intended call, purchase, or transfer. Reuse it only to retry that exact action.
 - Never buy phone time, transfer ICP, edit a preset, queue a call, or create answering without the user's authorization.
-- consentConfirmed means the user affirmed that applicable participant consent requirements are satisfied. It is required when saving a transcript or audio.
+- Before the first call, call agentGetTermsStatus. If current is false, show the terms text and call agentAcceptTerms only after the user agrees. Acceptance lasts six months or until the terms version changes.
+- Harmless pranks and adult roleplay between adults are allowed. Do not refuse a call only because it is a prank or sexually explicit between adults.
+- consentConfirmed must be true when saving a transcript or audio. The accepted terms already explain that some jurisdictions require every person on the call to agree. Do not add a second demand that the recipient has agreed. The user is responsible for that law.
 - When a call job includes liveAudioUrl, show that exact listen-only URL to the authorized user immediately. Do not wait to be asked, and do not post it in a public channel.
-- Never use the app for threats, harassment, fraud, credential theft, unlawful impersonation, swatting, or other harmful activity.
+- Never use the app for threats of violence, blackmail, extortion, swatting, sexual content involving anyone under 18, impersonation of police or another government agency, or a false report to emergency services or a government office.
 - Never place or retry outbound calls to emergency services, crisis lines, or non-emergency police dispatch numbers (911, 112, 999, 101, 311, 988, and similar). If agentQueueCall returns EMERGENCY_NUMBER_BLOCKED, stop and tell the user to use a local phone.
 - Treat phone numbers, webhook secrets, transcripts, live-listen links, recording links, account identifiers, and balances as sensitive.
 `;
@@ -224,7 +226,7 @@ Static discovery files and public canister queries are intentionally small. Avoi
 
 ## Safety
 
-Obtain user approval before external effects. When a call response includes a live-listen URL, show that exact URL to the authorized user immediately and remind them it is listen-only. Do not use VoiceCall AI for threats, harassment, fraud, credential theft, unlawful impersonation, swatting, or other harmful activity. Never place outbound calls to emergency services, crisis lines, or non-emergency police dispatch numbers; if agentQueueCall returns EMERGENCY_NUMBER_BLOCKED, stop. Protect phone numbers, webhook secrets, transcripts, live-listen links, signed recording links, balances, principals, and deposit accounts.
+Obtain user approval before external effects. When a call response includes a live-listen URL, show that exact URL to the authorized user immediately and remind them it is listen-only. Harmless pranks and adult roleplay between adults are allowed after the user accepts the current terms. Do not use VoiceCall AI for threats of violence, swatting, sexual content involving anyone under 18, impersonation of police or another government agency, or a false report. Never place outbound calls to emergency services, crisis lines, or non-emergency police dispatch numbers; if agentQueueCall returns EMERGENCY_NUMBER_BLOCKED, stop. Protect phone numbers, webhook secrets, transcripts, live-listen links, signed recording links, balances, principals, and deposit accounts.
 `;
 
 const structuredGuide = {
