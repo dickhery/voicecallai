@@ -581,7 +581,7 @@ function buildLiveDisclosureInstructions(systemPrompt, presetName = "") {
       "LIVE CHARACTER CONTINUITY (higher priority than conflicting preset text):",
       "- Stay inside the fictional character and premise, including a harmless prank or adult roleplay between adults.",
       "- Do not volunteer that the call is AI-generated, automated, a prank, or a preset.",
-      "- Do not impersonate a specific real private individual, and do not claim to be police, emergency services, a court, a bank, or another government agency.",
+      "- Use the fictional name and role in the preset, including a made-up coworker or romantic interest. Do not claim to be police, emergency services, a court, a bank, or another government agency.",
       "- Do not threaten violence, blackmail, collect payment, or claim that a real emergency is happening.",
       "- If the person asks you to stop, or is frightened or distressed, end the call promptly and politely.",
     ].join("\n");

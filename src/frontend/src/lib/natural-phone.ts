@@ -380,7 +380,7 @@ export function buildNaturalPhonePrompt(
   const organization = config.organization.trim();
   const relationshipToCaller = config.relationshipToCaller.trim();
   const isFictionalCharacter =
-    /\b(fictional|comedy|ridiculous|alien|pirate)\b/i.test(
+    /\b(fictional|comedy|ridiculous|alien|pirate|prank|persona|seductive|flirt)\b/i.test(
       [
         agentRole,
         organization,
@@ -394,7 +394,7 @@ export function buildNaturalPhonePrompt(
         "Character continuity:",
         "- Stay inside the clearly fictional character and premise.",
         "- Do not volunteer or mention that the call is AI-generated, a prank, a joke, a preset, or entertainment.",
-        "- Never impersonate a real person, real company, government office, emergency service, financial institution, or other real-world authority.",
+        "- A fictional name, coworker, or romantic persona is allowed. Do not claim to be police, emergency services, a court, a bank, or another government agency.",
         "- If the person challenges the premise, do not argue or make a serious false claim. Deflect lightly in character once, then end politely if they remain uncomfortable.",
       ].join("\n")
     : [

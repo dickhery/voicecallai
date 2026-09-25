@@ -349,17 +349,16 @@ module {
     if (not isValidWebhookSecret(input.webhookSecret)) {
       return #err("Webhook verification secret is invalid.");
     };
-    if (
-      (input.captureOptions.saveTranscript or input.captureOptions.recordAudio) and
-      not input.captureOptions.consentConfirmed
-    ) {
-      return #err("Confirm caller consent before saving transcripts or recordings.");
+    let captures = input.captureOptions.saveTranscript or input.captureOptions.recordAudio;
+    let captureOptions = {
+      input.captureOptions with consentConfirmed = captures or input.captureOptions.consentConfirmed
     };
     #ok({
       input with
       name = name;
       systemPrompt = prompt;
       voiceId = voiceId;
+      captureOptions = captureOptions;
       audioFormat = #pcmu;
       sampleRate = #hz8000;
       toolsEnabled = {

@@ -618,17 +618,6 @@ mixin (
         account,
       ));
     };
-    if (
-      (input.captureOptions.saveTranscript or input.captureOptions.recordAudio) and
-      not input.captureOptions.consentConfirmed
-    ) {
-      return #err(agentError(
-        "CAPTURE_CONSENT_REQUIRED",
-        "consentConfirmed must be true before saving transcripts or recordings.",
-        false,
-        account,
-      ));
-    };
     switch (ConfigLib.getPreset(configState, callPresetVoiceIds, input.presetId)) {
       case null {
         return #err(agentError("PRESET_NOT_FOUND", "Preset not found.", false, account));

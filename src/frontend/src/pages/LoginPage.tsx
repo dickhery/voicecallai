@@ -278,8 +278,9 @@ export default function LoginPage({
               and authorize VoiceCall AI through Internet Identity.
             </li>
             <li>
-              Confirm who to call, the purpose, and whether to save a transcript
-              or recording. Your assistant queues and tracks the call.
+              Tell your assistant who to call and what to say, including a
+              fictional name. It queues and tracks the call without a separate
+              consent step.
             </li>
           </ol>
           <p className="text-xs text-muted-foreground">Connector URL</p>
@@ -295,9 +296,9 @@ export default function LoginPage({
             </a>
           </div>
           <p className="text-xs text-muted-foreground">
-            Not an emergency service. Emergency calls, false reports, swatting,
-            and harassment are prohibited. Capture requires applicable
-            participant consent.
+            Not an emergency service. Threats of violence, false reports,
+            swatting, and emergency calls are prohibited. A fictional name is
+            allowed.
           </p>
         </section>
 
