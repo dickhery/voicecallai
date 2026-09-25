@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { EventEmitter } from "node:events";
-import { createPhoneKeypad, makeKeypadAudio, KEYPAD_TOOL, KEYPAD_INSTRUCTIONS } from "./phone-keypad.js";
+import { createPhoneKeypad, makeKeypadAudio, extractSuppliedExtension, KEYPAD_TOOL, KEYPAD_INSTRUCTIONS } from "./phone-keypad.js";
 import { createCallLifecycle, CALL_LIFECYCLE_TOOLS, CALL_LIFECYCLE_INSTRUCTIONS } from "./call-lifecycle.js";
 
 function harness(overrides = {}) {
@@ -31,9 +31,10 @@ test("all twelve keys decode into the correct two frequencies with silence gaps"
   const frequencies = [697, 770, 852, 941, 1209, 1336, 1477];
   for (const [index, key] of [...keys].entries()) {
     const audio = makeKeypadAudio(key);
-    assert.equal(audio.length, 2400);
-    assert.ok(audio.subarray(1600).every(byte => byte === 255));
-    const samples = [...audio.subarray(80, 1520)].map(decode);
+    assert.equal(audio.length, 4800);
+    assert.ok(audio.subarray(0, 1600).every(byte => byte === 255));
+    assert.ok(audio.subarray(3600).every(byte => byte === 255));
+    const samples = [...audio.subarray(1680, 3520)].map(decode);
     const powers = frequencies.map(f => {
       let real = 0, imag = 0;
       samples.forEach((sample, i) => { real += sample * Math.cos(2 * Math.PI * f * i / 8000); imag += sample * Math.sin(2 * Math.PI * f * i / 8000); });
@@ -42,9 +43,9 @@ test("all twelve keys decode into the correct two frequencies with silence gaps"
     const selected = [Math.floor(index / 3), 4 + index % 3];
     const unwanted = Math.max(...powers.filter((_, i) => !selected.includes(i)));
     selected.forEach(i => assert.ok(powers[i] > unwanted * 100, `${key}: frequency ${frequencies[i]}`));
-    assert.ok(Math.max(...samples.map(Math.abs)) < 13000);
+    assert.ok(Math.max(...samples.map(Math.abs)) < 18000);
   }
-  assert.equal(makeKeypadAudio("123#").length, 9600);
+  assert.equal(makeKeypadAudio("123#").length, 14400);
 });
 
 test("invalid arguments never emit media", () => {
@@ -62,7 +63,7 @@ test("invalid arguments never emit media", () => {
 test("plays once, waits for the matching mark, and leaves the agent listening", () => {
   const h = harness(); h.press("12#", "same");
   assert.deepEqual(h.sent.map(x => x.event), ["clear", "media", "mark"]);
-  assert.equal(Buffer.from(h.sent[1].media.payload, "base64").length, 7200);
+  assert.equal(Buffer.from(h.sent[1].media.payload, "base64").length, 11200);
   assert.equal(h.results.length, 0);
   h.press("12#", "same");
   assert.equal(h.sent.length, 3);
@@ -100,6 +101,30 @@ test("per-call press and total digit budgets stop runaway navigation", () => {
   const digits = harness();
   for (let i = 0; i < 8; i++) { digits.press(String(i).repeat(12)); if (digits.keypad.busy) digits.ack(); digits.advance(); }
   assert.equal(digits.sent.length, 18);
+});
+
+test("signaling digits avoid in-band audio and can fall back once", () => {
+  const signaled = [];
+  const h = harness({ requestSignaling: (digits) => { signaled.push(digits); return true; } });
+  h.press("104#");
+  assert.deepEqual(signaled, ["104#"]);
+  assert.equal(h.sent.length, 0);
+  h.keypad.onSignalingResult("played");
+  assert.equal(JSON.parse(h.results[0].item.output).status, "played");
+  const fallback = harness({ requestSignaling: () => false });
+  fallback.press("9");
+  assert.deepEqual(fallback.sent.map((event) => event.event), ["clear", "media", "mark"]);
+  const failed = harness({ requestSignaling: () => true });
+  failed.press("3");
+  failed.keypad.onSignalingResult("failed");
+  assert.deepEqual(failed.sent.map((event) => event.event), ["clear", "media", "mark"]);
+});
+
+test("extension hints stay limited to supplied extension digits", () => {
+  assert.equal(extractSuppliedExtension("Ask for extension 104, then billing."), "104");
+  assert.equal(extractSuppliedExtension("The warranty extension is 2 weeks."), "");
+  assert.equal(extractSuppliedExtension("No keypad details here."), "");
+  assert.match(KEYPAD_INSTRUCTIONS, /extension/i);
 });
 
 test("production session builder exposes keypad only on full outbound sessions", () => {
@@ -184,6 +209,7 @@ test("real bridge event handlers navigate the first menu and protect tones from 
   emitXai({ type: "response.done", response: { id: "r1" } });
   emitPhone({ event: "mark", mark: phone.sent[2].mark });
   assert.equal(JSON.parse(xai.sent.at(-1).item.output).status, "played");
+  emitXai({ type: "response.function_call_arguments.done", name: "set_call_state", call_id: "human1", arguments: '{"state":"human"}' });
   emitXai({ type: "response.created", response: { id: "r2" } });
   emitXai({ type: "response.output_audio.delta", delta: "human-greeting" });
   assert.equal(phone.sent[3].media.payload, "human-greeting");

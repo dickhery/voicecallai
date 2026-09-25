@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCallLifecycle } from './call-lifecycle.js';
 
-function harness({ start = true, ready = () => true } = {}) {
+function harness({ start = true, ready = () => true, gateOpenings = false } = {}) {
   let time = 0, id = 0;
   const timers = new Map(), sent = [], marks = [], ended = [];
   const control = createCallLifecycle({
-    now: () => time, ready, busy: () => false,
+    now: () => time, ready, busy: () => false, gateOpenings,
     setTimer: (fn, delay) => { timers.set(++id, { fn, at: time + delay }); return id; },
     clearTimer: key => timers.delete(key),
     sendXai: event => sent.push(event), sendMark: mark => marks.push(mark),
@@ -136,11 +136,41 @@ test('cancelled or failed voicemail response is not marked delivered', () => {
   }
 });
 
-test('voicemail timeout cannot be extended by repeated state calls or background speech', () => {
+test('voicemail greeting cap cannot be extended by repeated state calls or background speech', () => {
   const h = harness(); h.tool('set_call_state', { state: 'voicemail_greeting' });
-  h.advance(60_000); h.control.speechStarted();
+  h.advance(120_000); h.control.speechStarted();
   h.tool('set_call_state', { state: 'voicemail_greeting' }); h.advance(30_000);
   assert.deepEqual(h.ended, ['voicemail_timeout']);
+});
+
+test('opening gate holds a long greeting until the beep, then allows one message', () => {
+  const h = harness({ gateOpenings: true });
+  assert.equal(h.control.holdAssistant, true);
+  h.control.speechStarted();
+  h.advance(4_000);
+  assert.equal(h.control.holdAssistant, true);
+  h.control.speechStopped();
+  h.advance(2_000);
+  assert.equal(h.sent.filter((event) => event.type === 'response.create').length, 0);
+  assert.equal(h.control.noteBeep(), true);
+  assert.equal(h.sent.filter((event) => event.type === 'response.create').length, 1);
+  assert.match(h.sent.at(-2).item.content[0].text, /beep/i);
+  h.control.responseCreated();
+  h.audio(15);
+  h.control.responseDone('completed');
+  h.control.onMark(h.marks.at(-1));
+  assert.deepEqual(h.ended, ['voicemail_message_complete']);
+  assert.equal(h.control.noteBeep(), false);
+});
+
+test('opening gate treats a short hello as a person and does not invent a beep', () => {
+  const h = harness({ gateOpenings: true });
+  h.control.speechStarted();
+  h.advance(700);
+  h.control.speechStopped();
+  assert.equal(h.control.holdAssistant, false);
+  assert.equal(h.sent.filter((event) => event.type === 'response.create').length, 1);
+  assert.equal(h.control.noteBeep(), false);
 });
 
 test('live person returning from voicemail cancels its deadline', () => {

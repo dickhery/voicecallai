@@ -1,7 +1,8 @@
 import { assertAllowedDestination, parseBlockedDestinations, FALSE_REPORT_RULES, findRuleViolation } from "./call-safety.js";
 import "dotenv/config";
-import { KEYPAD_TOOL, KEYPAD_INSTRUCTIONS, createPhoneKeypad } from "./phone-keypad.js";
+import { KEYPAD_TOOL, KEYPAD_INSTRUCTIONS, createPhoneKeypad, extractSuppliedExtension } from "./phone-keypad.js";
 import { CALL_LIFECYCLE_TOOLS, CALL_LIFECYCLE_INSTRUCTIONS, CALL_LIFECYCLE_LIMITS, createCallLifecycle } from "./call-lifecycle.js";
+import { createLineListener } from "./line-audio.js";
 import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -127,7 +128,8 @@ const VOICE_PREVIEW_RATE_LIMIT_WINDOW_MS = Number(
 const VOICE_PREVIEW_RATE_LIMIT_MAX = Number(
   process.env.VOICE_PREVIEW_RATE_LIMIT_MAX || 12,
 );
-const SERVER_VERSION = "2026-09-20-voicemail-call-lifecycle";
+const SERVER_VERSION = "2026-09-24-realistic-call-flow";
+const STREAM_HANDOFF_MS = 12_000;
 const BLOCKED_OUTBOUND_NUMBERS = parseBlockedDestinations(process.env.BLOCKED_OUTBOUND_NUMBERS);
 const VOICE_SESSION_START = "[[vc:session]]";
 const VOICE_SESSION_END = "[[/vc:session]]";
@@ -1153,7 +1155,10 @@ function buildCallDirectionInstructions(direction, preset = {}) {
       : "After the person answers, introduce yourself briefly, state the reason for the call, and ask if now is an okay time.",
     "After your opening line, stop speaking and wait for the person to respond before asking must-ask questions, collecting details, mentioning agenda items, or discussing the call goal.",
     "Do not speak over the called person.",
-  ].join(" ");
+    extractSuppliedExtension(preset.systemPrompt)
+      ? `The user supplied extension ${extractSuppliedExtension(preset.systemPrompt)}. When a prompt asks for an extension or says you may dial it now, press exactly those digits. Add # only if the prompt asks for pound.`
+      : "",
+  ].filter(Boolean).join(" ");
 }
 
 function buildOpeningOnlySessionInstructions(
@@ -3681,8 +3686,8 @@ app.get("/health", async (req, res) => {
 
   res.json({
     ok: true,
-    phoneKeypad: { enabled: true, transport: "inband-pcmu", version: 1 },
-    callLifecycle: { enabled: true, version: 1, ...CALL_LIFECYCLE_LIMITS },
+    phoneKeypad: { enabled: true, transport: "twilio-play-digits+inband-fallback", version: 2 },
+    callLifecycle: { enabled: true, version: 2, beepDetection: true, ...CALL_LIFECYCLE_LIMITS },
     ready:
       setupIssues.length === 0 &&
       xaiConfigured &&
@@ -4532,6 +4537,75 @@ app.get("/call-session/:sessionId", (req, res) => {
   res.json(buildCallSessionPayload(session, { includeMonitorToken: true }));
 });
 
+function streamHandoffActive(session, now = Date.now()) {
+  return Boolean(session?.streamHandoff && session.streamHandoff.until > now);
+}
+
+function armStreamHandoff(session) {
+  const handoff = { until: Date.now() + STREAM_HANDOFF_MS, reattached: false };
+  session.streamHandoff = handoff;
+  const timer = setTimeout(() => {
+    if (session.streamHandoff !== handoff || handoff.reattached || session.finished || session.billingStoppedAt) return;
+    session.streamHandoff = null;
+    if (!isWebSocketOpen(session.twilioWs)) {
+      endSessionFromRemoteRequest(session, "keypad_reconnect_failed").catch((error) => {
+        log("error", "Unable to end call after keypad reconnect failed", {
+          sessionId: session.id,
+          error: error.message,
+        });
+      });
+    }
+  }, STREAM_HANDOFF_MS);
+  timer.unref?.();
+}
+
+function buildMediaStreamTwiml(session, digits = "") {
+  const publicWsUrl = getPublicWsUrl();
+  if (!publicWsUrl || !session?.id) throw new Error("Media stream is unavailable.");
+  const response = new VoiceResponse();
+  if (digits) response.play({ digits: `w${digits}` });
+  const connect = response.connect();
+  const stream = connect.stream({
+    url: publicWsUrl,
+    name: `voicecall-ai-${session.id}`,
+    statusCallback: session.streamStatusCallbackUrl,
+    statusCallbackMethod: "POST",
+  });
+  stream.parameter({ name: "sessionId", value: session.id });
+  stream.parameter({ name: "mediaToken", value: session.mediaToken || "" });
+  stream.parameter({ name: "callId", value: session.callId || "" });
+  stream.parameter({ name: "presetName", value: session.preset?.name || "" });
+  stream.parameter({ name: "direction", value: session.direction || "" });
+  return response.toString();
+}
+
+function requestKeypadSignaling(session, digits, keypad) {
+  if (!twilioClient || !session?.callSid || !getPublicWsUrl()) return false;
+  let twiml = "";
+  try {
+    twiml = buildMediaStreamTwiml(session, digits);
+  } catch (error) {
+    log("warn", "Unable to build keypad TwiML", { sessionId: session.id, error: error.message });
+    return false;
+  }
+  armStreamHandoff(session);
+  twilioClient.calls(session.callSid).update({ twiml }).then(() => {
+    log("info", "Sent keypad digits through Twilio", {
+      sessionId: session.id,
+      callSid: session.callSid,
+      digitCount: digits.length,
+    });
+  }).catch((error) => {
+    if (session.streamHandoff && !session.streamHandoff.reattached) session.streamHandoff = null;
+    log("warn", "Twilio keypad signaling failed; using in-band tones", {
+      sessionId: session.id,
+      error: error.message,
+    });
+    keypad.onSignalingResult?.("failed");
+  });
+  return true;
+}
+
 app.post("/twiml", (req, res) => {
   res.type("text/xml");
   try {
@@ -4541,9 +4615,8 @@ app.post("/twiml", (req, res) => {
       return;
     }
 
-    const publicWsUrl = getPublicWsUrl();
     const { sessionId, session } = getSessionFromRequest(req);
-    if (!publicWsUrl || !session) {
+    if (!getPublicWsUrl() || !session) {
       log("warn", "TwiML requested without a matching session", { sessionId });
       res
         .status(200)
@@ -4551,21 +4624,7 @@ app.post("/twiml", (req, res) => {
       return;
     }
 
-    const response = new VoiceResponse();
-    const connect = response.connect();
-    const stream = connect.stream({
-      url: publicWsUrl,
-      name: `voicecall-ai-${sessionId}`,
-      statusCallback: session.streamStatusCallbackUrl,
-      statusCallbackMethod: "POST",
-    });
-    stream.parameter({ name: "sessionId", value: sessionId });
-    stream.parameter({ name: "mediaToken", value: session.mediaToken || "" });
-    stream.parameter({ name: "callId", value: session.callId || "" });
-    stream.parameter({ name: "presetName", value: session.preset.name });
-    stream.parameter({ name: "direction", value: session.direction || "" });
-
-    res.status(200).send(response.toString());
+    res.status(200).send(buildMediaStreamTwiml(session));
   } catch (error) {
     log("error", "Failed to generate TwiML", { error: error.message });
     res.status(200).send(makeErrorTwiML("The voice server could not start this call."));
@@ -4634,8 +4693,20 @@ app.post("/stream-status", async (req, res) => {
     session.lastStreamEvent = streamEvent;
     const streamEventAt = markBillingActivity(session, "lastStreamEventAt");
     if (isTerminalTwilioStreamEvent(streamEvent)) {
-      session.billingStoppedAt ||= streamEventAt;
-      scheduleFinishPaidSession(session, `twilio_${streamEvent || "stream_done"}`);
+      const callbackSid = String(req.body.StreamSid || "");
+      const replacedStream =
+        streamHandoffActive(session) ||
+        (callbackSid && session.streamSid && callbackSid !== session.streamSid);
+      if (replacedStream) {
+        log("info", "Ignoring stream stop from a keypad reconnect", {
+          sessionId,
+          callbackSid,
+          currentSid: session.streamSid || null,
+        });
+      } else {
+        session.billingStoppedAt ||= streamEventAt;
+        scheduleFinishPaidSession(session, `twilio_${streamEvent || "stream_done"}`);
+      }
     }
   } else if (callSid && isTerminalTwilioStreamEvent(streamEvent)) {
     settleBackendReservationFromTwilioFetch(
@@ -4751,30 +4822,38 @@ monitorWss.on("connection", (ws, request) => {
 });
 
 mediaWss.on("connection", (twilioWs, request) => {
+  const link = { twilioWs, streamSid: null };
   let xaiWs = null;
   let session = null;
-  let streamSid = null;
+  let borrowed = false;
   let markCounter = 0;
   let closed = false;
   let suppressKeypadResponseAudio = false;
+  let lineListener = { push() {}, suspend() {} };
   const keypad = createPhoneKeypad({
-    ready: () => !closed && session?.direction === CALL_DIRECTIONS.OUTBOUND &&
-      !session.billingStoppedAt && !lifecycle.ending && Boolean(streamSid) &&
-      isWebSocketOpen(twilioWs) && isWebSocketOpen(xaiWs),
-    sendTwilio: (payload) => sendToTwilio({ ...payload, streamSid }),
+    ready: () => !closed && !borrowed && session?.direction === CALL_DIRECTIONS.OUTBOUND &&
+      !session.billingStoppedAt && !lifecycle.ending && Boolean(link.streamSid) &&
+      isWebSocketOpen(link.twilioWs) && isWebSocketOpen(xaiWs),
+    sendTwilio: (payload) => sendToTwilio({ ...payload, streamSid: link.streamSid }),
     sendXai: (payload) => {
       if (isWebSocketOpen(xaiWs)) xaiWs.send(JSON.stringify(payload));
     },
+    onTones: (ms) => lineListener.suspend(ms),
+    requestSignaling: (digits) => (
+      typeof requestKeypadSignaling === "function" &&
+      requestKeypadSignaling(session, digits, keypad) === true
+    ),
   });
   const lifecycle = createCallLifecycle({
-    ready: () => !closed && session?.direction === CALL_DIRECTIONS.OUTBOUND &&
-      !session.finished && !session.billingStoppedAt && Boolean(streamSid) &&
-      isWebSocketOpen(twilioWs) && isWebSocketOpen(xaiWs),
+    ready: () => !closed && !borrowed && session?.direction === CALL_DIRECTIONS.OUTBOUND &&
+      !session.finished && !session.billingStoppedAt && Boolean(link.streamSid) &&
+      isWebSocketOpen(link.twilioWs) && isWebSocketOpen(xaiWs),
     busy: () => keypad.busy,
+    gateOpenings: true,
     sendXai: (payload) => {
       if (isWebSocketOpen(xaiWs)) xaiWs.send(JSON.stringify(payload));
     },
-    sendMark: (name) => sendToTwilio({ event: "mark", streamSid, mark: { name } }),
+    sendMark: (name) => sendToTwilio({ event: "mark", streamSid: link.streamSid, mark: { name } }),
     endCall: (reason) => {
       log("info", "Ending outbound call from lifecycle controller", { sessionId: session?.id, reason });
       endSessionFromRemoteRequest(session, reason).catch((error) => {
@@ -4782,20 +4861,23 @@ mediaWss.on("connection", (twilioWs, request) => {
       });
     },
   });
+  if (typeof createLineListener === "function") {
+    lineListener = createLineListener({ onBeep: () => lifecycle.noteBeep() });
+  }
 
   function closeBoth() {
-    if (closed) return;
+    if (closed || borrowed) return;
     closed = true;
     keypad.close();
     lifecycle.close();
     if (xaiWs && xaiWs.readyState === WebSocket.OPEN) xaiWs.close();
-    if (twilioWs.readyState === WebSocket.OPEN) twilioWs.close();
+    if (link.twilioWs?.readyState === WebSocket.OPEN) link.twilioWs.close();
   }
 
   function sendToTwilio(payload) {
     if (payload.event === "clear") lifecycle.clear();
-    if (twilioWs.readyState === WebSocket.OPEN) {
-      twilioWs.send(JSON.stringify(payload));
+    if (link.twilioWs?.readyState === WebSocket.OPEN) {
+      link.twilioWs.send(JSON.stringify(payload));
     }
   }
 
@@ -4971,7 +5053,7 @@ mediaWss.on("connection", (twilioWs, request) => {
       );
       openingTimer.unref?.();
       log("info", "Connected Twilio stream to xAI", {
-        streamSid,
+        streamSid: link.streamSid,
         sessionId: session.id,
         callSid: session.callSid,
         direction: session.direction,
@@ -5000,8 +5082,8 @@ mediaWss.on("connection", (twilioWs, request) => {
         return;
       }
 
-      if (event.type === "response.output_audio.delta" && event.delta && streamSid) {
-        if (keypad.busy || suppressKeypadResponseAudio) return;
+      if (event.type === "response.output_audio.delta" && event.delta && link.streamSid) {
+        if (keypad.busy || suppressKeypadResponseAudio || lifecycle.holdAssistant) return;
         lifecycle.audio(event.delta);
         if (session.metrics) {
           session.metrics.assistantAudioChunks += 1;
@@ -5009,7 +5091,7 @@ mediaWss.on("connection", (twilioWs, request) => {
         }
         sendToTwilio({
           event: "media",
-          streamSid,
+          streamSid: link.streamSid,
           media: { payload: event.delta },
         });
         broadcastMonitorAudio(session, "assistant", event.delta);
@@ -5017,7 +5099,7 @@ mediaWss.on("connection", (twilioWs, request) => {
         markCounter += 1;
         sendToTwilio({
           event: "mark",
-          streamSid,
+          streamSid: link.streamSid,
           mark: { name: `${STREAM_MARK_PREFIX}-${markCounter}` },
         });
         return;
@@ -5101,7 +5183,7 @@ mediaWss.on("connection", (twilioWs, request) => {
         return;
       }
 
-      if (event.type === "input_audio_buffer.speech_started" && streamSid) {
+      if (event.type === "input_audio_buffer.speech_started" && link.streamSid) {
         lifecycle.speechStarted();
         if (session.saveTranscript && session.permissionConfirmed) {
           session.awaitingCallerTranscript = true;
@@ -5121,7 +5203,7 @@ mediaWss.on("connection", (twilioWs, request) => {
           applyFullSessionInstructions("caller_interrupted_opening");
         }
         // A menu may keep talking while tones play. Do not truncate a keypress.
-        if (!keypad.busy) sendToTwilio({ event: "clear", streamSid });
+        if (!keypad.busy) sendToTwilio({ event: "clear", streamSid: link.streamSid });
         return;
       }
 
@@ -5171,7 +5253,7 @@ mediaWss.on("connection", (twilioWs, request) => {
       lifecycle.close();
       log("info", "xAI WebSocket closed", {
         sessionId: session?.id,
-        streamSid,
+        streamSid: link.streamSid,
       });
       if (session?.xaiWs === xaiWs) {
         session.xaiWs = null;
@@ -5189,53 +5271,11 @@ mediaWss.on("connection", (twilioWs, request) => {
     });
   }
 
-  twilioWs.on("message", (raw) => {
-    let data;
-    try {
-      data = JSON.parse(raw.toString());
-    } catch {
-      return;
-    }
-
-    if (data.event === "start") {
-      streamSid = data.start?.streamSid;
-      const customParameters = data.start?.customParameters || {};
-      const sessionId = customParameters.sessionId;
-      const mediaToken = customParameters.mediaToken;
-      session = callSessions.get(sessionId);
-      if (!session) {
-        log("warn", "Media stream started without a matching session", {
-          sessionId,
-          streamSid,
-          remoteAddress: request.socket.remoteAddress,
-        });
-        closeBoth();
-        return;
-      }
-      if (!safeTokenEqual(session.mediaToken, mediaToken)) {
-        log("warn", "Media stream started with invalid media token", {
-          sessionId,
-          streamSid,
-          remoteAddress: request.socket.remoteAddress,
-        });
-        closeBoth();
-        return;
-      }
-      session.twilioWs = twilioWs;
-      session.phoneKeypad = keypad;
-      if (session.direction === CALL_DIRECTIONS.OUTBOUND) session.callLifecycle = lifecycle;
-      session.streamSid = streamSid;
-      markBillingActivity(session, "lastStreamEventAt");
-      if (session.metrics) session.metrics.streamStartedAt ||= Date.now();
-      startBridgeRecording(session);
-      startBillingTimer(session, closeBoth);
-      connectToXai();
-      return;
-    }
-
+  function handleTwilioEvent(data, socket) {
     if (data.event === "media") {
       if (session) markBillingActivity(session, "lastMediaAt");
       if (data.media?.payload) {
+        if (session?.direction === CALL_DIRECTIONS.OUTBOUND) lineListener.push(data.media.payload);
         broadcastMonitorAudio(session, "caller", data.media.payload);
         appendBridgeRecordingAudio(
           session,
@@ -5262,10 +5302,11 @@ mediaWss.on("connection", (twilioWs, request) => {
     }
 
     if (data.event === "stop") {
+      if ((typeof streamHandoffActive === "function" && streamHandoffActive(session)) || link.twilioWs !== socket) return;
       const stopCallSid = getValidCallSid(data.stop?.callSid || data.stop?.call_sid);
       log("info", "Twilio media stream stopped", {
         sessionId: session?.id,
-        streamSid,
+        streamSid: link.streamSid,
         callSid: session?.callSid || stopCallSid || null,
       });
       if (session) {
@@ -5285,9 +5326,100 @@ mediaWss.on("connection", (twilioWs, request) => {
       closeBoth();
       scheduleFinishPaidSession(session, "twilio_media_stop");
     }
+  }
+
+  twilioWs.on("message", (raw) => {
+    let data;
+    try {
+      data = JSON.parse(raw.toString());
+    } catch {
+      return;
+    }
+
+    if (borrowed && session?.mediaOwner) {
+      session.mediaOwner.handle(data, twilioWs);
+      return;
+    }
+
+    if (data.event === "start") {
+      link.streamSid = data.start?.streamSid;
+      const customParameters = data.start?.customParameters || {};
+      const sessionId = customParameters.sessionId;
+      const mediaToken = customParameters.mediaToken;
+      session = callSessions.get(sessionId);
+      if (!session) {
+        log("warn", "Media stream started without a matching session", {
+          sessionId,
+          streamSid: link.streamSid,
+          remoteAddress: request.socket.remoteAddress,
+        });
+        closeBoth();
+        return;
+      }
+      if (!safeTokenEqual(session.mediaToken, mediaToken)) {
+        log("warn", "Media stream started with invalid media token", {
+          sessionId,
+          streamSid: link.streamSid,
+          remoteAddress: request.socket.remoteAddress,
+        });
+        closeBoth();
+        return;
+      }
+      if (
+        typeof streamHandoffActive === "function" &&
+        streamHandoffActive(session) &&
+        session.mediaLink &&
+        session.mediaLink !== link &&
+        isWebSocketOpen(session.xaiWs)
+      ) {
+        borrowed = true;
+        session.mediaLink.twilioWs = twilioWs;
+        session.mediaLink.streamSid = link.streamSid;
+        session.twilioWs = twilioWs;
+        session.streamSid = link.streamSid;
+        if (session.streamHandoff) session.streamHandoff.reattached = true;
+        session.streamHandoff = null;
+        session.phoneKeypad?.onSignalingResult?.("played");
+        log("info", "Reattached media stream after keypad digits", {
+          sessionId: session.id,
+          streamSid: link.streamSid,
+        });
+        return;
+      }
+      session.mediaLink = link;
+      session.mediaOwner = { handle: handleTwilioEvent, close: closeBoth };
+      session.twilioWs = twilioWs;
+      session.phoneKeypad = keypad;
+      if (session.direction === CALL_DIRECTIONS.OUTBOUND) session.callLifecycle = lifecycle;
+      session.streamSid = link.streamSid;
+      markBillingActivity(session, "lastStreamEventAt");
+      if (session.metrics) session.metrics.streamStartedAt ||= Date.now();
+      startBridgeRecording(session);
+      startBillingTimer(session, closeBoth);
+      connectToXai();
+      return;
+    }
+
+    handleTwilioEvent(data, twilioWs);
   });
 
   twilioWs.on("close", () => {
+    const activeSocket = session?.mediaLink?.twilioWs;
+    if ((activeSocket && activeSocket !== twilioWs) ||
+      (typeof streamHandoffActive === "function" && streamHandoffActive(session))) {
+      if (session?.twilioWs === twilioWs) session.twilioWs = null;
+      return;
+    }
+    if (borrowed) {
+      if (session?.twilioWs === twilioWs) session.twilioWs = null;
+      session?.mediaOwner?.close?.();
+      if (session && !session.billingStoppedAt) {
+        const stoppedAt = markBillingActivity(session, "lastStreamEventAt");
+        session.billingStoppedAt ||= stoppedAt;
+        scheduleFinishPaidSession(session, "twilio_ws_close");
+      }
+      return;
+    }
     keypad.close();
     lifecycle.close();
     if (xaiWs && xaiWs.readyState === WebSocket.OPEN) xaiWs.close();

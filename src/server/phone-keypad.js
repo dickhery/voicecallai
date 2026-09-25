@@ -16,19 +16,30 @@ export const KEYPAD_TOOL = {
 export const KEYPAD_INSTRUCTIONS = [
   "Automated phone menus: listen to the entire relevant menu before choosing.",
   "If an automated system answers, do not introduce yourself or talk over it. Use press_phone_keys for the announced option that serves the user's call goal, including voicemail or customer service.",
-  "Navigate one menu at a time. Never guess unannounced shortcuts, extensions, account numbers, PINs, or verification codes; use only details the user supplied for this task.",
+  "Extensions: when a prompt asks for an extension, or says you may dial one now, press only the extension digits supplied for this call. Append # only if the prompt asks for pound or hash. If no extension was supplied, do not invent one and do not press random digits.",
+  "Navigate one menu at a time. Never guess unannounced shortcuts, account numbers, PINs, or verification codes; use only details the user supplied for this task.",
   "Do not use keypad selections to authorize purchases, payments, account changes, or consent beyond the user's task.",
-  "Do not announce keypresses. After pressing, remain silent and listen for the next menu or person, including during hold music. This overrides requests to fill silence or re-engage while waiting on an automated system.",
-  "Playback completion means tones were played, not that the menu accepted them. Retry a selection at most once, only if the menu explicitly repeats or reports a missed entry. Never loop through keys.",
-  "When a person answers, introduce yourself and follow the call goal. If routed to voicemail, wait for the recording prompt/beep before leaving the requested message.",
+  "Do not announce keypresses or speak the digits. After pressing, remain silent and listen for the next menu or person, including during hold music. This overrides requests to fill silence or re-engage while waiting on an automated system.",
+  "Playback completion means the keys were sent, not that the menu accepted them. Retry a selection at most once, only if the menu explicitly repeats or reports a missed entry. Never loop through keys.",
+  "When a person answers, introduce yourself and follow the call goal. If routed to voicemail, stay silent through the greeting and wait for the beep before leaving the requested message.",
 ].join("\n");
+
+export function extractSuppliedExtension(prompt) {
+  const match = String(prompt || "").match(
+    /\b(?:extension|ext)\.?\s*(?:number|#|:|is)?\s*(\d{1,8})\b(?!\s*(?:weeks?|days?|hours?|minutes?|seconds?|times?))/i,
+  );
+  return match?.[1] || "";
+}
+
+const SAMPLE_RATE = 8000;
+const LEAD_SAMPLES = 1600; // 200 ms so the first tone is not clipped
+const TONE_SAMPLES = 2000; // 250 ms, easier for IVRs to accept
+const GAP_SAMPLES = 1200; // 150 ms between digits
+const TONE_AMPLITUDE = 8000;
 
 const ROWS = [697, 770, 852, 941];
 const COLS = [1209, 1336, 1477];
 const KEYS = "123456789*0#";
-const SAMPLE_RATE = 8000;
-const TONE_SAMPLES = 1600; // 200 ms tones, 100 ms inter-digit silence
-const GAP_SAMPLES = 800;
 
 function encodeMuLaw(sample) {
   const sign = sample < 0 ? 0x80 : 0;
@@ -43,26 +54,32 @@ export function makeKeypadAudio(digits) {
   if (typeof digits !== "string" || !/^[0-9*#]{1,12}$/.test(digits)) {
     throw new Error("Use 1–12 characters from 0–9, *, # only.");
   }
-  const audio = Buffer.alloc(digits.length * (TONE_SAMPLES + GAP_SAMPLES), 0xff);
+  const span = LEAD_SAMPLES + digits.length * (TONE_SAMPLES + GAP_SAMPLES);
+  const audio = Buffer.alloc(span, 0xff);
   for (let key = 0; key < digits.length; key++) {
     const index = KEYS.indexOf(digits[key]);
     const low = ROWS[Math.floor(index / 3)];
     const high = COLS[index % 3];
+    const offset = LEAD_SAMPLES + key * (TONE_SAMPLES + GAP_SAMPLES);
     for (let i = 0; i < TONE_SAMPLES; i++) {
-      // 5 ms ramps avoid clicks. Each frequency has equal, conservative amplitude.
+      // 5 ms ramps avoid clicks. Each frequency has equal amplitude.
       const envelope = Math.min(1, i / 40, (TONE_SAMPLES - 1 - i) / 40);
-      const sample = envelope * 6000 * (
+      const sample = envelope * TONE_AMPLITUDE * (
         Math.sin(2 * Math.PI * low * i / SAMPLE_RATE) +
         Math.sin(2 * Math.PI * high * i / SAMPLE_RATE)
       );
-      audio[key * (TONE_SAMPLES + GAP_SAMPLES) + i] = encodeMuLaw(sample);
+      audio[offset + i] = encodeMuLaw(sample);
     }
   }
   return audio;
 }
 
+export function estimateKeypadMs(digits) {
+  return 200 + String(digits || "").length * 400 + 600;
+}
+
 // One controller per authenticated media connection. Keep all limits in memory.
-export function createPhoneKeypad({ sendTwilio, sendXai, ready, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout }) {
+export function createPhoneKeypad({ sendTwilio, sendXai, ready, requestSignaling, onTones, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout }) {
   const seen = new Set();
   const repeats = new Map();
   let pending = null;
@@ -84,6 +101,21 @@ export function createPhoneKeypad({ sendTwilio, sendXai, ready, now = Date.now, 
     pending = null;
     clearTimer(timer);
     output(callId, { status, instruction: "Listen for the next prompt. Do not assume the menu accepted the keys or automatically retry." });
+  }
+
+  function beginInBand(callId, digits) {
+    const payload = makeKeypadAudio(digits).toString("base64");
+    const markName = `phone-keypad-${count}`;
+    pending = { callId, mark: markName, signaling: false, timer: setTimer(() => finish("playback_unconfirmed"), 8000) };
+    pending.timer?.unref?.();
+    onTones?.(estimateKeypadMs(digits));
+    try {
+      sendTwilio({ event: "clear" });
+      sendTwilio({ event: "media", media: { payload } });
+      sendTwilio({ event: "mark", mark: { name: markName } });
+    } catch {
+      finish("playback_unconfirmed");
+    }
   }
 
   return {
@@ -109,22 +141,34 @@ export function createPhoneKeypad({ sendTwilio, sendXai, ready, now = Date.now, 
         output(event.call_id, { error: "Keypad unavailable, busy, or safety limit reached. Listen; do not immediately retry." });
         return true;
       }
-      const payload = makeKeypadAudio(digits).toString("base64");
       count++;
       digitCount += digits.length;
       repeats.set(digits, (repeats.get(digits) || 0) + 1);
       lastPress = now();
-      const mark = `phone-keypad-${count}`;
-      pending = { callId: event.call_id, mark, timer: setTimer(() => finish("playback_unconfirmed"), 8000) };
-      pending.timer?.unref?.();
-      try {
-        sendTwilio({ event: "clear" });
-        sendTwilio({ event: "media", media: { payload } });
-        sendTwilio({ event: "mark", mark: { name: mark } });
-      } catch {
-        finish("playback_unconfirmed");
+      let signaled = false;
+      if (typeof requestSignaling === "function") {
+        try { signaled = requestSignaling(digits) === true; } catch { signaled = false; }
       }
+      if (signaled) {
+        pending = { callId: event.call_id, mark: null, signaling: true, digits, timer: setTimer(() => finish("playback_unconfirmed"), 12000) };
+        pending.timer?.unref?.();
+        onTones?.(estimateKeypadMs(digits) + 800);
+        return true;
+      }
+      beginInBand(event.call_id, digits);
       return true;
+    },
+    onSignalingResult(status) {
+      if (closed || !pending?.signaling) return;
+      if (status === "failed") {
+        const { callId, digits, timer } = pending;
+        clearTimer(timer);
+        pending = null;
+        if (ready()) beginInBand(callId, digits);
+        else output(callId, { error: "Keypad signaling failed and the audio stream is unavailable. Listen; do not immediately retry." });
+        return;
+      }
+      finish(status === "played" ? "played" : "playback_unconfirmed");
     },
     onMark(name) { if (pending?.mark === name) finish("played"); },
     close() {

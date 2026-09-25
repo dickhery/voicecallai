@@ -96,7 +96,7 @@ Without an authenticated MCP connector or another authorized IC client, an assis
 
 1. Call listMyPresets and reuse an appropriate user-owned preset, or create one with createPreset.
 2. Call agentGetAccountStatus once when a live balance check is needed. If phone time is low, explain the current packages before buying any.
-3. Confirm recipient, purpose, preset, transcript choice, recording choice, and applicable consent with the user.
+3. Confirm recipient, purpose, preset, transcript choice, recording choice, and applicable consent with the user. Include any extension as "extension 104" and the callback number to leave if voicemail answers. The voice bridge presses announced menu keys, waits for the beep before leaving one message, and does this without extra ICP cycles. Deploying the website does not update the separate voice bridge.
 4. Call agentQueueCall with an E.164 phone number, preset ID, capture options, and a unique idempotency key. Known emergency short codes and reserved number patterns are rejected (EMERGENCY_NUMBER_BLOCKED); the filter cannot identify every full-length dispatch number.
 5. Track the durable job with agentListCallJobs. Start at a 10-second polling interval and back off to 30 seconds. Never claim the call completed merely because it was queued.
 6. When the job is dispatched, call agentGetLiveCallLink once if the user wants to hear the active call. Give them the returned HTTPS URL; it is listen-only and stops working when the call ends.
@@ -170,7 +170,7 @@ Always specify that linked identity and the mainnet environment on later calls. 
 3. Call listMyPresets and listMyCalls before creating duplicates.
 4. Use agentGetAccountStatus only when a current ICP or phone-time balance is relevant. Do not repeatedly refresh it.
 5. If a preset is needed, call createPreset with user-approved instructions. The voice bridge treats the preset as private source material and asks xAI Voice to speak naturally rather than read it verbatim.
-6. Confirm the exact recipient in E.164 format, call purpose, preset, transcript choice, recording choice, and consent status.
+6. Confirm the exact recipient in E.164 format, call purpose, preset, transcript choice, recording choice, and consent status. If the call may hit a menu or voicemail, include the extension as "extension 104" and the callback number the agent may leave. The voice bridge handles keypad entry and the beep without extra ICP cycles.
 7. Generate one unique idempotency key for this intended call and call agentQueueCall.
 8. Read agentListCallJobs after about 10 seconds. Back off to 20 and then 30 seconds while waiting. Use listMyCalls or getCallRecord for the resulting call record.
 9. Say "queued", "dispatched", "in progress", or "completed" according to returned state. Do not report a successful live call without supporting state.

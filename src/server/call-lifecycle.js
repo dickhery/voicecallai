@@ -6,8 +6,13 @@ export const CALL_LIFECYCLE_LIMITS = Object.freeze({
   silenceMs: 45_000,
   automatedSilenceMs: 180_000,
   voicemailMs: 90_000,
+  greetingMs: 150_000,
+  humanTurnMs: 1_200,
+  machineTurnMs: 3_500,
+  machineNudgeMs: 2_500,
   playbackGraceMs: 3_000,
   maxDrainMs: 60_000,
+  maxNudges: 4,
 });
 
 export const CALL_LIFECYCLE_TOOLS = [
@@ -26,7 +31,7 @@ export const CALL_LIFECYCLE_TOOLS = [
 export const CALL_LIFECYCLE_INSTRUCTIONS = [
   'Outbound call lifecycle: use set_call_state when the line changes between a live human, automated menu/hold, voicemail greeting, and voicemail recording. Base this on heard audio, not silence alone. A human receptionist or answering-service operator is a human.',
   'Voicemail cues include a recorded unavailable greeting, a request to leave a message after the tone, or a mailbox announcement. Report voicemail_greeting immediately; stay silent until the greeting and beep/recording cue finish. Do not answer questions in the recorded greeting, introduce yourself over it, or repeatedly ask if anyone is there.',
-  'At the recording cue report voicemail_recording, then leave ONE concise message, ideally 15-25 seconds, with the call purpose and only user-supplied identity/callback details. Do not invent facts or disclose sensitive account/medical/payment information to a mailbox. Honor requests not to leave voicemail; end_call with cannot_leave_message instead.',
+  'At the recording cue, or when the bridge says a beep was detected, report voicemail_recording and immediately leave ONE concise message, ideally 15-25 seconds, with the call purpose and only user-supplied identity/callback details. Do not invent facts or disclose sensitive account/medical/payment information to a mailbox. Honor requests not to leave voicemail; end_call with cannot_leave_message instead.',
   'After that single message, call end_call with voicemail_left immediately. Do not ask the mailbox questions, wait for a reply, repeat the message, or exchange goodbyes. The bridge waits for queued speech to finish before disconnecting.',
   'If the mailbox is full, recording is unavailable, or the number is disconnected, call end_call with cannot_leave_message without trying repeatedly. Never use voicemail_left unless you actually spoke the message after the recording cue.',
   'For a live conversation, give one brief farewell when finished and call end_call with conversation_complete. If someone resumes speaking before hangup, listen and reconsider.',
@@ -35,7 +40,7 @@ export const CALL_LIFECYCLE_INSTRUCTIONS = [
 
 // No transcripts, audio storage, network polling, or canister calls. The bridge
 // supplies VAD events and Twilio playback marks from the existing sockets.
-export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall,
+export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall, gateOpenings = false,
   now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout }) {
   let active = false;
   let closed = false;
@@ -43,11 +48,20 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall,
   let state = 'unknown';
   let remoteSpeaking = false;
   let lastRemoteAt = 0;
+  let speechStartedAt = null;
   let checkedIn = false;
   let voicemailAt = null;
+  let greetingAt = null;
+  let longMonologueAt = null;
   let responseActive = false;
   let responseAudio = false;
   let messageRequested = false;
+  let beepNoted = false;
+  let beepDuringResponse = false;
+  let holdSpeech = false;
+  let releaseOnce = false;
+  let nudgeCount = 0;
+  let nudgedThisPause = false;
   let continueState = false;
   let playingUntil = 0;
   let mark = null;
@@ -69,12 +83,38 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall,
 
   function requestResponse(instruction) {
     responseActive = true;
+    releaseOnce = true;
     // response.instructions replaces the entire session prompt in xAI. Use a
     // conversation update so the preset, identity, and safety rules still apply.
     sendXai({ type: 'conversation.item.create', item: {
       type: 'message', role: 'user', content: [{ type: 'input_text', text: `Call control update: ${instruction}` }],
     } });
     sendXai({ type: 'response.create' });
+  }
+
+  function applyOpeningGate(duration) {
+    if (!gateOpenings || !active || closed || ending) return;
+    if (state === 'unknown' && duration >= 200 && duration <= CALL_LIFECYCLE_LIMITS.humanTurnMs) {
+      state = 'human';
+      holdSpeech = false;
+      voicemailAt = null;
+      greetingAt = null;
+      longMonologueAt = null;
+      beepNoted = false;
+      if (responseActive) releaseOnce = true;
+      else if (!busy()) {
+        requestResponse('A live person gave a short greeting and paused. Introduce yourself briefly and continue the call goal. If that audio was actually a phone menu, call set_call_state with automated and stop speaking.');
+      }
+      return;
+    }
+    if (duration < CALL_LIFECYCLE_LIMITS.machineTurnMs || state === 'voicemail_recording') return;
+    if (state === 'human') {
+      holdSpeech = true;
+      longMonologueAt = now();
+      return;
+    }
+    if (state === 'unknown') state = 'automated';
+    holdSpeech = true;
   }
 
   function maybeEnd() {
@@ -87,15 +127,41 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall,
   function tick() {
     if (closed || !active) return;
     if (ready()) {
-      if (voicemailAt !== null && now() - voicemailAt >= CALL_LIFECYCLE_LIMITS.voicemailMs) {
+      if (gateOpenings && remoteSpeaking && speechStartedAt !== null &&
+        now() - speechStartedAt >= CALL_LIFECYCLE_LIMITS.machineTurnMs &&
+        state !== 'voicemail_recording') {
+        if (state === 'unknown') state = 'automated';
+        if (state !== 'human') holdSpeech = true;
+      }
+      if (greetingAt !== null && state === 'voicemail_greeting' &&
+        now() - greetingAt >= CALL_LIFECYCLE_LIMITS.greetingMs) {
+        requestEnd('voicemail_timeout');
+      }
+      if (voicemailAt !== null && state === 'voicemail_recording' &&
+        now() - voicemailAt >= CALL_LIFECYCLE_LIMITS.voicemailMs) {
         requestEnd('voicemail_timeout');
       }
       if (ending) maybeEnd();
+      else if (gateOpenings && longMonologueAt && !remoteSpeaking && state === 'human' &&
+        now() - longMonologueAt >= CALL_LIFECYCLE_LIMITS.machineNudgeMs && !busy()) {
+        longMonologueAt = null;
+        holdSpeech = false;
+        if (!responseActive) {
+          requestResponse('The person finished a long turn. Respond briefly and continue the call goal. If a voicemail greeting just played, wait for the beep instead of answering it.');
+        }
+      }
       else if (!remoteSpeaking) {
         const silence = now() - lastRemoteAt;
         const automated = state === 'automated' || state.startsWith('voicemail');
         const limit = automated ? CALL_LIFECYCLE_LIMITS.automatedSilenceMs : CALL_LIFECYCLE_LIMITS.silenceMs;
         if (silence >= limit) requestEnd('no_response_timeout');
+        else if (gateOpenings && (state === 'automated' || state === 'voicemail_greeting') &&
+          !nudgedThisPause && silence >= CALL_LIFECYCLE_LIMITS.machineNudgeMs &&
+          nudgeCount < CALL_LIFECYCLE_LIMITS.maxNudges && !responseActive && !busy()) {
+          nudgedThisPause = true;
+          nudgeCount += 1;
+          requestResponse('Automated audio paused. If a voicemail greeting just finished, leave one short message now and call end_call with voicemail_left. If a menu is waiting, press the announced option or the user-supplied extension and do not speak. If a live person is waiting, greet them in one sentence.');
+        }
         else if (!automated && !checkedIn && silence >= CALL_LIFECYCLE_LIMITS.checkInMs &&
           !responseActive && now() >= playingUntil && !busy()) {
           checkedIn = true;
@@ -120,9 +186,27 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall,
     endAfterPlayback(reason) {
       if (active && !closed && ready()) requestEnd(reason);
     },
+    get holdAssistant() { return holdSpeech && !releaseOnce; },
+    noteBeep() {
+      if (!active || closed || ending || beepNoted || messageRequested) return false;
+      const turnMs = remoteSpeaking && speechStartedAt !== null ? now() - speechStartedAt : 0;
+      const machineLike = state !== 'human' || holdSpeech || turnMs >= CALL_LIFECYCLE_LIMITS.machineTurnMs;
+      if (!machineLike) return false;
+      beepNoted = true;
+      beepDuringResponse = responseActive;
+      state = 'voicemail_recording';
+      holdSpeech = false;
+      longMonologueAt = null;
+      voicemailAt ??= now();
+      messageRequested = true;
+      continueState = false;
+      requestResponse('A voicemail beep was just detected on the line. Leave one concise message now using only the supplied call goal and permitted facts, then call end_call with voicemail_left. If no message is authorized, call end_call with cannot_leave_message. Do not ask whether anyone is there.');
+      return true;
+    },
     start() {
       if (active || closed) return;
       active = true;
+      if (gateOpenings) holdSpeech = true;
       lastRemoteAt = now();
       timer = setTimer(tick, 1000);
       timer?.unref?.();
@@ -158,12 +242,22 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall,
           continueState = state === 'human' || state === 'automated';
           if (state === 'human') {
             voicemailAt = null;
+            greetingAt = null;
+            longMonologueAt = null;
+            beepNoted = false;
             lastRemoteAt = now();
             checkedIn = false;
-          }
-          if (state.startsWith('voicemail')) voicemailAt ??= now();
-          if (state === 'voicemail_recording') {
+            if (gateOpenings) holdSpeech = false;
+          } else if (state === 'voicemail_greeting') {
+            greetingAt ??= now();
+            if (gateOpenings) holdSpeech = true;
+          } else if (state === 'voicemail_recording') {
+            voicemailAt ??= now();
+            greetingAt = null;
             messageRequested = false;
+            if (gateOpenings) holdSpeech = false;
+          } else if (gateOpenings) {
+            holdSpeech = true;
           }
         }
       }
@@ -172,6 +266,9 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall,
     speechStarted() {
       if (!active || closed) return;
       remoteSpeaking = true;
+      speechStartedAt = now();
+      nudgedThisPause = false;
+      longMonologueAt = null;
       lastRemoteAt = now();
       checkedIn = false;
       // Cancel an unplayed farewell if the other party interrupts. Twilio also
@@ -180,9 +277,12 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall,
     },
     speechStopped() {
       if (!active || closed) return;
+      const duration = speechStartedAt === null ? 0 : now() - speechStartedAt;
       remoteSpeaking = false;
+      speechStartedAt = null;
       lastRemoteAt = now();
       checkedIn = false;
+      applyOpeningGate(duration);
     },
     responseCreated() {
       if (!active || closed) return;
@@ -197,18 +297,21 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall,
     responseDone(status) {
       if (!active || closed) return;
       responseActive = false;
+      releaseOnce = false;
+      const beepInterrupted = beepDuringResponse;
+      beepDuringResponse = false;
       const shouldContinue = continueState;
       continueState = false;
       if (status !== 'completed') {
         ending = null;
         return;
       }
-      if (responseAudio) {
+      if (responseAudio && !beepInterrupted) {
         mark = `call-lifecycle-${++markSequence}`;
         sendMark(mark);
       }
       if (state === 'voicemail_recording' && !ending) {
-        if (responseAudio) requestEnd('voicemail_message_complete');
+        if (responseAudio && !beepInterrupted) requestEnd('voicemail_message_complete');
         else if (!messageRequested) {
           messageRequested = true;
           requestResponse('The voicemail recording cue was heard. Leave one concise message using only the supplied call goal and permitted facts, then call end_call with voicemail_left. If no appropriate message is authorized, call end_call with cannot_leave_message.');

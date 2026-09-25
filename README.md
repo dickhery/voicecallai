@@ -969,20 +969,25 @@ announced option using the preset's goal, and listens for the next prompt. The
 outbound greeting-only override has been removed so it cannot force an
 introduction over an IVR; inbound greeting behavior is unchanged.
 
-`src/server/phone-keypad.js` generates dual-frequency DTMF as raw 8 kHz mu-law
-and sends it over the existing authenticated Twilio media stream. Twilio does
-not support outbound DTMF WebSocket events, so these are **in-band audio tones**,
-not a `dtmf` message. No stream reconnect, TwiML redirect, REST call, canister
-update, HTTPS outcall, or extra model session is needed. Per-keypress IC cycle
-usage is zero; normal connected call time and voice provider charges still apply.
+Twilio media streams cannot send outbound DTMF events. The bridge therefore
+updates the live call with TwiML `<Play digits="w…"/>` and reconnects the same
+authenticated media stream. That uses Twilio's signaling tones, which IVRs
+accept more reliably than audio stuffed into the stream. The xAI session stays
+open across the reconnect. A stream-stopped callback for the replaced stream
+does not settle the paid reservation. If the Twilio update fails, the bridge
+falls back to in-band 8 kHz mu-law tones (250 ms, with a short leading pause).
+There is no canister write, HTTPS outcall, or extra model session. Per-keypress
+IC cycle usage is zero; normal connected call time and voice provider charges
+still apply.
 
-Each request allows 1–12 characters (`0–9`, `*`, `#`), with 200 ms tones and
-100 ms gaps. A call allows 20 sequences / 80 total digits, at least 1.5 seconds
-between requests, and at most two uses of the same sequence. Duplicate tool IDs
-are ignored and overlapping requests are rejected. Speech-start events do not
-clear pending tones; assistant audio is suppressed during keypad playback.
-Twilio's matching mark acknowledges playback, not IVR acceptance. An 8-second
-acknowledgement timeout reports uncertainty without an automatic retry.
+Each request allows 1–12 characters (`0–9`, `*`, `#`). A call allows 20
+sequences / 80 total digits, at least 1.5 seconds between requests, and at most
+two uses of the same sequence. Duplicate tool IDs are ignored and overlapping
+requests are rejected. Speech-start events do not clear pending tones; assistant
+audio is suppressed during keypad playback. A supplied extension in the preset
+(`extension 104`) is pressed only when the prompt asks for one. Playback
+acknowledgement means the digits were sent, not that the menu accepted them.
+An unconfirmed signaling attempt does not retry automatically.
 Function results leave the agent listening rather than triggering speech over
 the menu. Keypad arguments are not added to logs or canister state.
 
@@ -993,17 +998,16 @@ upgrade or binding regeneration is required for this release.
 
 After pulling this revision on the Windows voice host, run
 `scripts/update-voicecall-service.ps1`. The `/health` JSON will include
-`phoneKeypad: { enabled: true, transport: "inband-pcmu", version: 1 }`.
+`phoneKeypad: { enabled: true, transport: "twilio-play-digits+inband-fallback", version: 2 }`.
 Deploying IC frontend assets alone does not activate server changes.
 
 Acceptance test on a number you control: configure a menu with customer service
 on 1, a nested option on 2, and voicemail on 3; call with a preset targeting each
 route. Confirm received digits and successful routing in the receiving system,
 that the agent waits for menus and the voicemail beep, and that a normal human
-answer still gets an introduction. Repeat with capture disabled. In-band tone
-recognition varies by carrier/IVR; if a system cannot detect audio tones, this
-implementation cannot guarantee navigation. Test the real route before relying
-on it. No paid live call was made as part of the automated tests.
+answer still gets an introduction. Repeat with capture disabled. Signaling digits are the normal path. The in-band fallback can still be missed
+by some carriers. Test the real route before relying on it. No paid live call
+was made as part of the automated tests.
 
 References: [xAI custom voice tools](https://docs.x.ai/developers/model-capabilities/audio/speech-to-speech)
 and [Twilio media messages](https://www.twilio.com/docs/voice/media-streams/websocket-messages).
@@ -1015,12 +1019,15 @@ session, including existing saved presets and MCP-dispatched calls. No preset
 migration is required. Inbound answering retains its existing behavior.
 
 xAI identifies the line from the audio it already receives: a live person,
-menu/hold, voicemail greeting, or voicemail recording cue. It waits for the
-greeting and beep, leaves one short message using supplied facts, and requests
-hangup. A completed spoken response in the voicemail-recording state also
-triggers hangup if the model omits `end_call`. Full/unavailable mailboxes can
-be ended without speaking. This is model-based recognition, not a guarantee
-that a remote mailbox recorded the message; silence alone is not voicemail.
+menu/hold, voicemail greeting, or voicemail recording cue. The bridge also
+listens to the inbound mu-law audio locally. A sustained single tone (a
+voicemail beep) tells the agent to leave one short message; speech, dual keypad
+tones, and short blips do not. Until a short human hello or that beep, outbound
+assistant audio is held so the agent does not talk over a greeting or menu.
+A completed spoken response in the voicemail-recording state hangs up if the
+model omits `end_call`. Full or unavailable mailboxes can be ended without
+speaking. This is still not a guarantee that a remote mailbox recorded the
+message; silence alone is not voicemail.
 
 The bridge waits for the final Twilio playback mark, not just xAI's generation
 completion. If a mark is lost, PCMU audio duration plus a 3-second grace provides
@@ -1031,20 +1038,22 @@ delivered speech. Canceled/failed responses do not count as completed messages.
 Outbound xAI idle re-engagement is replaced by a local VAD watchdog. After 20
 seconds without remote speech it requests at most one check-in; at 45 seconds
 it starts hangup. Assistant speech does not reset this deadline. Menus/hold get
-180 seconds of silence without check-ins. Recognized voicemail gets a 90-second
-overall deadline, including its greeting; reporting the same state cannot
-extend it. Returning to a live human clears that voicemail deadline. These
+180 seconds of silence without the human check-in. A voicemail greeting can
+run for 150 seconds. The 90-second message deadline starts when recording
+begins, and repeating the same state cannot extend either deadline. A pause
+after a menu or greeting gets at most four short nudges to press a key or
+leave the message. Returning to a live human clears the voicemail deadline. These
 deadlines allow the playback drain described above before disconnecting.
 The existing paid-time cap and media-loss safeguards remain in force.
 
 All detection state and timers live in Node memory. There are no new canister
 timers, writes, HTTPS outcalls, transcript requirements, or paid Twilio AMD
 requests. Normal call finalization/debit is reused once at hangup. Runtime
-limits and `callLifecycle.version: 1` are exposed in `/health`.
+limits and `callLifecycle.version: 2` with `beepDetection: true` are exposed in `/health`.
 
 Deployment: sync the updated frontend guide to the IC, then update the separate
 Windows voice host with `scripts/update-voicecall-service.ps1`. Confirm its
-`/health` reports `serverVersion: 2026-09-20-voicemail-call-lifecycle` and
+`/health` reports `serverVersion: 2026-09-24-realistic-call-flow` and
 `callLifecycle.enabled: true`. IC deployment alone cannot activate bridge code.
 
 Run `pnpm --dir src/server test` for deterministic silence, voicemail, playback,
