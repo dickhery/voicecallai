@@ -48,6 +48,17 @@ module {
 
   /// Stable layout field introduced after cbb93ff. Retained so upgrades onto
   /// canisters that already store consent grants do not trap.
+  public type ColonyDelegationState = {
+    grants : Map.Map<Nat, AgentTypes.ColonyCallGrant>;
+    reservationCaps : Map.Map<Text, Nat>;
+    var nextId : Nat;
+  };
+
+  public func initColonyDelegationState() : ColonyDelegationState {
+    { grants = Map.empty<Nat, AgentTypes.ColonyCallGrant>();
+      reservationCaps = Map.empty<Text, Nat>(); var nextId = 1 };
+  };
+
   public type ConsentState = {
     grants : Map.Map<Principal, AgentTypes.AgentConsentGrant>;
   };

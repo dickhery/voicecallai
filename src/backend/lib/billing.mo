@@ -410,11 +410,24 @@ module {
     callId : Nat,
     callToken : Text,
   ) : Types.ReserveCallResult {
+    createReservationCapped(state, user, recipientPhone, presetId, callId, callToken, null);
+  };
+
+  public func createReservationCapped(
+    state : State,
+    user : Principal,
+    recipientPhone : Text,
+    presetId : Nat,
+    callId : Nat,
+    callToken : Text,
+    maxSeconds : ?Nat,
+  ) : Types.ReserveCallResult {
     let available = getAvailableSeconds(state, user);
     if (available == 0) {
       return #err("You need prepaid phone time before starting a call.");
     };
-    let allowedSeconds = Nat.min(available, RESERVATION_CHUNK_SECONDS);
+    let allowedSeconds = Nat.min(Nat.min(available, RESERVATION_CHUNK_SECONDS), maxSeconds ?? MAX_RESERVATION_SECONDS);
+    if (allowedSeconds == 0) return #err("No phone time is available within the call limit");
     let idNumber = state.nextReservationId.value;
     state.nextReservationId.value += 1;
     let now = Time.now();
@@ -447,6 +460,7 @@ module {
   public func extendReservation(
     state : State,
     reservationId : Text,
+    maxSeconds : ?Nat,
   ) : Types.ReserveCallResult {
     switch (state.callReservations.get(reservationId)) {
       case null { #err("Reservation not found") };
@@ -458,7 +472,8 @@ module {
           case (#canceled) { return #err("Reservation was canceled") };
         };
 
-        if (reservation.allowedSeconds >= MAX_RESERVATION_SECONDS) {
+        let limit = Nat.min(MAX_RESERVATION_SECONDS, maxSeconds ?? MAX_RESERVATION_SECONDS);
+        if (reservation.allowedSeconds >= limit) {
           return #err("Maximum call reservation has already been reached");
         };
 
@@ -468,7 +483,7 @@ module {
         };
 
         let remainingReservationCapacity = Nat.sub(
-          MAX_RESERVATION_SECONDS,
+          limit,
           reservation.allowedSeconds,
         );
         let additionalSeconds = Nat.min(

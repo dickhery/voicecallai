@@ -25,6 +25,7 @@ mixin (
   answeringState : ConfigLib.AnsweringState,
   answeringPresetVoiceIds : ConfigLib.VoiceIdState,
   termsState : AgentLib.TermsState,
+  colonyDelegationState : AgentLib.ColonyDelegationState,
 ) {
   let ANSWERING_PRESET_ID_OFFSET : Nat = 1_000_000_000;
 
@@ -379,7 +380,7 @@ mixin (
     if (not AccessControl.isAdmin(accessControlState, caller)) {
       Runtime.trap("Unauthorized: server admin only");
     };
-    let result = BillingLib.extendReservation(billingState, reservationId);
+    let result = BillingLib.extendReservation(billingState, reservationId, colonyDelegationState.reservationCaps.get(reservationId));
     switch (result) {
       case (#ok(reservation)) {
         CallsLib.addSystemLog(

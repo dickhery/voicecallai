@@ -53,6 +53,8 @@ shared ({ caller = installer }) persistent actor class Backend() = this {
   // Retained for memory-compatible upgrade onto post-cbb93ff canisters.
   // Behavior matches cbb93ff; consent APIs are not exposed.
   let agentConsentState = AgentLib.initConsentState();
+  // One-use user grants for bounded Genesis Colony calls.
+  let colonyDelegationState = AgentLib.initColonyDelegationState();
   // Links web-app and MCP session principals that belong to the same human.
   let identityState = IdentityLib.initState();
 
@@ -60,7 +62,7 @@ shared ({ caller = installer }) persistent actor class Backend() = this {
   include IdentityApi(accessControlState, identityState, billingState);
   include ConfigApi(accessControlState, identityState, configState, callPresetVoiceIds, twilioLineState, answeringState, answeringPresetVoiceIds, termsState);
   include CallsApi(accessControlState, identityState, callsState, answeringLiveState, callEndState, configState, callPresetVoiceIds, billingState);
-  include BillingApi(accessControlState, identityState, billingState, callsState, configState, callPresetVoiceIds, answeringState, answeringPresetVoiceIds, termsState);
+  include BillingApi(accessControlState, identityState, billingState, callsState, configState, callPresetVoiceIds, answeringState, answeringPresetVoiceIds, termsState, colonyDelegationState);
   include AgentApi(
     Principal.fromActor(this),
     accessControlState,
@@ -72,6 +74,7 @@ shared ({ caller = installer }) persistent actor class Backend() = this {
     configState,
     callPresetVoiceIds,
     termsState,
+    colonyDelegationState,
   );
 
   // Keep the binding live so the Motoko compiler does not drop it.

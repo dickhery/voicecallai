@@ -1,3 +1,4 @@
+import Array "mo:core/Array";
 import Blob "mo:core/Blob";
 import Cycles "mo:core/Cycles";
 import Error "mo:core/Error";
@@ -17,6 +18,7 @@ import AccessControl "mo:caffeineai-authorization/access-control";
 import AgentLib "../lib/agent";
 import BillingLib "../lib/billing";
 import CallsLib "../lib/calls";
+import CallTypes "../types/calls";
 import ConfigLib "../lib/config";
 import EmergencyLib "../lib/emergency";
 import IdentityLib "../lib/identity";
@@ -33,6 +35,7 @@ mixin (
   configState : ConfigLib.State,
   callPresetVoiceIds : ConfigLib.VoiceIdState,
   termsState : AgentLib.TermsState,
+  colonyDelegationState : AgentLib.ColonyDelegationState,
 ) {
   private func agentAccountOf(caller : Principal) : Principal {
     IdentityLib.resolve(identityState, caller);
@@ -714,6 +717,171 @@ mixin (
       releaseLock(callLocks, account);
     };
   };
+
+  private let COLONY_WORKER = Principal.fromText("jfcuc-j665v-vr3aq-tlmaf-xtkdz-ary3o-mxerh-fxuns-4jv6x-pu3ux-iae");
+  private let COLONY_GRANT_TTL_NS : Int = 3_600_000_000_000;
+  private let COLONY_MAX_CALL_SECONDS : Nat = 300;
+
+  // The customer authorizes one exact domestic call from prepaid phone time.
+  // The worker receives neither the customer's ledger account nor a reusable delegation.
+  public shared ({ caller }) func grantColonyCall(
+    recipientPhone : Text,
+    presetId : Nat,
+    captureOptions : AgentTypes.AgentCallCaptureOptions,
+    maxSeconds : Nat,
+    expiresAt : Int,
+    genesisJobId : Nat,
+    commissionPaymentId : Nat,
+  ) : async AgentTypes.ColonyCallGrantResult {
+    requireAgent(caller);
+    let account = agentAccountOf(caller);
+    let now = Time.now();
+    if (colonyDelegationState.grants.size() >= 10_000) return #err("Grant capacity reached");
+    if (maxSeconds == 0 or maxSeconds > COLONY_MAX_CALL_SECONDS or expiresAt <= now or expiresAt > now + COLONY_GRANT_TTL_NS) {
+      return #err("A grant must limit one call to at most five minutes and expire within one hour");
+    };
+    // Alaska and premium prefixes have materially different carrier rates.
+    if (not ConfigLib.isE164(recipientPhone) or not recipientPhone.startsWith(#text("+1")) or recipientPhone.size() != 12 or recipientPhone.startsWith(#text("+1907")) or recipientPhone.startsWith(#text("+1900")) or EmergencyLib.isBlockedDestination(recipientPhone)) {
+      return #err("Colony calls currently support standard US/Canada destinations only");
+    };
+    if ((captureOptions.recordAudio or captureOptions.saveTranscript) and not captureOptions.consentConfirmed) return #err("Capture requires explicit participant consent");
+    if (not AgentLib.termsCurrent(termsState, account)) return #err("Accept the current VoiceCallAI terms first");
+    let preset = switch (ConfigLib.getPreset(configState, callPresetVoiceIds, presetId)) {
+      case null return #err("Preset not found");
+      case (?p) p;
+    };
+    if (not IdentityLib.sameAccount(identityState, caller, preset.ownerId)) return #err("Preset must belong to the customer");
+    if (BillingLib.getAvailableSeconds(billingState, account) < maxSeconds) return #err("Buy enough prepaid phone time for the full call limit");
+    var open : Nat = 0;
+    for (grant in colonyDelegationState.grants.values()) {
+      if (grant.user == account and grant.commissionPaymentId == commissionPaymentId) {
+        if (grant.recipientPhone == recipientPhone and grant.presetId == presetId and grant.maxSeconds == maxSeconds and grant.genesisJobId == genesisJobId and grant.captureOptions == captureOptions) return #ok(grant);
+        return #err("This commission payment already authorized another call");
+      };
+      if (grant.user == account and not grant.revoked and grant.jobId == null and grant.expiresAt > now) open += 1;
+    };
+    if (open >= 3) return #err("At most three unused colony call grants are allowed");
+    let grant : AgentTypes.ColonyCallGrant = {
+      id = colonyDelegationState.nextId;
+      user = account;
+      worker = COLONY_WORKER;
+      recipientPhone;
+      presetId;
+      captureOptions;
+      maxSeconds;
+      genesisJobId;
+      commissionPaymentId;
+      expiresAt;
+      revoked = false;
+      jobId = null;
+      idempotencyKey = "";
+    };
+    colonyDelegationState.nextId += 1;
+    colonyDelegationState.grants.add(grant.id, grant);
+    #ok(grant);
+  };
+
+  public query ({ caller }) func listMyColonyCallGrants() : async [AgentTypes.ColonyCallGrant] {
+    requireAgent(caller);
+    let account = agentAccountOf(caller);
+    colonyDelegationState.grants.values().toArray().filter(func g = g.user == account);
+  };
+
+  public query ({ caller }) func listColonyWorkerGrants() : async [AgentTypes.ColonyCallGrant] {
+    if (caller != COLONY_WORKER) return [];
+    let all = colonyDelegationState.grants.values().toArray();
+    // Process oldest unused grants first so a burst cannot starve an earlier customer.
+    let pending = all.filter(func g = not g.revoked and g.jobId == null and g.expiresAt > Time.now()).sort(
+      func(a, b) = Nat.compare(a.id, b.id)
+    );
+    let used = all.filter(func g = g.jobId != null).sort(
+      func(a, b) = Nat.compare(b.id, a.id)
+    );
+    let openPage = pending.sliceToArray(0, Nat.min(pending.size(), 100));
+    let recentOutcomes = used.sliceToArray(0, Nat.min(used.size(), 20));
+    openPage.concat(recentOutcomes);
+  };
+
+  public query ({ caller }) func getColonyCallOutcome(id : Nat) : async ?CallTypes.CallStatus {
+    let grant = switch (colonyDelegationState.grants.get(id)) { case null return null; case (?g) g };
+    if (caller != grant.worker and agentAccountOf(caller) != grant.user) return null;
+    let jobId = switch (grant.jobId) { case null return null; case (?j) j };
+    let job = switch (AgentLib.getCallJob(agentState, jobId)) { case null return null; case (?j) j };
+    switch (CallsLib.getCallRecord(callsState, job.callId)) { case null null; case (?record) ?record.status };
+  };
+
+  public shared ({ caller }) func revokeColonyCallGrant(id : Nat) : async Bool {
+    requireAgent(caller);
+    let grant = switch (colonyDelegationState.grants.get(id)) { case null return false; case (?g) g };
+    if (grant.user != agentAccountOf(caller) or grant.jobId != null) return false;
+    colonyDelegationState.grants.add(id, { grant with revoked = true });
+    true;
+  };
+
+  public shared query ({ caller }) func getColonyCallGrant(id : Nat) : async ?AgentTypes.ColonyCallGrant {
+    if (caller.isAnonymous()) return null;
+    switch (colonyDelegationState.grants.get(id)) {
+      case (?g) {
+        if (caller == g.worker or agentAccountOf(caller) == g.user) ?g else null;
+      };
+      case null null;
+    };
+  };
+
+  // Only the dedicated Genesis worker can use the customer-created grant.
+  // All billing is from the customer's existing prepaid VoiceCallAI balance.
+  public shared ({ caller }) func queueColonyCall(id : Nat, key : Text) : async AgentTypes.AgentCallResult {
+    let grant = switch (colonyDelegationState.grants.get(id)) {
+      case null return #err(agentError("GRANT_NOT_FOUND", "Call grant not found", false, caller));
+      case (?g) g;
+    };
+    if (caller != COLONY_WORKER or caller != grant.worker) return #err(agentError("UNAUTHORIZED", "Dedicated colony worker required", false, grant.user));
+    switch (grant.jobId) {
+      case (?jobId) {
+        if (grant.idempotencyKey != key) return #err(agentError("GRANT_USED", "This grant was already used", false, grant.user));
+        switch (AgentLib.getCallJob(agentState, jobId)) {
+          case (?job) return #ok(withLiveAudio(AgentLib.toCallJob(job)));
+          case null return #err(agentError("CALL_JOB_NOT_FOUND", "Grant job unavailable", false, grant.user));
+        };
+      };
+      case null {};
+    };
+    if (validateIdempotencyKey(key) != null or grant.revoked or Time.now() >= grant.expiresAt) return #err(agentError("GRANT_EXPIRED", "Grant invalid or expired", false, grant.user));
+    if (not AgentLib.termsCurrent(termsState, grant.user) or BillingLib.getAvailableSeconds(billingState, grant.user) < grant.maxSeconds or not AgentLib.canCreateCallJob(agentState, grant.user)) return #err(agentError("CALL_UNAVAILABLE", "Terms, phone time or job capacity changed", false, grant.user));
+    let preset = switch (ConfigLib.getPreset(configState, callPresetVoiceIds, grant.presetId)) {
+      case null return #err(agentError("PRESET_NOT_FOUND", "Preset unavailable", false, grant.user));
+      case (?p) p;
+    };
+    if (preset.ownerId != grant.user) return #err(agentError("PRESET_NOT_FOUND", "Preset owner changed", false, grant.user));
+    if (not acquireLock(callLocks, grant.user)) return #err(agentError("CALL_REQUEST_IN_PROGRESS", "Another call is in progress", true, grant.user));
+    try {
+      let callToken = await agentRandomCallToken();
+      let current = switch (colonyDelegationState.grants.get(id)) {
+        case null return #err(agentError("GRANT_NOT_FOUND", "Grant removed", false, grant.user));
+        case (?g) g;
+      };
+      if (current.revoked or current.jobId != null or Time.now() >= current.expiresAt) return #err(agentError("GRANT_EXPIRED", "Grant changed during preparation; inspect status", true, grant.user));
+      let callRecord = CallsLib.createCallRecord(callsState, grant.user, grant.recipientPhone, grant.presetId);
+      let reservation = BillingLib.createReservationCapped(billingState, grant.user, grant.recipientPhone, grant.presetId, callRecord.id, callToken, ?grant.maxSeconds);
+      switch (reservation) {
+        case (#err(message)) {
+          ignore CallsLib.updateCallRecord(callsState, callRecord.id, #failed, null, ?Time.now(), ?message);
+          #err(agentError("CALL_RESERVATION_FAILED", message, false, grant.user));
+        };
+        case (#ok(reserved)) {
+          colonyDelegationState.reservationCaps.add(reserved.id, grant.maxSeconds);
+          let job = AgentLib.createCallJob(agentState, grant.user, "colony:" # id.toText() # ":" # key, reserved, callToken, grant.captureOptions);
+          colonyDelegationState.grants.add(id, { current with jobId = ?job.id; idempotencyKey = key });
+          #ok(withLiveAudio(AgentLib.toCallJob(job)));
+        };
+      };
+    } catch (_) {
+      #err(agentError("CALL_QUEUE_FAILED", "Unable to prepare the call; inspect the grant before retrying", true, grant.user));
+    } finally {
+      releaseLock(callLocks, grant.user);
+    };
+  };
+
 
   /// Lists the authenticated principal's recent MCP-created call jobs.
   public query ({ caller }) func agentListCallJobs() : async [AgentTypes.AgentCallJob] {

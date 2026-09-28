@@ -195,6 +195,24 @@ module {
     expiresAt : Int;
   };
 
+  public type ColonyCallGrant = {
+    id : Nat;
+    user : Principal;
+    worker : Principal;
+    recipientPhone : Text;
+    presetId : Nat;
+    captureOptions : AgentCallCaptureOptions;
+    maxSeconds : Nat;
+    genesisJobId : Nat;
+    commissionPaymentId : Nat;
+    expiresAt : Int;
+    revoked : Bool;
+    jobId : ?Text;
+    idempotencyKey : Text;
+  };
+
+  public type ColonyCallGrantResult = { #ok : ColonyCallGrant; #err : Text };
+
   public type AgentCallInput = {
     recipientPhone : Text;
     presetId : Nat;

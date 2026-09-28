@@ -228,6 +228,27 @@ type CreateLinkOfferResult =
          expiresAt: int;
        };
  };
+type ColonyCallGrantResult = 
+ variant {
+   err: text;
+   ok: ColonyCallGrant;
+ };
+type ColonyCallGrant = 
+ record {
+   captureOptions: AgentCallCaptureOptions;
+   commissionPaymentId: nat;
+   expiresAt: int;
+   genesisJobId: nat;
+   id: nat;
+   idempotencyKey: text;
+   jobId: opt text;
+   maxSeconds: nat;
+   presetId: nat;
+   recipientPhone: text;
+   revoked: bool;
+   user: principal;
+   worker: principal;
+ };
 type ClaimLinkOfferResult = 
  variant {
    err: text;
@@ -401,6 +422,8 @@ type Backend =
    getBillingPackages: () -> (vec BillingPackage) query;
    getCallRecord: (id: CallId) -> (opt CallRecordPublic) query;
    getCallerUserRole: () -> (UserRole) query;
+   getColonyCallGrant: (id: nat) -> (opt ColonyCallGrant) query;
+   getColonyCallOutcome: (id: nat) -> (opt CallStatus) query;
    getMyAccountIdentity: () -> (AccountIdentity) query;
    getMyBillingStatus: () -> (BillingStatus) query;
    getPreset: (id: PresetId) -> (opt CallPreset) query;
@@ -408,11 +431,16 @@ type Backend =
    getPurchaseIntentForServer: (purchaseIntentId: text) ->
     (opt PurchaseIntentPublic) query;
    getTwilioLineNumbersForServer: () -> (vec text) query;
+   grantColonyCall: (recipientPhone: text, presetId: nat, captureOptions:
+    AgentCallCaptureOptions, maxSeconds: nat, expiresAt: int, genesisJobId:
+    nat, commissionPaymentId: nat) -> (ColonyCallGrantResult);
    initiateCall: (input: InitiateCallInput) -> (InitiateCallResult);
    isCallerAdmin: () -> (bool) query;
+   listColonyWorkerGrants: () -> (vec ColonyCallGrant) query;
    listMyAnsweringLiveSessions: () -> (vec AnsweringLiveSession) query;
    listMyAnsweringPresets: () -> (vec AnsweringPreset) query;
    listMyCalls: () -> (vec CallRecordPublic) query;
+   listMyColonyCallGrants: () -> (vec ColonyCallGrant) query;
    listMyPresets: () -> (vec CallPreset) query;
    listOpenCallReservationsForServer: (limit: nat) ->
     (vec CallReservationPublic) query;
@@ -420,6 +448,7 @@ type Backend =
    listPendingCallEndsForServer: (limit: nat) -> (vec PendingCallEnd) query;
    markReservationStarted: (reservationId: text, callSid: text) ->
     (BillingMutationResult);
+   queueColonyCall: (id: nat, key: text) -> (AgentCallResult);
    registerAnsweringLiveSessionForServer: (session: AnsweringLiveSession) ->
     (bool);
    removeTwilioLine: (phoneNumber: text) -> (TwilioLineMutationResult);
@@ -427,6 +456,7 @@ type Backend =
    reserveCall: (input: InitiateCallInput) -> (ReserveCallResult);
    reserveIncomingAnsweringCall: (webhookSecret: text, callerPhone: text,
     twilioToNumber: text, callSid: text) -> (ReserveCallResult);
+   revokeColonyCallGrant: (id: nat) -> (bool);
    setAdminConfig: (xaiApiKey: text, twilioAccountSid: text, twilioAuthToken:
     text, twilioFromNumber: text) -> ();
    setAnsweringPresetEnabled: (id: PresetId, enabled: bool) ->
