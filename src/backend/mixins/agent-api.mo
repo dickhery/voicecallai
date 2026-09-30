@@ -765,7 +765,7 @@ mixin (
     if (not ConfigLib.isE164(recipientPhone) or not recipientPhone.startsWith(#text("+1")) or recipientPhone.size() != 12 or recipientPhone.startsWith(#text("+1907")) or recipientPhone.startsWith(#text("+1900")) or EmergencyLib.isBlockedDestination(recipientPhone)) {
       return #err("Colony calls currently support standard US/Canada destinations only");
     };
-    if ((captureOptions.recordAudio or captureOptions.saveTranscript) and not captureOptions.consentConfirmed) return #err("Capture requires explicit participant consent");
+    let approvedCapture = AgentLib.customerCapture(captureOptions);
     if (not AgentLib.termsCurrent(termsState, account)) return #err("Accept the current VoiceCallAI terms first");
     let preset = switch (ConfigLib.getPreset(configState, callPresetVoiceIds, presetId)) {
       case null return #err("Preset not found");
@@ -776,7 +776,7 @@ mixin (
     var open : Nat = 0;
     for (grant in colonyDelegationState.grants.values()) {
       if (grant.user == account and grant.commissionPaymentId == commissionPaymentId) {
-        if (grant.recipientPhone == recipientPhone and grant.presetId == presetId and grant.maxSeconds == maxSeconds and grant.genesisJobId == genesisJobId and grant.captureOptions == captureOptions) return #ok(grant);
+        if (grant.recipientPhone == recipientPhone and grant.presetId == presetId and grant.maxSeconds == maxSeconds and grant.genesisJobId == genesisJobId and grant.captureOptions == approvedCapture) return #ok(grant);
         return #err("This commission payment already authorized another call");
       };
       if (grant.user == account and not grant.revoked and grant.jobId == null and grant.expiresAt > now) open += 1;
@@ -804,7 +804,7 @@ mixin (
     open := 0;
     for (prior in colonyDelegationState.grants.values()) {
       if (prior.user == account and prior.commissionPaymentId == commissionPaymentId) {
-        if (prior.recipientPhone == recipientPhone and prior.presetId == presetId and prior.maxSeconds == maxSeconds and prior.genesisJobId == genesisJobId and prior.captureOptions == captureOptions) return #ok(prior);
+        if (prior.recipientPhone == recipientPhone and prior.presetId == presetId and prior.maxSeconds == maxSeconds and prior.genesisJobId == genesisJobId and prior.captureOptions == approvedCapture) return #ok(prior);
         return #err("This commission payment already authorized another call");
       };
       if (prior.user == account and not prior.revoked and prior.jobId == null and prior.expiresAt > Time.now()) open += 1;
@@ -818,7 +818,7 @@ mixin (
       worker = COLONY_WORKER;
       recipientPhone;
       presetId;
-      captureOptions;
+      captureOptions = approvedCapture;
       maxSeconds;
       genesisJobId;
       commissionPaymentId;

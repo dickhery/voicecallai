@@ -103,6 +103,10 @@ Without an authenticated MCP connector or another authorized IC client, an assis
 7. To stop a queued or live call you created, call agentEndCall with the job ID. Queued jobs cancel immediately; dispatched calls are hung up by the voice bridge within about 15 seconds. Prefer this over leaving farewell loops running.
 8. After completion, use agentGetCallArtifacts when the user asked for a transcript or recording.
 
+## Genesis Colony checkout
+
+Genesis prepares phone scripts without waiting for provider terms or payment. Its buyer approval button accepts the displayed terms and authorizes selected recording/transcripts, then settles the reviewed price. grantColonyCall normalizes customer-requested capture consistently with direct calls; a separate consent checkbox is unnecessary. This records customer authorization, not proof of another participant agreeing. Workers cannot create buyer grants or accept terms for them.
+
 ## Set up AI answering (inbound)
 
 1. Tell the user what you need: a Twilio number they own (E.164), answering AI instructions, whether to save a transcript or recording, and that they must paste a webhook into Twilio after creation.

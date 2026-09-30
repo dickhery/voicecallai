@@ -67,13 +67,17 @@ Push-Location $ProjectRoot
 try {
   Write-Host "Fetching $Remote/$Branch..."
   git fetch $Remote $Branch
+  if ($LASTEXITCODE -ne 0) { throw "Git fetch failed; service unchanged." }
 
   Write-Host "Fast-forwarding local $Branch..."
   git checkout $Branch
+  if ($LASTEXITCODE -ne 0) { throw "Git checkout failed; preserve local changes before retrying." }
   git pull --ff-only $Remote $Branch
+  if ($LASTEXITCODE -ne 0) { throw "Git fast-forward failed; preserve local changes before retrying." }
 
   Write-Host "Installing dependencies..."
   pnpm install --prefer-offline
+  if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed; service unchanged." }
 
   Write-Host "Checking server syntax..."
   Push-Location $ServerDir
@@ -86,6 +90,9 @@ try {
     Pop-Location
   }
 
+  # Add only the known Genesis origin; preserve protected credentials and other origins.
+  node (Join-Path $ServerDir "scripts\allow-genesis-origin.mjs") $EnvFile
+  if ($LASTEXITCODE -ne 0) { throw "Genesis origin configuration failed; service was not restarted." }
   $envValues = Read-DotEnv $EnvFile
   $port = if ($envValues.ContainsKey("PORT") -and $envValues["PORT"]) { $envValues["PORT"] } else { "3000" }
   $hostName = if ($envValues.ContainsKey("HOSTNAME")) { $envValues["HOSTNAME"].Trim().TrimEnd("/") } else { "" }
@@ -113,6 +120,7 @@ try {
     $testOrigins += "https://$frontendCanisterId.icp0.io"
     $testOrigins += "https://$frontendCanisterId.ic0.app"
   }
+  $testOrigins += "https://o5wsa-gaaaa-aaaaa-qhq3a-cai.icp0.io"
   $testOrigins += "https://voicecallai.online"
   $testOrigins += "https://www.voicecallai.online"
   $testOrigins = $testOrigins | Select-Object -Unique

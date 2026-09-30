@@ -408,7 +408,7 @@ module {
     "Answering: collect Twilio E.164 + instructions → createAnsweringPreset → give user webhook " #
     "https://voicecall.richardhery.com/answering/incoming/{webhookSecret} → user verifies by calling the number → setAnsweringPresetEnabled.\n" #
     "Payments: agentGetAccountIdentity deposit → agentPurchasePhoneTimeQuoted(packageId, key, maximumE8s) atomically limits the approved price and credits shared phone time. Legacy agentPurchasePhoneTime remains available.\n" #
-    "Genesis: colony_call_5 is an ICP-only $1 five-minute top-up. grantColonyCall verifies the accepted colony job and confirmed organism commission; one grant caps one call at 300 seconds. Saved approvals preserve the original commission rate.\n" #
+    "Genesis: approving the displayed phone price can also accept the displayed terms and authorize the selected recording/transcript settings; no separate capture checkbox is required. This does not assert another participant agreed. colony_call_5 is an ICP-only $1 five-minute top-up. grantColonyCall verifies the accepted colony job and confirmed organism commission; one grant caps one call at 300 seconds. Saved approvals preserve the original commission rate.\n" #
     "Cache getAgentGuide once per task. Refresh ICP pricing only when stale. Poll jobs with backoff.\n" #
     "Full guide: call getAgentGuide. Static docs: https://voicecallai.online/llms.txt\n"
   };
@@ -594,6 +594,12 @@ module {
     };
   };
 
+  // A customer's authenticated capture request authorizes these settings.
+  // This is customer authorization, not evidence of another participant's agreement.
+  public func customerCapture(options : AgentTypes.AgentCallCaptureOptions) : AgentTypes.AgentCallCaptureOptions {
+    { options with consentConfirmed = options.saveTranscript or options.recordAudio or options.consentConfirmed }
+  };
+
   public func createCallJob(
     state : State,
     user : Principal,
@@ -602,10 +608,7 @@ module {
     callToken : Text,
     captureOptions : AgentTypes.AgentCallCaptureOptions,
   ) : AgentTypes.StoredAgentCallJob {
-    let captures = captureOptions.saveTranscript or captureOptions.recordAudio;
-    let storedCapture = {
-      captureOptions with consentConfirmed = captures or captureOptions.consentConfirmed
-    };
+    let storedCapture = customerCapture(captureOptions);
     let job : AgentTypes.StoredAgentCallJob = {
       id = "acj_" # state.nextCallJobId.value.toText();
       idempotencyKey;

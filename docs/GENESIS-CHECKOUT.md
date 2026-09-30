@@ -35,3 +35,21 @@ Two-canister PocketIC tests live in `../agentsitehub/src/frontend/scripts/phone-
 They cover lost ledger responses, upgrades, approval privacy/immutability, price rejection,
 pending TooOld recovery, commission quotes after rate moves, worker authorization and duplicate
 queue suppression, without making a real call.
+
+## Single buyer approval and capture
+
+Genesis connects the authenticated phone account automatically and displays the provider terms
+when needed. Its priced approval button is the buyer agreement: it accepts exactly the displayed
+terms version, funds missing time, and passes selected capture authorization. New checkouts
+default to recording and transcripts. A changed terms version stops before payment; saved
+checkouts retain their original capture choices. No terms are accepted in a background worker.
+
+The customer-authenticated grant now normalizes requested capture exactly as direct agent calls
+already did. The authorization flag records the customer request; it does not prove another
+participant agreed. Confirmed commission, accepted job, owner checks, prepaid time, emergency
+filters, one-use grants and the five-minute cap still apply. Existing grant/state types are
+unchanged, so no stable migration is required.
+
+Run the updated Windows service updater: it adds only the exact Genesis browser origin to the
+protected .env, preserves other configuration and credentials, and verifies the CORS header after
+restart. The new local Genesis call planner is installed by that repository's worker updater.
