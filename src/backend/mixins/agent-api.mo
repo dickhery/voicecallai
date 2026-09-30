@@ -337,6 +337,17 @@ mixin (
     packageId : Text,
     idempotencyKey : Text,
   ) : async AgentTypes.IcpPurchaseResult {
+    await purchasePhoneTime(caller, packageId, idempotencyKey, null)
+  };
+
+  // Atomically enforce the customer's displayed maximum before journaling a debit.
+  public shared ({ caller }) func agentPurchasePhoneTimeQuoted(
+    packageId : Text, idempotencyKey : Text, expectedPriceE8s : Nat,
+  ) : async AgentTypes.IcpPurchaseResult {
+    await purchasePhoneTime(caller, packageId, idempotencyKey, ?expectedPriceE8s)
+  };
+
+  func purchasePhoneTime(caller : Principal, packageId : Text, idempotencyKey : Text, expectedPrice : ?Nat) : async AgentTypes.IcpPurchaseResult {
     requireAgent(caller);
     let account = agentAccountOf(caller);
     switch (validateIdempotencyKey(idempotencyKey)) {
@@ -349,9 +360,13 @@ mixin (
       return #err(agentError("PAYMENT_IN_PROGRESS", "Another ICP operation is already in progress for this account.", true, account));
     };
 
-    let purchase = switch (AgentLib.getPurchase(agentState, account, idempotencyKey)) {
+    // Every retained pending invoice may already have debited, including older Wasm
+    // that had not yet persisted an error when its ledger callback was interrupted.
+    let priorPurchase = AgentLib.getPurchase(agentState, account, idempotencyKey);
+    let previouslyAttempted = switch (priorPurchase) { case (?_) true; case null false };
+    let purchase = switch (priorPurchase) {
       case (?existing) {
-        if (existing.packageId != packageId) {
+        if (existing.packageId != packageId or (switch (expectedPrice) { case (?limit) existing.amountE8s > limit; case null false })) {
           releaseLock(ledgerLocks, account);
           return #err(agentError(
             "IDEMPOTENCY_CONFLICT",
@@ -395,6 +410,10 @@ mixin (
             return #err(agentError("UNKNOWN_PACKAGE", "Unknown phone-time package.", false, account));
           };
         };
+        if (switch (expectedPrice) { case (?limit) phonePackage.priceE8s > limit; case null false }) {
+          releaseLock(ledgerLocks, account);
+          return #err(agentError("PRICE_CHANGED", "Phone time price changed. Review a new quote before paying.", false, account));
+        };
         if (phonePackage.priceE8s == 0) {
           releaseLock(ledgerLocks, account);
           return #err(agentError("INVALID_PRICE", "The cached ICP package price is invalid.", true, account));
@@ -424,8 +443,10 @@ mixin (
         account,
       ));
     };
+    // Persist uncertainty before await; a later rejection cannot disprove an earlier debit.
+    purchase.error := ?"Ledger outcome pending; retry only this purchase key";
     try {
-      let result = await icpLedger.transfer({
+      let result = await (with timeout = 60) icpLedger.transfer({
         memo = PHONE_TIME_PURCHASE_MEMO;
         amount = { e8s = Nat64.fromNat(purchase.amountE8s) };
         fee = { e8s = ICP_TRANSFER_FEE_E8S };
@@ -442,7 +463,7 @@ mixin (
         };
         case (#Err(error)) {
           let message = legacyTransferErrorText(error);
-          let retryable = isRetryableLegacyTransferError(error);
+          let retryable = previouslyAttempted or isRetryableLegacyTransferError(error);
           AgentLib.failPurchase(purchase, message, not retryable);
           #err(agentError("ICP_TRANSFER_FAILED", message, retryable, account));
         };
@@ -761,6 +782,36 @@ mixin (
       if (grant.user == account and not grant.revoked and grant.jobId == null and grant.expiresAt > now) open += 1;
     };
     if (open >= 3) return #err("At most three unused colony call grants are allowed");
+    let pricing = AgentLib.pricing(agentState);
+    let colony = actor ("4s546-7iaaa-aaaah-av5ya-cai") : actor {
+      colony_confirm_call_payment : shared query (Nat, Nat, Principal) -> async { #ok : { amountE8s : Nat; quotedCommission : ?Nat }; #err : Text };
+    };
+    let amount = try {
+      switch (await (with timeout = 30) colony.colony_confirm_call_payment(commissionPaymentId, genesisJobId, account)) {
+        case (#ok v) v;
+        case (#err message) return #err(message);
+      }
+    } catch (_) { return #err("Colony payment verification unavailable. Retry this same payment ID.") };
+    let requiredCommission = switch (amount.quotedCommission) {
+      case (?approved) approved;
+      case null {
+        if (not pricing.isFresh) return #err("Refresh the phone ICP quote before authorizing a legacy call");
+        AgentLib.colonyCommissionE8s(agentState)
+      };
+    };
+    if (amount.amountE8s < requiredCommission) return #err("Agent payment is below the approved $0.20 quote. Inspect the paid checkout before retrying.");
+    // Recheck after await: concurrent grants cannot reuse a commission or evade the open cap.
+    open := 0;
+    for (prior in colonyDelegationState.grants.values()) {
+      if (prior.user == account and prior.commissionPaymentId == commissionPaymentId) {
+        if (prior.recipientPhone == recipientPhone and prior.presetId == presetId and prior.maxSeconds == maxSeconds and prior.genesisJobId == genesisJobId and prior.captureOptions == captureOptions) return #ok(prior);
+        return #err("This commission payment already authorized another call");
+      };
+      if (prior.user == account and not prior.revoked and prior.jobId == null and prior.expiresAt > Time.now()) open += 1;
+    };
+    if (open >= 3 or colonyDelegationState.grants.size() >= 10_000 or expiresAt <= Time.now() or not AgentLib.termsCurrent(termsState, account) or BillingLib.getAvailableSeconds(billingState, account) < maxSeconds) return #err("Call availability changed during payment verification; inspect the checkout");
+    let currentPreset = switch (ConfigLib.getPreset(configState, callPresetVoiceIds, presetId)) { case null return #err("Preset removed"); case (?v) v };
+    if (not IdentityLib.sameAccount(identityState, caller, currentPreset.ownerId)) return #err("Preset owner changed");
     let grant : AgentTypes.ColonyCallGrant = {
       id = colonyDelegationState.nextId;
       user = account;
@@ -774,7 +825,7 @@ mixin (
       expiresAt;
       revoked = false;
       jobId = null;
-      idempotencyKey = "";
+      idempotencyKey = "verified-payment:" # commissionPaymentId.toText();
     };
     colonyDelegationState.nextId += 1;
     colonyDelegationState.grants.add(grant.id, grant);

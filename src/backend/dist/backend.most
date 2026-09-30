@@ -1,16 +1,16 @@
 // Version: 1.0.0
-type AdminConfig__39165486 =
+type AdminConfig__36162014 =
   {
     var twilioAccountSid : Text;
     var twilioAuthToken : Text;
     var twilioFromNumber : Text;
     var xaiApiKey : Text
   };
-type AgentCallCaptureOptions__748825707 =
+type AgentCallCaptureOptions__597500174 =
   {consentConfirmed : Bool; recordAudio : Bool; saveTranscript : Bool};
-type AgentCallJobStatus__756770139 =
+type AgentCallJobStatus__1065128923 =
   {#canceled; #claimed; #dispatched; #failed; #queued};
-type AgentConsentGrant__438557054 =
+type AgentConsentGrant__819570921 =
   {
     expiresAt : Int;
     grantedAt : Int;
@@ -18,16 +18,16 @@ type AgentConsentGrant__438557054 =
     recordAudio : Bool;
     saveTranscript : Bool
   };
-type AgentProfile__762317847 =
+type AgentProfile__748171481 =
   {
     createdAt : Int;
     displayName : Text;
     principal : Principal;
     updatedAt : Int
   };
-type AnsweringCaptureOptions__670792049 =
+type AnsweringCaptureOptions__754259101 =
   {consentConfirmed : Bool; recordAudio : Bool; saveTranscript : Bool};
-type AnsweringLiveSession__938847064 =
+type AnsweringLiveSession__281546138 =
   {
     allowedSeconds : Nat;
     answeringPresetId : Nat;
@@ -39,10 +39,10 @@ type AnsweringLiveSession__938847064 =
     startedAt : Int;
     userId : Principal
   };
-type AnsweringPresetStatus__1044649963 = {#pendingVerification; #verified};
-type AudioFormat__636819229 = {#pcm; #pcma; #pcmu};
-type CallId__50156140 = Nat;
-type CallRecord__1048115794 =
+type AnsweringPresetStatus__939164445 = {#pendingVerification; #verified};
+type AudioFormat__500525639 = {#pcm; #pcma; #pcmu};
+type CallId__642369320 = Nat;
+type CallRecord__52248411 =
   {
     var callSid : ?Text;
     var endTime : ?Int;
@@ -50,13 +50,13 @@ type CallRecord__1048115794 =
     presetId : Nat;
     recipientPhone : Text;
     startTime : Int;
-    var status : CallStatus__146111139;
+    var status : CallStatus__25797007;
     var transcript : ?Text;
     userId : Principal
   };
-type CallReservationStatus__317176735 =
+type CallReservationStatus__1062823786 =
   {#active; #canceled; #finished; #reserved};
-type CallReservation__554847138 =
+type CallReservation__75906890 =
   {
     allowedSeconds : Nat;
     var billedSeconds : ?Nat;
@@ -71,15 +71,15 @@ type CallReservation__554847138 =
     presetId : Nat;
     recipientPhone : Text;
     var startedAt : ?Int;
-    var status : CallReservationStatus__317176735;
+    var status : CallReservationStatus__1062823786;
     var transcript : ?Text;
     var usedSeconds : ?Nat;
     user : Principal
   };
-type CallStatus__146111139 = {#completed; #failed; #inProgress; #pending};
-type ColonyCallGrant__533342173 =
+type CallStatus__25797007 = {#completed; #failed; #inProgress; #pending};
+type ColonyCallGrant__1016669901 =
   {
-    captureOptions : AgentCallCaptureOptions__748825707;
+    captureOptions : AgentCallCaptureOptions__597500174;
     commissionPaymentId : Nat;
     expiresAt : Int;
     genesisJobId : Nat;
@@ -93,15 +93,15 @@ type ColonyCallGrant__533342173 =
     user : Principal;
     worker : Principal
   };
-type Data__805294624<K, V> =
-  {var count : Nat__330966433; kvs : [var ?(K, V)]};
-type IcpPurchaseStatus__618425220 = {#completed; #failed; #pending};
-type IcpTransferStatus__117441370 = {#completed; #failed; #pending};
-type IcrcAccount__283717806 = {owner : Principal; subaccount : ?Blob};
-type Internal__518730063<K, V> =
-  {children : [var ?Node__505793138<K, V>]; data : Data__805294624<K, V>};
-type Leaf__334868416<K, V> = {data : Data__805294624<K, V>};
-type LinkOffer__93366386 =
+type Data__917616847<K, V> =
+  {var count : Nat__1011761150; kvs : [var ?(K, V)]};
+type IcpPurchaseStatus__378484762 = {#completed; #failed; #pending};
+type IcpTransferStatus__181614698 = {#completed; #failed; #pending};
+type IcrcAccount__824881519 = {owner : Principal; subaccount : ?Blob};
+type Internal__150062700<K, V> =
+  {children : [var ?Node__362690243<K, V>]; data : Data__917616847<K, V>};
+type Leaf__147444601<K, V> = {data : Data__917616847<K, V>};
+type LinkOffer__10813655 =
   {
     code : Text;
     createdAt : Int;
@@ -109,22 +109,22 @@ type LinkOffer__93366386 =
     issuer : Principal;
     primary : Principal
   };
-type List__217315018<T> =
+type List__338271302<T> =
   {
-    var blockIndex : Nat__330966433;
+    var blockIndex : Nat__1011761150;
     var blocks : [var [var ?T]];
-    var elementIndex : Nat__330966433
+    var elementIndex : Nat__1011761150
   };
-type List__377243759<T> = List__217315018<T>;
-type Map__202391414<K, V> = Map__746900492<K, V>;
-type Map__668027795<K, V> = Map__202391414<K, V>;
-type Map__746900492<K, V> =
-  {var root : Node__505793138<K, V>; var size : Nat__330966433};
-type Nat__330966433 = Nat__920180692;
+type List__341252331<T> = List__338271302<T>;
+type Map__254296833<K, V> = Map__61810120<K, V>;
+type Map__61810120<K, V> = Map__711417882<K, V>;
+type Map__711417882<K, V> =
+  {var root : Node__362690243<K, V>; var size : Nat__1011761150};
+type Nat__1011761150 = Nat__920180692;
 type Nat__920180692 = Nat;
-type Node__505793138<K, V> =
-  {#internal : Internal__518730063<K, V>; #leaf : Leaf__334868416<K, V>};
-type PendingCallEnd__323755429 =
+type Node__362690243<K, V> =
+  {#internal : Internal__150062700<K, V>; #leaf : Leaf__147444601<K, V>};
+type PendingCallEnd__893732215 =
   {
     callId : ?Nat;
     callSid : ?Text;
@@ -134,29 +134,29 @@ type PendingCallEnd__323755429 =
     reservationId : Text;
     serverSessionId : ?Text
   };
-type PresetId__907684105 = Nat;
-type PurchaseIntentStatus__27367996 = {#canceled; #paid; #pending};
-type PurchaseIntent__34827359 =
+type PresetId__8920344 = Nat;
+type PurchaseIntentStatus__438133736 = {#canceled; #paid; #pending};
+type PurchaseIntent__399492561 =
   {
     amountCents : Nat;
     createdAt : Int;
     id : Text;
-    mode : StripeMode__218964639;
+    mode : StripeMode__732299346;
     packageId : Text;
     var paidAt : ?Int;
     seconds : Nat;
-    var status : PurchaseIntentStatus__27367996;
+    var status : PurchaseIntentStatus__438133736;
     var stripeSessionId : ?Text;
     user : Principal
   };
-type SampleRate__573132046 =
+type SampleRate__591095646 =
   {#hz16000; #hz22050; #hz24000; #hz32000; #hz44100; #hz48000; #hz8000};
-type StoredAgentCallJob__42219153 =
+type StoredAgentCallJob__521053772 =
   {
     callId : Nat;
     var callSid : ?Text;
     callToken : Text;
-    captureOptions : AgentCallCaptureOptions__748825707;
+    captureOptions : AgentCallCaptureOptions__597500174;
     var claimedAt : ?Int;
     createdAt : Int;
     var error : ?Text;
@@ -167,13 +167,13 @@ type StoredAgentCallJob__42219153 =
     recipientPhone : Text;
     reservationId : Text;
     var serverSessionId : ?Text;
-    var status : AgentCallJobStatus__756770139;
+    var status : AgentCallJobStatus__1065128923;
     user : Principal
   };
-type StoredAnsweringPreset__245320083 =
+type StoredAnsweringPreset__731606231 =
   {
-    audioFormat : AudioFormat__636819229;
-    captureOptions : AnsweringCaptureOptions__670792049;
+    audioFormat : AudioFormat__500525639;
+    captureOptions : AnsweringCaptureOptions__754259101;
     createdAt : Int;
     enabled : Bool;
     id : Nat;
@@ -181,29 +181,29 @@ type StoredAnsweringPreset__245320083 =
     name : Text;
     ownerId : Principal;
     phoneNumber : Text;
-    sampleRate : SampleRate__573132046;
+    sampleRate : SampleRate__591095646;
     systemPrompt : Text;
-    toolsEnabled : ToolsEnabled__986425756;
-    turnDetection : TurnDetection__863381054;
+    toolsEnabled : ToolsEnabled__811196006;
+    turnDetection : TurnDetection__119024512;
     updatedAt : Int;
-    verificationStatus : AnsweringPresetStatus__1044649963;
+    verificationStatus : AnsweringPresetStatus__939164445;
     verifiedAt : ?Int;
-    voice : Voice__621709888;
+    voice : Voice__817973016;
     webhookSecret : Text
   };
-type StoredCallPreset__155819866 =
+type StoredCallPreset__999262307 =
   {
-    audioFormat : AudioFormat__636819229;
+    audioFormat : AudioFormat__500525639;
     id : Nat;
     name : Text;
     ownerId : Principal;
-    sampleRate : SampleRate__573132046;
+    sampleRate : SampleRate__591095646;
     systemPrompt : Text;
-    toolsEnabled : ToolsEnabled__986425756;
-    turnDetection : TurnDetection__863381054;
-    voice : Voice__621709888
+    toolsEnabled : ToolsEnabled__811196006;
+    turnDetection : TurnDetection__119024512;
+    voice : Voice__817973016
   };
-type StoredIcpPurchase__69591429 =
+type StoredIcpPurchase__325997608 =
   {
     amountE8s : Nat;
     var blockIndex : ?Nat;
@@ -213,10 +213,10 @@ type StoredIcpPurchase__69591429 =
     id : Text;
     packageId : Text;
     seconds : Nat;
-    var status : IcpPurchaseStatus__618425220;
+    var status : IcpPurchaseStatus__378484762;
     user : Principal
   };
-type StoredIcpTransfer__1037220190 =
+type StoredIcpTransfer__712842095 =
   {
     amountE8s : Nat;
     var blockIndex : ?Nat;
@@ -224,32 +224,32 @@ type StoredIcpTransfer__1037220190 =
     createdAtNanos : Nat64;
     var error : ?Text;
     id : Text;
-    var status : IcpTransferStatus__117441370;
-    to : IcrcAccount__283717806;
+    var status : IcpTransferStatus__181614698;
+    to : IcrcAccount__824881519;
     user : Principal
   };
-type StripeMode__218964639 = {#live; #test};
-type SystemLog__399293625 =
+type StripeMode__732299346 = {#live; #test};
+type SystemLog__934239505 =
   {
     callId : ?Nat;
     level : {#error_; #info; #warn};
     message : Text;
     timestamp : Int
   };
-type TermsAcceptance__760938791 = {acceptedAt : Int; version : Text};
-type ToolsEnabled__986425756 =
+type TermsAcceptance__215543817 = {acceptedAt : Int; version : Text};
+type ToolsEnabled__811196006 =
   {functionCalling : Bool; webSearch : Bool; xSearch : Bool};
-type TurnDetection__863381054 =
+type TurnDetection__119024512 =
   {
     prefixPaddingMs : Nat;
     serverVad : Bool;
     silenceDurationMs : Nat;
     threshold : Float
   };
-type TwilioLine__537615045 =
+type TwilioLine__653727659 =
   {enabled : Bool; name : Text; phoneNumber : Text};
-type UserRole__391350541 = {#admin; #guest; #user};
-type Voice__621709888 = {#ara; #eve; #leo; #rex; #sal};
+type UserRole__1073662873 = {#admin; #guest; #user};
+type Voice__817973016 = {#ara; #eve; #leo; #rex; #sal};
 actor {
   stable ANSWERING_PRESET_ID_OFFSET : Nat;
   stable COLONY_GRANT_TTL_NS : Int;
@@ -266,98 +266,98 @@ actor {
   stable accessControlState :
     {
       var adminAssigned : Bool;
-      userRoles : Map__668027795<Principal, UserRole__391350541>
+      userRoles : Map__254296833<Principal, UserRole__1073662873>
     };
   stable agentConsentState :
-    {grants : Map__668027795<Principal, AgentConsentGrant__438557054>};
+    {grants : Map__254296833<Principal, AgentConsentGrant__819570921>};
   stable agentState :
     {
-      callJobIdempotencyIndex : Map__668027795<Text, Text>;
-      callJobs : Map__668027795<Text, StoredAgentCallJob__42219153>;
+      callJobIdempotencyIndex : Map__254296833<Text, Text>;
+      callJobs : Map__254296833<Text, StoredAgentCallJob__521053772>;
       nextCallJobId : {var value : Nat};
       nextPurchaseId : {var value : Nat};
       nextTransferId : {var value : Nat};
-      paymentOperationCounts : Map__668027795<Principal, Nat>;
+      paymentOperationCounts : Map__254296833<Principal, Nat>;
       var pricingExpiresAt : Int;
       var pricingLastAttemptAt : Int;
       var pricingSourceTimestampSeconds : Nat64;
       var pricingUpdatedAt : Int;
-      profiles : Map__668027795<Principal, AgentProfile__762317847>;
-      purchases : Map__668027795<Text, StoredIcpPurchase__69591429>;
-      transfers : Map__668027795<Text, StoredIcpTransfer__1037220190>;
+      profiles : Map__254296833<Principal, AgentProfile__748171481>;
+      purchases : Map__254296833<Text, StoredIcpPurchase__325997608>;
+      transfers : Map__254296833<Text, StoredIcpTransfer__712842095>;
       var usdRate : Nat64;
       var usdRateDecimals : Nat32;
-      userCallJobs : Map__668027795<Principal, List__377243759<Text>>
+      userCallJobs : Map__254296833<Principal, List__341252331<Text>>
     };
   stable answeringLiveState :
-    {activeSessions : Map__668027795<Text, AnsweringLiveSession__938847064>};
+    {activeSessions : Map__254296833<Text, AnsweringLiveSession__281546138>};
   stable answeringPresetVoiceIds :
     {
-      var root : Node__505793138<PresetId__907684105, Text>;
-      var size : Nat__330966433
+      var root : Node__362690243<PresetId__8920344, Text>;
+      var size : Nat__1011761150
     };
   stable answeringState :
     {
       nextAnsweringPresetId : {var value : Nat};
-      presetIdByPhoneNumber : Map__668027795<Text, PresetId__907684105>;
-      presetIdByWebhookSecret : Map__668027795<Text, PresetId__907684105>;
+      presetIdByPhoneNumber : Map__254296833<Text, PresetId__8920344>;
+      presetIdByWebhookSecret : Map__254296833<Text, PresetId__8920344>;
       presetIdsByOwner :
-        Map__668027795<Principal, List__377243759<PresetId__907684105>>;
+        Map__254296833<Principal, List__341252331<PresetId__8920344>>;
       presets :
-        Map__668027795<PresetId__907684105, StoredAnsweringPreset__245320083>
+        Map__254296833<PresetId__8920344, StoredAnsweringPreset__731606231>
     };
   stable billingState :
     {
-      balances : Map__668027795<Principal, Nat>;
-      callReservations : Map__668027795<Text, CallReservation__554847138>;
+      balances : Map__254296833<Principal, Nat>;
+      callReservations : Map__254296833<Text, CallReservation__75906890>;
       nextPurchaseIntentId : {var value : Nat};
       nextReservationId : {var value : Nat};
-      processedStripeSessions : Map__668027795<Text, Bool>;
-      purchaseIntents : Map__668027795<Text, PurchaseIntent__34827359>;
-      reservedSecondsByUser : Map__668027795<Principal, Nat>
+      processedStripeSessions : Map__254296833<Text, Bool>;
+      purchaseIntents : Map__254296833<Text, PurchaseIntent__399492561>;
+      reservedSecondsByUser : Map__254296833<Principal, Nat>
     };
   stable callEndState :
-    {pendingEnds : Map__668027795<Text, PendingCallEnd__323755429>};
+    {pendingEnds : Map__254296833<Text, PendingCallEnd__893732215>};
   stable callPresetVoiceIds :
     {
-      var root : Node__505793138<PresetId__907684105, Text>;
-      var size : Nat__330966433
+      var root : Node__362690243<PresetId__8920344, Text>;
+      var size : Nat__1011761150
     };
   stable callsState :
     {
-      callRecords : Map__668027795<CallId__50156140, CallRecord__1048115794>;
+      callRecords : Map__254296833<CallId__642369320, CallRecord__52248411>;
       nextCallId : {var value : Nat};
-      systemLogs : List__377243759<SystemLog__399293625>;
+      systemLogs : List__341252331<SystemLog__934239505>;
       userCallIndex :
-        Map__668027795<Principal, List__377243759<CallId__50156140>>
+        Map__254296833<Principal, List__341252331<CallId__642369320>>
     };
   stable colonyDelegationState :
     {
-      grants : Map__668027795<Nat, ColonyCallGrant__533342173>;
+      grants : Map__254296833<Nat, ColonyCallGrant__1016669901>;
       var nextId : Nat;
-      reservationCaps : Map__668027795<Text, Nat>
+      reservationCaps : Map__254296833<Text, Nat>
     };
   stable configState :
     {
-      adminConfig : AdminConfig__39165486;
+      adminConfig : AdminConfig__36162014;
       nextPresetId : {var value : Nat};
       presets :
-        Map__668027795<PresetId__907684105, StoredCallPreset__155819866>
+        Map__254296833<PresetId__8920344, StoredCallPreset__999262307>
     };
   stable hardcodedAdmins : [Principal];
   stable identityState :
     {
-      aliases : Map__668027795<Principal, Principal>;
-      linkOffers : Map__668027795<Text, LinkOffer__93366386>;
+      aliases : Map__254296833<Principal, Principal>;
+      linkOffers : Map__254296833<Text, LinkOffer__10813655>;
       nextOfferNonce : {var value : Nat};
       secondariesByPrimary :
-        Map__668027795<Principal, List__377243759<Principal>>
+        Map__254296833<Principal, List__341252331<Principal>>
     };
   stable termsState :
-    {acceptances : Map__668027795<Principal, TermsAcceptance__760938791>};
+    {acceptances : Map__254296833<Principal, TermsAcceptance__215543817>};
   stable twilioLineState :
     {
-      var root : Node__505793138<Text, TwilioLine__537615045>;
-      var size : Nat__330966433
+      var root : Node__362690243<Text, TwilioLine__653727659>;
+      var size : Nat__1011761150
     }
 };

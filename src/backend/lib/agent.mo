@@ -247,7 +247,7 @@ module {
   };
 
   public func icpPackages(state : State) : [AgentTypes.IcpPhoneTimePackage] {
-    BillingLib.packages().map<BillingTypes.BillingPackage, AgentTypes.IcpPhoneTimePackage>(
+    let standard = BillingLib.packages().map(
       func(phonePackage) {
         packageFromUsd(
           state,
@@ -258,6 +258,12 @@ module {
         )
       }
     );
+    // Small ICP-only top-up avoids forcing a $5 purchase for one approved call.
+    [packageFromUsd(state, "colony_call_5", "$1 - 5 minutes", 100, 300)].concat(standard)
+  };
+
+  public func colonyCommissionE8s(state : State) : Nat {
+    packageFromUsd(state, "commission", "Agent commission", 20, 0).priceE8s
   };
 
   public func getIcpPackage(
@@ -370,6 +376,7 @@ module {
         capability("Initialize agent access", "agentInitialize", "Register the authenticated app principal and create its isolated in-app ICP account identity.", true),
         capability("Check balances", "agentGetAccountStatus", "Read ICP deposit balance, ledger fee, prepaid phone time, low-balance guidance, and ICP pricing.", true),
         capability("Refresh ICP pricing", "agentRefreshIcpPricing", "Refresh the cached ICP/USD quote from the Exchange Rate Canister at most once per six-hour pricing window.", true),
+        capability("Buy phone time at approved maximum", "agentPurchasePhoneTimeQuoted", "Pay from the customer's ICP subaccount with an atomic maximum-price guard; retain the key on an uncertain result.", true),
         capability("Buy phone time", "agentPurchasePhoneTime", "Pay from the principal's ICP deposit subaccount and credit the same phone-time packages sold through Stripe (shared with answering).", true),
         capability("Transfer ICP", "agentTransferIcp", "Transfer unspent ICP from the in-app subaccount to an ICRC-1 account.", true),
         capability("Manage outbound presets", "createPreset", "Create, list, update, duplicate, and delete outbound call presets.", true),
@@ -400,7 +407,8 @@ module {
     "Outbound: createPreset / listMyPresets → agentQueueCall → agentListCallJobs / agentEndCall.\n" #
     "Answering: collect Twilio E.164 + instructions → createAnsweringPreset → give user webhook " #
     "https://voicecall.richardhery.com/answering/incoming/{webhookSecret} → user verifies by calling the number → setAnsweringPresetEnabled.\n" #
-    "Payments: agentGetAccountIdentity deposit → agentPurchasePhoneTime credits shared phone time for calls and answering.\n" #
+    "Payments: agentGetAccountIdentity deposit → agentPurchasePhoneTimeQuoted(packageId, key, maximumE8s) atomically limits the approved price and credits shared phone time. Legacy agentPurchasePhoneTime remains available.\n" #
+    "Genesis: colony_call_5 is an ICP-only $1 five-minute top-up. grantColonyCall verifies the accepted colony job and confirmed organism commission; one grant caps one call at 300 seconds. Saved approvals preserve the original commission rate.\n" #
     "Cache getAgentGuide once per task. Refresh ICP pricing only when stale. Poll jobs with backoff.\n" #
     "Full guide: call getAgentGuide. Static docs: https://voicecallai.online/llms.txt\n"
   };

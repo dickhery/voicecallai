@@ -13,7 +13,7 @@ Candid interface: https://voicecallai.online/agent-api.did
 ## About the service and payment choices
 
 VoiceCall AI offers outbound AI phone conversations and inbound answering on a user-owned Twilio number. Human setup and FAQ: https://voicecallai.online/guide.html
-Packages: pack_5 = $5 / 30 minutes; pack_10 = $10 / 60 minutes; pack_20 = $20 / 120 minutes. Verify current packages with getAgentGuide before purchase. ICP quotes vary and ledger fees apply.
+ICP packages: colony_call_5 = $1 / 5 minutes; pack_5 = $5 / 30 minutes; pack_10 = $10 / 60 minutes; pack_20 = $20 / 120 minutes. Verify current packages with getAgentGuide before purchase. ICP quotes vary and ledger fees apply.
 A user can sign in at https://voicecallai.online, buy time through Stripe in the dashboard, then connect an MCP assistant using the same Internet Identity for this app. Existing phone time needs no ICP deposit. Compare the app account identity if balances differ; Settings offers account linking.
 Without an authenticated MCP connector or another authorized IC client, an assistant can explain the site but cannot execute calls or purchases.
 
@@ -50,7 +50,7 @@ Without an authenticated MCP connector or another authorized IC client, an assis
 1. Call agentGetAccountIdentity and show the exact ICRC-1 depositAccount (never invent the subaccount).
 2. User transfers ICP to that deposit account.
 3. If pricing.isFresh is false, call agentRefreshIcpPricing once; otherwise use the cached quote.
-4. After the user chooses a package, call agentPurchasePhoneTime(packageId, uniqueIdempotencyKey). ICP moves from the user's deposit subaccount to treasury AccountIdentifier 0f69d493853ec6e60909141168644d3def072ec2569021317547195931b6dc7c; then seconds are credited to the shared phone-time balance used by web Stripe, outbound calls, and answering.
+4. After the user chooses a package, call agentPurchasePhoneTimeQuoted(packageId, uniqueIdempotencyKey, displayedPriceE8s). A higher current price is rejected before debit; retries retain the original invoice. ICP moves from the user's deposit subaccount to treasury AccountIdentifier 0f69d493853ec6e60909141168644d3def072ec2569021317547195931b6dc7c; then seconds are credited to the shared phone-time balance used by web Stripe, outbound calls, and answering.
 5. Confirm with one agentGetAccountStatus read that availableSeconds increased.
 
 The off-chain VoiceCall AI bridge securely claims queued jobs and connects Twilio Media Streams to xAI Voice. Agents do not need a Twilio or xAI tool of their own.

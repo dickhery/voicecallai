@@ -81,7 +81,7 @@ Candid interface: ${productionOrigin}/agent-api.did
 ## About the service and payment choices
 
 VoiceCall AI offers outbound AI phone conversations and inbound answering on a user-owned Twilio number. Human setup and FAQ: ${productionOrigin}/guide.html
-Packages: pack_5 = $5 / 30 minutes; pack_10 = $10 / 60 minutes; pack_20 = $20 / 120 minutes. Verify current packages with getAgentGuide before purchase. ICP quotes vary and ledger fees apply.
+ICP packages: colony_call_5 = $1 / 5 minutes; pack_5 = $5 / 30 minutes; pack_10 = $10 / 60 minutes; pack_20 = $20 / 120 minutes. Verify current packages with getAgentGuide before purchase. ICP quotes vary and ledger fees apply.
 A user can sign in at ${productionOrigin}, buy time through Stripe in the dashboard, then connect an MCP assistant using the same Internet Identity for this app. Existing phone time needs no ICP deposit. Compare the app account identity if balances differ; Settings offers account linking.
 Without an authenticated MCP connector or another authorized IC client, an assistant can explain the site but cannot execute calls or purchases.
 
@@ -118,7 +118,7 @@ Without an authenticated MCP connector or another authorized IC client, an assis
 1. Call agentGetAccountIdentity and show the exact ICRC-1 depositAccount (never invent the subaccount).
 2. User transfers ICP to that deposit account.
 3. If pricing.isFresh is false, call agentRefreshIcpPricing once; otherwise use the cached quote.
-4. After the user chooses a package, call agentPurchasePhoneTime(packageId, uniqueIdempotencyKey). ICP moves from the user's deposit subaccount to treasury AccountIdentifier 0f69d493853ec6e60909141168644d3def072ec2569021317547195931b6dc7c; then seconds are credited to the shared phone-time balance used by web Stripe, outbound calls, and answering.
+4. After the user chooses a package, call agentPurchasePhoneTimeQuoted(packageId, uniqueIdempotencyKey, displayedPriceE8s). A higher current price is rejected before debit; retries retain the original invoice. ICP moves from the user's deposit subaccount to treasury AccountIdentifier 0f69d493853ec6e60909141168644d3def072ec2569021317547195931b6dc7c; then seconds are credited to the shared phone-time balance used by web Stripe, outbound calls, and answering.
 5. Confirm with one agentGetAccountStatus read that availableSeconds increased.
 
 The off-chain VoiceCall AI bridge securely claims queued jobs and connects Twilio Media Streams to xAI Voice. Agents do not need a Twilio or xAI tool of their own.
@@ -153,7 +153,7 @@ The calling API belongs to ${canisters.backend}; ${canisters.frontend} serves as
 
 ## Human onboarding and Stripe
 
-Read ${productionOrigin}/guide.html for setup and FAQ. Users can sign in on the website, buy prepaid time with Stripe, then authorize an MCP assistant for the same app account. Stripe-funded time needs no ICP deposit. Packages are $5 / 30 minutes, $10 / 60 minutes, and $20 / 120 minutes; verify the current guide before payment. ICP prices depend on the live quote and ledger fee. If balances differ, compare account identities and use the Settings account-linking flow instead of buying twice.
+Read ${productionOrigin}/guide.html for setup and FAQ. Users can sign in on the website, buy prepaid time with Stripe, then authorize an MCP assistant for the same app account. Stripe-funded time needs no ICP deposit. Stripe packages are $5 / 30 minutes, $10 / 60 minutes, and $20 / 120 minutes; ICP also offers colony_call_5 for $1 / 5 minutes; verify the current guide before payment. ICP prices depend on the live quote and ledger fee. If balances differ, compare account identities and use the Settings account-linking flow instead of buying twice.
 
 ## Authentication
 
@@ -210,7 +210,7 @@ Use agentGetAccountIdentity to obtain the exact ICRC-1 depositAccount; never gue
 
 1. User sends ICP (ICRC-1) to depositAccount.
 2. If the cached quote is stale (pricing.isFresh false), call agentRefreshIcpPricing once. A real refresh uses the Exchange Rate Canister and is globally rate-limited and cached for six hours.
-3. Call agentPurchasePhoneTime only after the user chooses a package and authorizes payment. Pass a unique idempotency key. Settlement pays operator treasury AccountIdentifier 0f69d493853ec6e60909141168644d3def072ec2569021317547195931b6dc7c (not the canister default account).
+3. Call agentPurchasePhoneTimeQuoted only after the user chooses a package and authorizes payment. Pass the package ID, a unique idempotency key, and the displayed ICP price in e8s as the maximum debit. Reuse the same key to recover an interrupted purchase. Settlement pays operator treasury AccountIdentifier 0f69d493853ec6e60909141168644d3def072ec2569021317547195931b6dc7c (not the canister default account).
 4. On success, package seconds are credited to the shared prepaid phone-time balance (also used by Stripe web purchases). Confirm with one agentGetAccountStatus read.
 5. Use agentTransferIcp to move unspent ICP. Purchases and transfers require their own idempotency keys. Reuse a key only to retry the same action after a retryable failure.
 
@@ -301,6 +301,7 @@ const structuredGuide = {
     "agentInitialize",
     "agentGetAccountIdentity",
     "agentGetAccountStatus",
+    "agentPurchasePhoneTimeQuoted",
     "agentPurchasePhoneTime",
     "listMyPresets",
     "createPreset",

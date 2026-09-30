@@ -68,6 +68,7 @@
     "agentInitialize",
     "agentGetAccountIdentity",
     "agentGetAccountStatus",
+    "agentPurchasePhoneTimeQuoted",
     "agentPurchasePhoneTime",
     "listMyPresets",
     "createPreset",

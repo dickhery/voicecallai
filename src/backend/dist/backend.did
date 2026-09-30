@@ -372,6 +372,8 @@ type Backend =
    agentListCallJobs: () -> (vec AgentCallJob) query;
    agentPurchasePhoneTime: (packageId: text, idempotencyKey: text) ->
     (IcpPurchaseResult);
+   agentPurchasePhoneTimeQuoted: (packageId: text, idempotencyKey: text,
+    expectedPriceE8s: nat) -> (IcpPurchaseResult);
    agentQueueCall: (input: AgentCallInput) -> (AgentCallResult);
    agentRefreshIcpPricing: () -> (IcpPricingResult);
    agentTransferIcp: (to: IcrcAccount, amountE8s: nat, idempotencyKey:
