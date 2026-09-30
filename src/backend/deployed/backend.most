@@ -10,6 +10,14 @@ type AgentCallCaptureOptions__597500174 =
   {consentConfirmed : Bool; recordAudio : Bool; saveTranscript : Bool};
 type AgentCallJobStatus__1065128923 =
   {#canceled; #claimed; #dispatched; #failed; #queued};
+type AgentConsentGrant__819570921 =
+  {
+    expiresAt : Int;
+    grantedAt : Int;
+    placeCalls : Bool;
+    recordAudio : Bool;
+    saveTranscript : Bool
+  };
 type AgentProfile__748171481 =
   {
     createdAt : Int;
@@ -69,6 +77,22 @@ type CallReservation__75906890 =
     user : Principal
   };
 type CallStatus__25797007 = {#completed; #failed; #inProgress; #pending};
+type ColonyCallGrant__1016669901 =
+  {
+    captureOptions : AgentCallCaptureOptions__597500174;
+    commissionPaymentId : Nat;
+    expiresAt : Int;
+    genesisJobId : Nat;
+    id : Nat;
+    idempotencyKey : Text;
+    jobId : ?Text;
+    maxSeconds : Nat;
+    presetId : Nat;
+    recipientPhone : Text;
+    revoked : Bool;
+    user : Principal;
+    worker : Principal
+  };
 type Data__917616847<K, V> =
   {var count : Nat__1011761150; kvs : [var ?(K, V)]};
 type IcpPurchaseStatus__378484762 = {#completed; #failed; #pending};
@@ -77,6 +101,14 @@ type IcrcAccount__824881519 = {owner : Principal; subaccount : ?Blob};
 type Internal__150062700<K, V> =
   {children : [var ?Node__362690243<K, V>]; data : Data__917616847<K, V>};
 type Leaf__147444601<K, V> = {data : Data__917616847<K, V>};
+type LinkOffer__10813655 =
+  {
+    code : Text;
+    createdAt : Int;
+    expiresAt : Int;
+    issuer : Principal;
+    primary : Principal
+  };
 type List__338271302<T> =
   {
     var blockIndex : Nat__1011761150;
@@ -204,6 +236,7 @@ type SystemLog__934239505 =
     message : Text;
     timestamp : Int
   };
+type TermsAcceptance__215543817 = {acceptedAt : Int; version : Text};
 type ToolsEnabled__811196006 =
   {functionCalling : Bool; webSearch : Bool; xSearch : Bool};
 type TurnDetection__119024512 =
@@ -219,17 +252,24 @@ type UserRole__1073662873 = {#admin; #guest; #user};
 type Voice__817973016 = {#ara; #eve; #leo; #rex; #sal};
 actor {
   stable ANSWERING_PRESET_ID_OFFSET : Nat;
+  stable COLONY_GRANT_TTL_NS : Int;
+  stable COLONY_MAX_CALL_SECONDS : Nat;
+  stable COLONY_WORKER : Principal;
+  stable ICP_TRANSFER_FEE_E8S : Nat64;
   stable MAX_CALL_CAPTURE_ERROR_CHARS : Nat;
   stable MAX_CALL_TRANSCRIPT_CHARS : Nat;
   stable MAX_DISPLAY_NAME_CHARS : Nat;
   stable MAX_IDEMPOTENCY_KEY_CHARS : Nat;
   stable MAX_TRANSFER_E8S : Nat;
+  stable PHONE_TIME_PURCHASE_MEMO : Nat64;
   stable PRICING_RETRY_COOLDOWN_NS : Int;
   stable accessControlState :
     {
       var adminAssigned : Bool;
       userRoles : Map__254296833<Principal, UserRole__1073662873>
     };
+  stable agentConsentState :
+    {grants : Map__254296833<Principal, AgentConsentGrant__819570921>};
   stable agentState :
     {
       callJobIdempotencyIndex : Map__254296833<Text, Text>;
@@ -291,6 +331,12 @@ actor {
       userCallIndex :
         Map__254296833<Principal, List__341252331<CallId__642369320>>
     };
+  stable colonyDelegationState :
+    {
+      grants : Map__254296833<Nat, ColonyCallGrant__1016669901>;
+      var nextId : Nat;
+      reservationCaps : Map__254296833<Text, Nat>
+    };
   stable configState :
     {
       adminConfig : AdminConfig__36162014;
@@ -298,6 +344,17 @@ actor {
       presets :
         Map__254296833<PresetId__8920344, StoredCallPreset__999262307>
     };
+  stable hardcodedAdmins : [Principal];
+  stable identityState :
+    {
+      aliases : Map__254296833<Principal, Principal>;
+      linkOffers : Map__254296833<Text, LinkOffer__10813655>;
+      nextOfferNonce : {var value : Nat};
+      secondariesByPrimary :
+        Map__254296833<Principal, List__341252331<Principal>>
+    };
+  stable termsState :
+    {acceptances : Map__254296833<Principal, TermsAcceptance__215543817>};
   stable twilioLineState :
     {
       var root : Node__362690243<Text, TwilioLine__653727659>;
