@@ -370,6 +370,8 @@ type Backend =
    agentGetTermsStatus: () -> (TermsStatus) query;
    agentInitialize: (displayName: text) -> (AgentInitializeResult);
    agentListCallJobs: () -> (vec AgentCallJob) query;
+   agentPreviewCall: (input: AgentCallInput) ->
+    (AgentCallPreviewResult) query;
    agentPurchasePhoneTime: (packageId: text, idempotencyKey: text) ->
     (IcpPurchaseResult);
    agentPurchasePhoneTimeQuoted: (packageId: text, idempotencyKey: text,
@@ -608,6 +610,20 @@ type AgentCallResult =
  variant {
    err: AgentError;
    ok: AgentCallJob;
+ };
+type AgentCallPreviewResult = 
+ variant {
+   err: AgentError;
+   ok: AgentCallPreview;
+ };
+type AgentCallPreview = 
+ record {
+   availableSeconds: nat;
+   captureOptions: AgentCallCaptureOptions;
+   existingJob: opt AgentCallJob;
+   note: text;
+   presetId: nat;
+   recipientPhone: text;
  };
 type AgentCallJobStatus = 
  variant {

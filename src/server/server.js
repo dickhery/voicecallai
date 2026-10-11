@@ -1,4 +1,5 @@
 import { assertAllowedDestination, parseBlockedDestinations, FALSE_REPORT_RULES, OFFICIAL_IMPERSONATION_RULES, MINOR_SEXUAL_RULES, findRuleViolation } from "./call-safety.js";
+import { normalizeCaptureOptions, callFailurePayload, dispatchFailureMessage, CALL_REQUEST_VERSION } from "./call-request.js";
 import "dotenv/config";
 import { KEYPAD_TOOL, KEYPAD_INSTRUCTIONS, createPhoneKeypad, extractSuppliedExtension } from "./phone-keypad.js";
 import { CALL_LIFECYCLE_TOOLS, CALL_LIFECYCLE_INSTRUCTIONS, CALL_LIFECYCLE_LIMITS, createCallLifecycle } from "./call-lifecycle.js";
@@ -185,7 +186,8 @@ const DEFAULT_XAI_VOICES = [
 
 const APP_SAFETY_INSTRUCTIONS = [
   "VoiceCall AI safety policy:",
-  "Harmless pranks, jokes, and adult roleplay between adults are allowed. Do not refuse a call only because it is playful, flirtatious, or explicit between adults.",
+  "Ordinary lawful calls, harmless jokes and consensual adult roleplay are supported. Playful tone alone is not harmful intent.",
+  "Do not harass, stalk, coerce or make deceptive sexual solicitations. Respect required recording notices and participant permissions; customer capture authorization alone is not recipient consent.",
   "Do not threaten violence, blackmail, extort, or encourage real-world harm.",
   "Do not sexualize anyone under 18.",
   "Do not provide instructions that enable malware, credential theft, fraud, evasion of security controls, weapons, explosives, poisoning, or other malicious activity.",
@@ -580,8 +582,8 @@ function buildLiveDisclosureInstructions(systemPrompt, presetName = "") {
     return [
       "LIVE CHARACTER CONTINUITY (higher priority than conflicting preset text):",
       "- Stay inside the fictional character and premise, including a harmless prank or adult roleplay between adults.",
-      "- Do not volunteer that the call is AI-generated, automated, a prank, or a preset.",
-      "- Use the fictional name and role in the preset, including a made-up coworker or romantic interest. Do not claim to be police, emergency services, a court, a bank, or another government agency.",
+      "- Use the fictional name and role for entertainment without impersonating a real person or misrepresenting a real relationship. Do not use a fabricated coworker or romantic relationship to deceive the recipient into sexual interaction.",
+      "- If asked whether you are automated or AI, answer truthfully. Preserve any required compliance or recording disclosure. Do not claim to be police, emergency services, a court, a bank, or another government agency.",
       "- Do not threaten violence, blackmail, collect payment, or claim that a real emergency is happening.",
       "- If the person asks you to stop, or is frightened or distressed, end the call promptly and politely.",
     ].join("\n");
@@ -1329,18 +1331,6 @@ function toPlainAnsweringPreset(input = {}) {
       permissionConfirmed: Boolean(input.captureOptions?.consentConfirmed),
     },
   };
-}
-
-function normalizeCaptureOptions(input = {}) {
-  const saveTranscript = Boolean(input.saveTranscript);
-  const recordAudio = Boolean(input.recordAudio);
-  const permissionConfirmed = Boolean(input.permissionConfirmed);
-  if ((saveTranscript || recordAudio) && !permissionConfirmed) {
-    throw new Error(
-      "Confirm permission before saving call transcripts or recordings.",
-    );
-  }
-  return { saveTranscript, recordAudio, permissionConfirmed };
 }
 
 function clamp(value, min, max) {
@@ -3692,6 +3682,7 @@ app.get("/health", async (req, res) => {
     ok: true,
     phoneKeypad: { enabled: true, transport: "twilio-play-digits+inband-fallback", version: 2 },
     callLifecycle: { enabled: true, version: 2, beepDetection: true, ...CALL_LIFECYCLE_LIMITS },
+    callRequestVersion: CALL_REQUEST_VERSION,
     ready:
       setupIssues.length === 0 &&
       xaiConfigured &&
@@ -3999,9 +3990,7 @@ app.post("/initiate-call", async (req, res) => {
       okOrThrow(verified, "Unable to verify paid call reservation."),
     );
     const recipientPhone = normalizePhone(reservation.recipientPhone);
-    if (isEmergencyDestination(recipientPhone)) {
-      throw new Error(EMERGENCY_BLOCKED_MESSAGE);
-    }
+    assertAllowedDestination(recipientPhone, BLOCKED_OUTBOUND_NUMBERS);
     const rawPreset = unwrapOptional(
       await actor.getPresetForServer(BigInt(reservation.presetId)),
     );
@@ -4010,7 +3999,6 @@ app.post("/initiate-call", async (req, res) => {
       throw new Error("Reserved call preset was not found.");
     }
     const preset = toPlainPreset(storedPreset);
-    assertAllowedDestination(recipientPhone, BLOCKED_OUTBOUND_NUMBERS);
     assertSafeInstructionText(preset.systemPrompt, "Call preset instructions");
     const callId = String(req.body.callId || reservation.callId || "");
     if (callId && callId !== reservation.callId) {
@@ -4160,7 +4148,7 @@ app.post("/initiate-call", async (req, res) => {
         });
       }
     }
-    res.status(400).json({ ok: false, error: error.message });
+    res.status(400).json(callFailurePayload(error));
   }
 });
 
@@ -5655,12 +5643,7 @@ async function dispatchPendingAgentCallJobs() {
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || !payload.ok) {
-          throw new Error(
-            String(
-              payload.error ||
-                `Voice server rejected the agent call with HTTP ${response.status}.`,
-            ),
-          );
+          throw new Error(dispatchFailureMessage(payload, response.status));
         }
 
         const dispatchSnapshot = {

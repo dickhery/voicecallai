@@ -53,6 +53,7 @@ function assertValid(relativePath, body, contentType = "") {
   if (
     relativePath === "llms.txt" &&
     (!body.includes("getAgentGuide") ||
+      !body.includes("agentPreviewCall") ||
       !body.includes("agentQueueCall") ||
       !body.includes("agentGetLiveCallLink") ||
       !body.includes("Backend agent API canister"))
@@ -68,6 +69,7 @@ function assertValid(relativePath, body, contentType = "") {
   if (
     relativePath === "agent-api.did" &&
     (!body.includes("agentQueueCall") ||
+      !body.includes("agentPreviewCall") ||
       !body.includes("agentGetLiveCallLink"))
   ) {
     throw new Error(

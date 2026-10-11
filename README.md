@@ -2,6 +2,10 @@
 
 VoiceCall AI is an IC-hosted app with a separate Node.js voice bridge for Twilio Media Streams and xAI Realtime Voice.
 
+See [agent call behavior](docs/AGENT-CALLS.md) for query-only `agentPreviewCall`,
+capture authorization and failure diagnostics. Follow [Windows setup](docs/WINDOWS.md)
+to update the separate voice service and Genesis worker after an IC deployment.
+
 The Twilio error happened because the old code generated this webhook URL:
 
 ```text

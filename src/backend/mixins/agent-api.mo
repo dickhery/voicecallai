@@ -601,11 +601,11 @@ mixin (
     };
   };
 
-  /// Reserves prepaid phone time and queues a call for the external voice
-  /// bridge. It never exposes Twilio/xAI secrets or the reservation token.
-  public shared ({ caller }) func agentQueueCall(
+  /// Shared local validation for preview and queue; no writes or outcalls.
+  private func previewAgentCall(
+    caller : Principal,
     input : AgentTypes.AgentCallInput,
-  ) : async AgentTypes.AgentCallResult {
+  ) : AgentTypes.AgentCallPreviewResult {
     requireAgent(caller);
     let account = agentAccountOf(caller);
     switch (validateIdempotencyKey(input.idempotencyKey)) {
@@ -615,7 +615,16 @@ mixin (
       case null {};
     };
     switch (AgentLib.getCallJobByIdempotency(agentState, account, input.idempotencyKey)) {
-      case (?existing) { return #ok(withLiveAudio(AgentLib.toCallJob(existing))) };
+      case (?existing) {
+        return #ok({
+          recipientPhone = existing.recipientPhone;
+          presetId = existing.presetId;
+          captureOptions = existing.captureOptions;
+          availableSeconds = BillingLib.getAvailableSeconds(billingState, account);
+          existingJob = ?withLiveAudio(AgentLib.toCallJob(existing));
+          note = "This idempotency key already identifies a call. Queueing with this key returns that job without another reservation or dial.";
+        });
+      };
       case null {};
     };
     if (not ConfigLib.isE164(input.recipientPhone)) {
@@ -672,6 +681,39 @@ mixin (
         account,
       ));
     };
+    #ok({
+      recipientPhone = input.recipientPhone;
+      presetId = input.presetId;
+      captureOptions = AgentLib.customerCapture(input.captureOptions);
+      availableSeconds = available;
+      existingJob = null;
+      note = "App checks passed. This query did not reserve time or place a call. The voice bridge still validates instructions, operator-blocked destinations and provider availability. Capture authorization records the customer's request, not another participant's agreement.";
+    });
+  };
+
+  /// Optional authenticated preflight, without randomness, reservations,
+  /// ledger/XRC calls or durable state. Queue always repeats these checks.
+  public query ({ caller }) func agentPreviewCall(
+    input : AgentTypes.AgentCallInput,
+  ) : async AgentTypes.AgentCallPreviewResult {
+    previewAgentCall(caller, input);
+  };
+
+  /// Reserves prepaid phone time and queues a call for the external voice
+  /// bridge. It never exposes Twilio/xAI secrets or the reservation token.
+  public shared ({ caller }) func agentQueueCall(
+    input : AgentTypes.AgentCallInput,
+  ) : async AgentTypes.AgentCallResult {
+    switch (previewAgentCall(caller, input)) {
+      case (#err(error)) { return #err(error) };
+      case (#ok(preview)) {
+        switch (preview.existingJob) {
+          case (?existing) { return #ok(existing) };
+          case null {};
+        };
+      };
+    };
+    let account = agentAccountOf(caller);
     if (not acquireLock(callLocks, account)) {
       return #err(agentError("CALL_REQUEST_IN_PROGRESS", "Another call request is already being prepared for this account.", true, account));
     };

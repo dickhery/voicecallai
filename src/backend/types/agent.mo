@@ -168,7 +168,22 @@ module {
   public type AgentCallCaptureOptions = {
     saveTranscript : Bool;
     recordAudio : Bool;
+    /// Legacy name: customer capture authorization, not recipient consent.
     consentConfirmed : Bool;
+  };
+
+  public type AgentCallPreview = {
+    recipientPhone : Text;
+    presetId : Nat;
+    captureOptions : AgentCallCaptureOptions;
+    availableSeconds : Nat;
+    existingJob : ?AgentCallJob;
+    note : Text;
+  };
+
+  public type AgentCallPreviewResult = {
+    #ok : AgentCallPreview;
+    #err : AgentError;
   };
 
   /// Kept for stable-memory layout compatibility with canisters that already
