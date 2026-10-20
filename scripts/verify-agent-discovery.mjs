@@ -55,6 +55,8 @@ function assertValid(relativePath, body, contentType = "") {
     (!body.includes("getAgentGuide") ||
       !body.includes("agentPreviewCall") ||
       !body.includes("agentQueueCall") ||
+      !body.includes("agentQueueCallBatch") ||
+      !body.includes("agentPreviewCallBatch") ||
       !body.includes("agentGetLiveCallLink") ||
       !body.includes("Backend agent API canister"))
   ) {
@@ -69,6 +71,10 @@ function assertValid(relativePath, body, contentType = "") {
   if (
     relativePath === "agent-api.did" &&
     (!body.includes("agentQueueCall") ||
+      !body.includes("agentQueueCallBatch") ||
+      !body.includes("agentPreviewCallBatch") ||
+      !body.includes("agentListCallBatches") ||
+      !body.includes("agentCancelCallBatch") ||
       !body.includes("agentPreviewCall") ||
       !body.includes("agentGetLiveCallLink"))
   ) {

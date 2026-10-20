@@ -1,6 +1,7 @@
 import { CallStatus } from "@/bindings/backend";
 import { AgentPresetGallery } from "@/components/AgentPresetGallery";
 import { AppLayout } from "@/components/AppLayout";
+import { BulkCallCard } from "@/components/BulkCallCard";
 import { CallStatusBadge } from "@/components/CallStatusBadge";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { getVoiceLabel } from "@/components/VoiceIdSelector";
@@ -1442,6 +1443,19 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
           )}
+
+          <BulkCallCard
+            presets={presets ?? []}
+            selectedPresetId={selectedPresetId}
+            onPresetChange={setSelectedPresetId}
+            calls={calls ?? []}
+            availableSeconds={availableSeconds}
+            bridgeDown={bridgeDown}
+            bridgeSupportsBulk={
+              healthQuery.data?.callQueue?.lazyBulkDispatch === true
+            }
+            bridgeHealthLoading={healthQuery.isPending}
+          />
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
             <Card

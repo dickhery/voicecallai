@@ -22,7 +22,6 @@ module {
   private let CLAIM_TTL_NS : Int = 120_000_000_000;
   private let MAX_AGENT_JOB_RESULTS : Nat = 100;
   private let MAX_SERVER_JOB_RESULTS : Nat = 20;
-  private let MAX_STORED_CALL_JOBS_PER_USER : Nat = 200;
   private let MAX_PENDING_CALL_JOBS_PER_USER : Nat = 5;
   private let MAX_PAYMENT_OPERATIONS_PER_USER : Nat = 500;
   private let LOW_PHONE_TIME_SECONDS : Nat = 300;
@@ -303,7 +302,7 @@ module {
   public func guide(state : State) : AgentTypes.AgentGuide {
     {
       appName = "VoiceCall AI";
-      apiVersion = "2026-10-agent-v9";
+      apiVersion = "2026-10-agent-v10";
       summary = "VoiceCall AI places user-authorized calls through a prepaid queue and an external Twilio/xAI bridge. The app has no blanket advance recipient-consent gate for ordinary lawful calls. Harmless comedy and consensual adult roleplay are supported. Customer capture authorization does not establish another participant's consent or waive applicable requirements. Assistant and provider policies apply independently.";
       productionMcpUrl = "https://mcp.internetcomputer.org/mcp";
       authentication = [
@@ -342,6 +341,10 @@ module {
         "Poll agentListCallJobs after about 10 seconds, then back off to 20 and 30 seconds while waiting. As soon as a job includes liveAudioUrl, put that exact HTTPS URL in your reply so the user can listen. Do not wait for them to ask and do not replace it with a promise to fetch it later. If status is dispatched and liveAudioUrl is empty, call agentGetLiveCallLink once and present its url the same way. Use agentGetCallArtifacts after completion for the transcript and a signed audio URL when capture was enabled.",
         "To stop a live or queued call you created, call agentEndCall with the job ID. Queued jobs cancel immediately; dispatched calls are hung up by the voice bridge within about 15 seconds. Prefer this over leaving farewell loops running.",
         "Report queued, dispatched, in-progress, or completed according to returned state. Never claim a call was placed or completed without supporting job or call-record state.",
+        "For a list or CSV attachment, extract the phone column into recipientPhones, validate E.164, remove duplicates and show the final target count, preset, capture choices and per-call limit before paid queueing. No canister file upload is needed: agentPreviewCallBatch and agentQueueCallBatch accept the number array directly through ICP MCP. Never silently split a larger list into paid batches.",
+        "A batch accepts 1–100 distinct numbers, with maxCallSeconds a whole minute from 60 to 600. Up to 200 undialed numbers per account and 2,000 globally are queued. agentPreviewCallBatch is free of reservations/randomness/ledger calls. agentQueueCallBatch atomically authorizes the whole validated list but reserves time only just before each call. Available funds can cover fewer targets than the list: the batch pauses unless available phone time covers its full per-call cap, current terms and its preset are available.",
+        "The voice bridge claims one target per owner turn across singles and batches, with one in-flight queued-agent call per account. Undialed targets expire after 24 hours. agentListCallBatches returns up to 10 retained batches. completed means every target was handed to the bridge; inspect jobs and listMyCalls for actual call outcomes. agentCancelCallBatch cancels undialed targets; agentEndCall stops an already claimed or dispatched job. Billing rounds to whole minutes within the selected cap.",
+        "Reuse a batch idempotencyKey only with identical inputs: changed inputs return IDEMPOTENCY_CONFLICT. Deduplication lasts while the batch remains among the account's 10 retained batches. Individual call retry keys are retained with the most recent 200 live job entries. Do not retry old operations after that retention window; inspect call history and obtain fresh authorization first. Poll batch progress with the same 10/20/30-second backoff as jobs.",
       ];
       answeringWorkflow = [
         "Tell the user what you need before creating anything: their Twilio number (E.164), what the AI should say/do on inbound calls, capture choices, and that they must paste a webhook URL into Twilio after creation.",
@@ -382,6 +385,10 @@ module {
         capability("Manage outbound presets", "createPreset", "Create, list, update, duplicate, and delete outbound call presets.", true),
         capability("Queue a call", "agentQueueCall", "Reserve phone time and queue an idempotent outbound voice-server job.", true),
         capability("Preview a call", "agentPreviewCall", "Check the same local prerequisites and normalize capture settings without reserving time or dialing. Provider checks still run at dispatch.", false),
+        capability("Preview a phone list", "agentPreviewCallBatch", "Validate 1–100 unique E.164 targets, owned preset, capture settings and a whole-minute 60–600 second per-call cap without reservations or dialing.", false),
+        capability("Queue a phone list", "agentQueueCallBatch", "Authorize a paid idempotent batch. Reserve prepaid time one target at a time with fair owner rotation; pause when funds, terms or the preset are unavailable.", true),
+        capability("Batch progress", "agentListCallBatches", "Read up to 10 retained batches, undialed counts and per-target jobs. Batch completed means all targets handed off; call records supply final outcomes.", false),
+        capability("Cancel a phone list", "agentCancelCallBatch", "Cancel undialed targets. Already claimed or dispatched calls require agentEndCall.", true),
         capability("End a call", "agentEndCall", "Cancel a queued MCP call or request hang-up of a dispatched/in-progress call you created.", true),
         capability("Read terms", "agentGetTermsStatus", "Read the current terms and whether this account's acceptance is still in force.", false),
         capability("Accept terms", "agentAcceptTerms", "Record the user's agreement to the current terms. Call only after the user agrees.", true),
@@ -407,6 +414,8 @@ module {
     "First authenticated call: agentInitialize.\n" #
     "Outbound: createPreset / listMyPresets → agentQueueCall → agentListCallJobs / agentEndCall.\n" #
     "Optional agentPreviewCall uses the same input as agentQueueCall. It is a query with no reservation, randomness, ledger call or XRC refresh. It returns the app's local error, normalized customer capture settings, or the existing job for the same key. A preview is advisory; queue repeats checks and bridge/provider checks run later.\n" #
+    "Bulk: agentPreviewCallBatch(input) query → agentQueueCallBatch(input) update → agentListCallBatches() query / agentCancelCallBatch(id) update. Input={recipientPhones:[Text],presetId:Nat,captureOptions:{saveTranscript:Bool,recordAudio:Bool,consentConfirmed:Bool},maxCallSeconds:Nat,idempotencyKey:Text}. Extract numbers from the customer's attachment or text; no binary upload endpoint is required. Reject duplicates/invalid/emergency destinations atomically. Limits:100 unique targets/batch,200 undialed/account,2000 globally; maxCallSeconds60–600 in whole60-second minutes. Queueing authorizes paid calls to every target; show target count, cap, preset and capture choices before queueing. Available seconds are shared with single calls and answering, and are reserved only at dispatch. Available balance below the full per-call cap, expired terms or a missing preset pauses the batch; no automatic purchase occurs. Fair owner turns prevent one list occupying the bridge. Undialed authorization expires24h. Batch completed means every target handed off, not calls finished. Cancel affects undialed targets; agentEndCall handles claimed/dispatched jobs. Billing rounds up to whole minutes within the chosen cap.\n" #
+    "Batch responses include recipientPhones,maxCallSeconds,attemptedCount,remainingCount,jobs,lastError. Join job.callId with listMyCalls for final outcomes. Up to10 recent batches are retained per account; idempotency lasts while a batch is retained. The same key with changed inputs returns IDEMPOTENCY_CONFLICT. Single-call keys have a200-live-job retention window. Inspect history and obtain fresh authorization instead of replaying older operations. Timestamps are Unix nanoseconds; prepaid balances/caps are seconds.\n" #
     "Capture: consentConfirmed is the legacy customer-authorization flag, not proof of recipient consent. The app has no blanket advance recipient-consent gate for ordinary lawful calls; legally required notice/permissions still apply. Harmless comedy and consensual adult roleplay are supported; harassment, deceptive sexual solicitation and unlawful recording are unsupported. Assistant and provider policies apply independently.\n" #
     "Answering: collect Twilio E.164 + instructions → createAnsweringPreset → give user webhook " #
     "https://voicecall.richardhery.com/answering/incoming/{webhookSecret} → user verifies by calling the number → setAnsweringPresetEnabled.\n" #
@@ -611,6 +620,31 @@ module {
     callToken : Text,
     captureOptions : AgentTypes.AgentCallCaptureOptions,
   ) : AgentTypes.StoredAgentCallJob {
+    createCallJobInternal(state, user, idempotencyKey, reservation, callToken, captureOptions, true);
+  };
+
+  /// Batch retries are deduplicated by their retained batch and atomic cursor,
+  /// without writing into the user-controlled singleton-key namespace.
+  public func createBatchCallJob(
+    state : State,
+    user : Principal,
+    idempotencyKey : Text,
+    reservation : BillingTypes.CallReservationPublic,
+    callToken : Text,
+    captureOptions : AgentTypes.AgentCallCaptureOptions,
+  ) : AgentTypes.StoredAgentCallJob {
+    createCallJobInternal(state, user, idempotencyKey, reservation, callToken, captureOptions, false);
+  };
+
+  private func createCallJobInternal(
+    state : State,
+    user : Principal,
+    idempotencyKey : Text,
+    reservation : BillingTypes.CallReservationPublic,
+    callToken : Text,
+    captureOptions : AgentTypes.AgentCallCaptureOptions,
+    indexIdempotency : Bool,
+  ) : AgentTypes.StoredAgentCallJob {
     let storedCapture = customerCapture(captureOptions);
     let job : AgentTypes.StoredAgentCallJob = {
       id = "acj_" # state.nextCallJobId.value.toText();
@@ -632,7 +666,7 @@ module {
     };
     state.nextCallJobId.value += 1;
     state.callJobs.add(job.id, job);
-    state.callJobIdempotencyIndex.add(callJobKey(user, idempotencyKey), job.id);
+    if (indexIdempotency) { state.callJobIdempotencyIndex.add(callJobKey(user, idempotencyKey), job.id) };
     switch (state.userCallJobs.get(user)) {
       case (?jobs) { jobs.add(job.id) };
       case null {
@@ -651,9 +685,6 @@ module {
     switch (state.userCallJobs.get(user)) {
       case null { true };
       case (?ids) {
-        if (ids.size() >= MAX_STORED_CALL_JOBS_PER_USER) {
-          return false;
-        };
         var pending : Nat = 0;
         for (id in ids.values()) {
           switch (state.callJobs.get(id)) {
@@ -743,7 +774,7 @@ module {
         };
         case _ { false };
       };
-      if (pending) {
+      if (pending and job.expiresAt > now) {
         results.add(toCallJob(job));
       };
     };
@@ -753,6 +784,14 @@ module {
   public func claimCallJob(
     state : State,
     id : Text,
+  ) : ?AgentTypes.AgentCallDispatch {
+    claimRecoverableCallJob(state, id, false);
+  };
+
+  public func claimRecoverableCallJob(
+    state : State,
+    id : Text,
+    activeReservation : Bool,
   ) : ?AgentTypes.AgentCallDispatch {
     switch (state.callJobs.get(id)) {
       case null { null };
@@ -768,7 +807,7 @@ module {
           };
           case _ { false };
         };
-        if (not claimable) {
+        if (not claimable or (job.expiresAt <= now and not activeReservation)) {
           return null;
         };
         job.status := #claimed;

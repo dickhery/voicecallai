@@ -309,6 +309,8 @@ const idlFactory = ({ IDL }) =>
       [IDL.Opt(AgentCallDispatch)],
       [],
     ),
+    agentHasPendingCallsForServer: IDL.Func([], [IDL.Bool], ["query"]),
+    claimNextAgentCallForServer: IDL.Func([], [IDL.Opt(AgentCallDispatch)], []),
     completeAgentCallDispatchForServer: IDL.Func(
       [
         IDL.Text,

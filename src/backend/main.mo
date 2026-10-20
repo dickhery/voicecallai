@@ -4,6 +4,7 @@ import ConfigLib "lib/config";
 import CallsLib "lib/calls";
 import BillingLib "lib/billing";
 import AgentLib "lib/agent";
+import BulkLib "lib/bulk";
 import IdentityLib "lib/identity";
 import ConfigApi "mixins/config-api";
 import CallsApi "mixins/calls-api";
@@ -47,6 +48,8 @@ shared ({ caller = installer }) persistent actor class Backend() = this {
   let callEndState = CallsLib.initCallEndState();
   let billingState = BillingLib.initState();
   let agentState = AgentLib.initState();
+  let bulkCallState = BulkLib.initState();
+  BulkLib.seedPendingIndex(bulkCallState, agentState);
   // Empty on upgrade. Acceptance is one map entry per account, checked on call
   // queue, with no canister timer.
   let termsState = AgentLib.initTermsState();
@@ -59,7 +62,7 @@ shared ({ caller = installer }) persistent actor class Backend() = this {
   let identityState = IdentityLib.initState();
 
   // Domain mixins
-  include IdentityApi(accessControlState, identityState, billingState);
+  include IdentityApi(accessControlState, identityState, billingState, bulkCallState);
   include ConfigApi(accessControlState, identityState, configState, callPresetVoiceIds, twilioLineState, answeringState, answeringPresetVoiceIds, termsState);
   include CallsApi(accessControlState, identityState, callsState, answeringLiveState, callEndState, configState, callPresetVoiceIds, billingState);
   include BillingApi(accessControlState, identityState, billingState, callsState, configState, callPresetVoiceIds, answeringState, answeringPresetVoiceIds, termsState, colonyDelegationState);
@@ -75,6 +78,7 @@ shared ({ caller = installer }) persistent actor class Backend() = this {
     callPresetVoiceIds,
     termsState,
     colonyDelegationState,
+    bulkCallState,
   );
 
   // Keep the binding live so the Motoko compiler does not drop it.

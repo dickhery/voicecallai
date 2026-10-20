@@ -53,6 +53,11 @@ export interface VoiceServerHealth {
     queued: number;
     numbers?: string[];
   };
+  callQueue?: {
+    lazyBulkDispatch?: boolean;
+    policy?: string;
+    maxConcurrent?: number;
+  };
   cors?: {
     requestOriginAllowed: boolean;
   };

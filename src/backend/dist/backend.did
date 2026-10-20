@@ -361,6 +361,7 @@ type Backend =
    adminSetIcpUsdRate: (rate: nat64, decimals: nat32, sourceTimestampSeconds:
     nat64) -> (IcpPricingResult);
    agentAcceptTerms: () -> (TermsStatus);
+   agentCancelCallBatch: (batchId: text) -> (AgentCallBatchResult);
    agentCancelQueuedCall: (jobId: text) -> (bool);
    agentEndCall: (jobId: text) -> (AgentCallResult);
    agentGetAccountIdentity: () -> (AgentAccount) query;
@@ -368,15 +369,21 @@ type Backend =
    agentGetCallArtifacts: (callId: nat) -> (opt AgentCallArtifacts) query;
    agentGetLiveCallLink: (jobId: text) -> (opt AgentLiveCallLink) query;
    agentGetTermsStatus: () -> (TermsStatus) query;
+   agentHasPendingCallsForServer: () -> (bool) query;
    agentInitialize: (displayName: text) -> (AgentInitializeResult);
+   agentListCallBatches: () -> (vec AgentCallBatch) query;
    agentListCallJobs: () -> (vec AgentCallJob) query;
    agentPreviewCall: (input: AgentCallInput) ->
     (AgentCallPreviewResult) query;
+   agentPreviewCallBatch: (input: AgentCallBatchInput) ->
+    (AgentCallBatchPreviewResult) query;
    agentPurchasePhoneTime: (packageId: text, idempotencyKey: text) ->
     (IcpPurchaseResult);
    agentPurchasePhoneTimeQuoted: (packageId: text, idempotencyKey: text,
     expectedPriceE8s: nat) -> (IcpPurchaseResult);
    agentQueueCall: (input: AgentCallInput) -> (AgentCallResult);
+   agentQueueCallBatch: (input: AgentCallBatchInput) ->
+    (AgentCallBatchResult);
    agentRefreshIcpPricing: () -> (IcpPricingResult);
    agentTransferIcp: (to: IcrcAccount, amountE8s: nat, idempotencyKey:
     text) -> (IcpTransferResult);
@@ -387,6 +394,7 @@ type Backend =
     (BillingMutationResult);
    claimAccountLinkOffer: (code: text) -> (ClaimLinkOfferResult);
    claimAgentCallForServer: (jobId: text) -> (opt AgentCallDispatch);
+   claimNextAgentCallForServer: () -> (opt AgentCallDispatch);
    clearPendingCallEndForServer: (id: text) -> (bool);
    completeAgentCallDispatchForServer: (jobId: text, callSid: opt text,
     serverSessionId: opt text, liveAudioUrl: opt text) -> (bool);
@@ -669,6 +677,57 @@ type AgentCallCaptureOptions =
    consentConfirmed: bool;
    recordAudio: bool;
    saveTranscript: bool;
+ };
+type AgentCallBatchStatus = 
+ variant {
+   canceled;
+   completed;
+   queued;
+ };
+type AgentCallBatchResult = 
+ variant {
+   err: AgentError;
+   ok: AgentCallBatch;
+ };
+type AgentCallBatchPreviewResult = 
+ variant {
+   err: AgentError;
+   ok: AgentCallBatchPreview;
+ };
+type AgentCallBatchPreview = 
+ record {
+   availableSeconds: nat;
+   captureOptions: AgentCallCaptureOptions;
+   existingBatch: opt AgentCallBatch;
+   maxBatchSize: nat;
+   maxCallSeconds: nat;
+   maxPendingNumbers: nat;
+   note: text;
+   presetId: nat;
+   recipientPhones: vec text;
+ };
+type AgentCallBatchInput = 
+ record {
+   captureOptions: AgentCallCaptureOptions;
+   idempotencyKey: text;
+   maxCallSeconds: nat;
+   presetId: nat;
+   recipientPhones: vec text;
+ };
+type AgentCallBatch = 
+ record {
+   attemptedCount: nat;
+   captureOptions: AgentCallCaptureOptions;
+   createdAt: int;
+   id: text;
+   jobs: vec AgentCallJob;
+   lastError: opt text;
+   maxCallSeconds: nat;
+   presetId: nat;
+   recipientPhones: vec text;
+   remainingCount: nat;
+   status: AgentCallBatchStatus;
+   user: principal;
  };
 type AgentCallArtifacts = 
  record {

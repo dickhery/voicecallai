@@ -67,6 +67,7 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall, g
   let mark = null;
   let markSequence = 0;
   let ending = null;
+  let pendingInstruction = null;
   const seen = new Set();
 
   function finish(reason) {
@@ -82,6 +83,12 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall, g
   }
 
   function requestResponse(instruction) {
+    // xAI accepts only one active response. A local beep can arrive while a
+    // VAD response is still finishing; queue its instruction until response.done.
+    if (responseActive) {
+      pendingInstruction = instruction;
+      return;
+    }
     responseActive = true;
     releaseOnce = true;
     // response.instructions replaces the entire session prompt in xAI. Use a
@@ -160,7 +167,7 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall, g
           nudgeCount < CALL_LIFECYCLE_LIMITS.maxNudges && !responseActive && !busy()) {
           nudgedThisPause = true;
           nudgeCount += 1;
-          requestResponse('Automated audio paused. If a voicemail greeting just finished, leave one short message now and call end_call with voicemail_left. If a menu is waiting, press the announced option or the user-supplied extension and do not speak. If a live person is waiting, greet them in one sentence.');
+          requestResponse('Automated audio paused. A pause alone is not a voicemail recording cue: keep silent through the greeting until an actual beep or explicit instruction to record now. Only after that cue, leave one short permitted message and call end_call with voicemail_left. If a menu is waiting, press the announced option or the user-supplied extension and do not speak. If a live person is waiting, report human and greet them in one sentence.');
         }
         else if (!automated && !checkedIn && silence >= CALL_LIFECYCLE_LIMITS.checkInMs &&
           !responseActive && now() >= playingUntil && !busy()) {
@@ -186,7 +193,7 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall, g
     endAfterPlayback(reason) {
       if (active && !closed && ready()) requestEnd(reason);
     },
-    get holdAssistant() { return holdSpeech && !releaseOnce; },
+    get holdAssistant() { return Boolean(pendingInstruction) || (holdSpeech && !releaseOnce); },
     noteBeep() {
       if (!active || closed || ending || beepNoted || messageRequested) return false;
       const turnMs = remoteSpeaking && speechStartedAt !== null ? now() - speechStartedAt : 0;
@@ -241,6 +248,9 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall, g
           state = value;
           continueState = state === 'human' || state === 'automated';
           if (state === 'human') {
+            pendingInstruction = null;
+            messageRequested = false;
+            beepDuringResponse = false;
             voicemailAt = null;
             greetingAt = null;
             longMonologueAt = null;
@@ -302,6 +312,15 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall, g
       beepDuringResponse = false;
       const shouldContinue = continueState;
       continueState = false;
+      if (pendingInstruction) {
+        const instruction = pendingInstruction;
+        pendingInstruction = null;
+        // The previous turn may have been cancelled by the greeting/beep.
+        // Neither completion nor cancellation should discard this new cue.
+        ending = null;
+        requestResponse(instruction);
+        return;
+      }
       if (status !== 'completed') {
         ending = null;
         return;
@@ -337,6 +356,6 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall, g
       responseAudio = false;
       ending = null;
     },
-    close() { closed = true; clearTimer(timer); seen.clear(); },
+    close() { closed = true; pendingInstruction = null; clearTimer(timer); seen.clear(); },
   };
 }

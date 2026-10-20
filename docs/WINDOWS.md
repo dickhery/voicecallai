@@ -52,9 +52,9 @@ Verify both local and public bridge readiness and this release's behavior versio
 ```powershell
 $local = Invoke-RestMethod http://127.0.0.1:3000/health
 $public = Invoke-RestMethod https://voicecall.richardhery.com/health
-$local | Select-Object ready, callRequestVersion, serverVersion, model, backendCanisterId
-$public | Select-Object ready, callRequestVersion, serverVersion, model, backendCanisterId
-if (-not $public.ready -or $public.callRequestVersion -ne '2026-10-11') {
+$local | Select-Object ready, callRequestVersion, serverVersion, model, backendCanisterId, callQueue, destinationPricing
+$public | Select-Object ready, callRequestVersion, serverVersion, model, backendCanisterId, callQueue, destinationPricing
+if (-not $public.ready -or $public.serverVersion -ne '2026-10-20-bulk-fair-queue') {
   throw 'The current bridge release is not ready; inspect setupIssues and service logs.'
 }
 $cors = Invoke-WebRequest https://voicecall.richardhery.com/health `
@@ -68,6 +68,22 @@ prerequisites, not a completed Twilio/xAI call. The production backend must rema
 `2dwhz-ziaaa-aaaak-qy2ia-cai`. If the version is absent, NSSM points to an old checkout
 or the bridge was not restarted. Read `logs\voicecall-err.log` locally for diagnostics;
 do not publish secrets, phone numbers or bearer recording/listening URLs.
+
+This release defaults to one concurrent call across browser, bulk/MCP, and inbound
+answering traffic. Existing environment files need no new values to receive these
+defaults. `CALL_MAX_CONCURRENT`, `CALL_QUEUE_MAX_PENDING` (100) and
+`CALL_QUEUE_MAX_PER_USER` (20) tune the bridge's bounded queues. Leave concurrency
+at one on a small host. `MAX_OUTBOUND_RATE_USD_PER_MINUTE` defaults to `0.03`;
+Twilio Voice Pricing access is required before dialing. The bridge refuses an
+unverified or excessive carrier rate and releases the call reservation. See
+[call economics](CALL-ECONOMICS.md) before increasing the rate ceiling.
+
+Upgrade the IC backend before restarting this bridge, because lazy bulk dispatch
+uses new canister methods. Existing single-call API methods remain available to
+the older bridge during the transition. New bulk lists remain waiting until this
+bridge release is running. Verify `callQueue.lazyBulkDispatch=true` in public
+health before submitting production bulk work. The updater checks readiness,
+release version and production backend mapping after restarting.
 
 ## Pull Genesis and update its installed worker copy
 

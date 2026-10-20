@@ -3,6 +3,7 @@ import Blob "mo:core/Blob";
 import Cycles "mo:core/Cycles";
 import Error "mo:core/Error";
 import Int "mo:core/Int";
+import Iter "mo:core/Iter";
 import List "mo:core/List";
 import Map "mo:core/Map";
 import Nat "mo:core/Nat";
@@ -16,6 +17,7 @@ import Text "mo:core/Text";
 import Time "mo:core/Time";
 import AccessControl "mo:caffeineai-authorization/access-control";
 import AgentLib "../lib/agent";
+import BulkLib "../lib/bulk";
 import BillingLib "../lib/billing";
 import CallsLib "../lib/calls";
 import CallTypes "../types/calls";
@@ -36,9 +38,15 @@ mixin (
   callPresetVoiceIds : ConfigLib.VoiceIdState,
   termsState : AgentLib.TermsState,
   colonyDelegationState : AgentLib.ColonyDelegationState,
+  bulkCallState : BulkLib.State,
 ) {
   private func agentAccountOf(caller : Principal) : Principal {
     IdentityLib.resolve(identityState, caller);
+  };
+
+  private func sweepReleasedAgentBalance(user : Principal) {
+    let primary = agentAccountOf(user);
+    if (primary != user) { ignore BillingLib.moveAvailableBalance(billingState, user, primary) };
   };
   type TransferArg = {
     from_subaccount : ?Blob;
@@ -152,6 +160,7 @@ mixin (
   transient let callLocks = Map.empty<Principal, Bool>();
   transient let liveCallLinks = Map.empty<Text, AgentTypes.AgentLiveCallLink>();
   transient let pricingRefreshLock = { var active = false };
+  transient let dispatchClaimLock = { var active = false };
 
   private let MAX_DISPLAY_NAME_CHARS : Nat = 80;
   private let MAX_IDEMPOTENCY_KEY_CHARS : Nat = 120;
@@ -601,6 +610,24 @@ mixin (
     };
   };
 
+  private func batchView(batch : BulkLib.StoredBatch) : AgentTypes.AgentCallBatch {
+    let view = BulkLib.toPublic(batch, agentState);
+    var pauseReason = view.lastError;
+    if (BulkLib.isPending(batch)) {
+      if (not AgentLib.termsCurrent(termsState, batch.user)) {
+        pauseReason := ?"Paused: accept the current terms before the next call.";
+      } else if (BillingLib.getAvailableSeconds(billingState, batch.user) < batch.maxCallSeconds) {
+        pauseReason := ?"Paused: available phone time must cover the full per-call maximum. No automatic top-up occurs.";
+      } else {
+        switch (ConfigLib.getPreset(configState, callPresetVoiceIds, batch.presetId)) {
+          case null { pauseReason := ?"Paused: this outbound preset is unavailable." };
+          case (?_) {};
+        };
+      };
+    };
+    { view with lastError = pauseReason; jobs = view.jobs.map(func job = withLiveAudio(job)) };
+  };
+
   /// Shared local validation for preview and queue; no writes or outcalls.
   private func previewAgentCall(
     caller : Principal,
@@ -672,6 +699,9 @@ mixin (
         account,
       ));
     };
+    if (bulkCallState.pendingJobIds.size() >= BulkLib.MAX_PENDING_JOBS) {
+      return #err(agentError("CALL_QUEUE_FULL", "The bounded call queue is full. Wait for queued calls to dispatch before retrying.", true, account));
+    };
     let available = BillingLib.getAvailableSeconds(billingState, account);
     if (available == 0) {
       return #err(agentError(
@@ -699,6 +729,137 @@ mixin (
     previewAgentCall(caller, input);
   };
 
+  private func previewCallBatch(caller : Principal, input : AgentTypes.AgentCallBatchInput) : AgentTypes.AgentCallBatchPreviewResult {
+    requireAgent(caller);
+    let account = agentAccountOf(caller);
+    switch (validateIdempotencyKey(input.idempotencyKey)) {
+      case (?message) { return #err(agentError("INVALID_IDEMPOTENCY_KEY", message, false, account)) };
+      case null {};
+    };
+    switch (BulkLib.getByKey(bulkCallState, account, input.idempotencyKey)) {
+      case (?batch) {
+        if (not BulkLib.matchesInput(batch, input)) {
+          return #err(agentError("IDEMPOTENCY_CONFLICT", "This batch key already belongs to different inputs. Reuse its original inputs to retry, or choose a new key for a new batch.", false, account));
+        };
+        return #ok({
+          recipientPhones = batch.recipientPhones; presetId = batch.presetId;
+          captureOptions = batch.captureOptions; maxCallSeconds = batch.maxCallSeconds;
+          availableSeconds = BillingLib.getAvailableSeconds(billingState, account);
+          existingBatch = ?batchView(batch);
+          maxBatchSize = BulkLib.MAX_BATCH_SIZE; maxPendingNumbers = BulkLib.MAX_PENDING_NUMBERS;
+          note = "This retained batch already exists. Queueing the same inputs and key returns it without repeating calls.";
+        });
+      };
+      case null {};
+    };
+    switch (BulkLib.validateInput(input)) {
+      case (?error) { return #err(agentError(error.code, error.message, false, account)) };
+      case null {};
+    };
+    if (not AgentLib.termsCurrent(termsState, account)) {
+      return #err(agentError("TERMS_ACCEPTANCE_REQUIRED", "Show agentGetTermsStatus and call agentAcceptTerms only after the customer agrees.", false, account));
+    };
+    switch (ConfigLib.getPreset(configState, callPresetVoiceIds, input.presetId)) {
+      case null { return #err(agentError("PRESET_NOT_FOUND", "Preset not found.", false, account)) };
+      case (?preset) {
+        if (not IdentityLib.sameAccount(identityState, caller, preset.ownerId) and not AccessControl.isAdmin(accessControlState, caller)) {
+          return #err(agentError("PRESET_NOT_FOUND", "Preset not found.", false, account));
+        };
+      };
+    };
+    if (BulkLib.pendingCount(bulkCallState, ?account) + input.recipientPhones.size() > BulkLib.MAX_PENDING_NUMBERS) {
+      return #err(agentError("BATCH_PENDING_LIMIT", "This account can have at most 200 undialed batch numbers. Let calls finish or cancel a pending batch.", true, account));
+    };
+    if (BulkLib.pendingCount(bulkCallState, null) + input.recipientPhones.size() > BulkLib.MAX_GLOBAL_PENDING_NUMBERS or not BulkLib.canRetain(bulkCallState, account)) {
+      return #err(agentError("BATCH_QUEUE_FULL", "The bounded batch queue is full. Let existing batches dispatch or cancel them before retrying.", true, account));
+    };
+    let available = BillingLib.getAvailableSeconds(billingState, account);
+    if (available < input.maxCallSeconds) {
+      return #err(agentError("PHONE_TIME_REQUIRED", "Enough available phone time for the selected per-call maximum is required. Ask before buying any package.", false, account));
+    };
+    #ok({
+      recipientPhones = input.recipientPhones; presetId = input.presetId;
+      captureOptions = AgentLib.customerCapture(input.captureOptions);
+      maxCallSeconds = input.maxCallSeconds; availableSeconds = available; existingBatch = null;
+      maxBatchSize = BulkLib.MAX_BATCH_SIZE; maxPendingNumbers = BulkLib.MAX_PENDING_NUMBERS;
+      note = "Preview only. Queueing authorizes paid calls to every supplied number, with this per-call time cap. Time is reserved just before each call; the queue pauses unless the full per-call cap is available, terms are current and the preset exists. Batches rotate between accounts with one call in flight per account and undialed targets expire after 24 hours. Billing rounds up to whole minutes, within the selected cap. Up to 10 recent batches and 200 live job entries are retained; keep the batch key when retrying. Cancel stops undialed targets; agentEndCall stops an already claimed/dispatched call.";
+    });
+  };
+
+  public query ({ caller }) func agentPreviewCallBatch(input : AgentTypes.AgentCallBatchInput) : async AgentTypes.AgentCallBatchPreviewResult {
+    previewCallBatch(caller, input);
+  };
+
+  /// Atomic local enqueue: validation completes before one durable batch write.
+  /// Uploading does not reserve phone time or obtain randomness per recipient.
+  public shared ({ caller }) func agentQueueCallBatch(input : AgentTypes.AgentCallBatchInput) : async AgentTypes.AgentCallBatchResult {
+    switch (previewCallBatch(caller, input)) {
+      case (#err(error)) { #err(error) };
+      case (#ok(preview)) {
+        switch (preview.existingBatch) {
+          case (?batch) { #ok(batch) };
+          case null { #ok(batchView(BulkLib.create(bulkCallState, agentAccountOf(caller), input))) };
+        };
+      };
+    };
+  };
+
+  public query ({ caller }) func agentListCallBatches() : async [AgentTypes.AgentCallBatch] {
+    requireAgent(caller);
+    BulkLib.listForUser(bulkCallState, agentState, agentAccountOf(caller)).map(func batch {
+      switch (bulkCallState.batches.get(batch.id)) { case (?stored) { batchView(stored) }; case null { batch } };
+    });
+  };
+
+  public shared ({ caller }) func agentCancelCallBatch(batchId : Text) : async AgentTypes.AgentCallBatchResult {
+    requireAgent(caller);
+    switch (bulkCallState.batches.get(batchId)) {
+      case null { #err(agentError("BATCH_NOT_FOUND", "Batch not found.", false, caller)) };
+      case (?batch) {
+        if (not IdentityLib.sameAccount(identityState, caller, batch.user)) {
+          return #err(agentError("BATCH_NOT_FOUND", "Batch not found.", false, caller));
+        };
+        if (BulkLib.isPending(batch)) { batch.status := #canceled };
+        #ok(batchView(batch));
+      };
+    };
+  };
+
+  /// Keep a bounded live job index. Retained batches preserve public final
+  /// snapshots; retry keys for individual calls have the same 200-entry window.
+  private func pruneFinalizedAgentJobs(user : Principal) {
+    switch (agentState.userCallJobs.get(user)) {
+      case null {};
+      case (?ids) {
+        if (ids.size() < 200) { return };
+        var toRemove = Nat.sub(ids.size(), 199);
+        ids.retain(func id {
+          if (toRemove == 0) { return true };
+          switch (agentState.callJobs.get(id)) {
+            case null { toRemove -= 1; false };
+            case (?job) {
+              let finalized = switch (billingState.callReservations.get(job.reservationId)) {
+                case (?reservation) { reservation.status == #finished or reservation.status == #canceled };
+                case null { job.status == #failed or job.status == #canceled };
+              };
+              if (not finalized) { return true };
+              BulkLib.rememberPrunedJob(bulkCallState, AgentLib.toCallJob(job));
+              agentState.callJobs.remove(id);
+              bulkCallState.pendingJobIds.remove(id);
+              let indexKey = AgentLib.callJobKey(user, job.idempotencyKey);
+              if (agentState.callJobIdempotencyIndex.get(indexKey) == ?id) {
+                agentState.callJobIdempotencyIndex.remove(indexKey);
+              };
+              colonyDelegationState.reservationCaps.remove(job.reservationId);
+              toRemove -= 1;
+              false;
+            };
+          };
+        });
+      };
+    };
+  };
+
   /// Reserves prepaid phone time and queues a call for the external voice
   /// bridge. It never exposes Twilio/xAI secrets or the reservation token.
   public shared ({ caller }) func agentQueueCall(
@@ -720,9 +881,16 @@ mixin (
 
     try {
       let callToken = await agentRandomCallToken();
+      // The random call yields. Repeat ownership, terms, balance and queue
+      // capacity checks before the atomic reservation/job mutations.
+      switch (previewAgentCall(caller, input)) {
+        case (#err(error)) { return #err(error) };
+        case (#ok(_)) {};
+      };
       switch (AgentLib.getCallJobByIdempotency(agentState, account, input.idempotencyKey)) {
         case (?existing) { #ok(withLiveAudio(AgentLib.toCallJob(existing))) };
         case null {
+          pruneFinalizedAgentJobs(account);
           let callRecord = CallsLib.createCallRecord(
             callsState,
             account,
@@ -758,6 +926,7 @@ mixin (
                 callToken,
                 input.captureOptions,
               );
+              BulkLib.syncPendingJob(bulkCallState, job);
               CallsLib.addSystemLog(
                 callsState,
                 #info,
@@ -940,7 +1109,7 @@ mixin (
       case null {};
     };
     if (validateIdempotencyKey(key) != null or grant.revoked or Time.now() >= grant.expiresAt) return #err(agentError("GRANT_EXPIRED", "Grant invalid or expired", false, grant.user));
-    if (not AgentLib.termsCurrent(termsState, grant.user) or BillingLib.getAvailableSeconds(billingState, grant.user) < grant.maxSeconds or not AgentLib.canCreateCallJob(agentState, grant.user)) return #err(agentError("CALL_UNAVAILABLE", "Terms, phone time or job capacity changed", false, grant.user));
+    if (bulkCallState.pendingJobIds.size() >= BulkLib.MAX_PENDING_JOBS or not AgentLib.termsCurrent(termsState, grant.user) or BillingLib.getAvailableSeconds(billingState, grant.user) < grant.maxSeconds or not AgentLib.canCreateCallJob(agentState, grant.user)) return #err(agentError("CALL_UNAVAILABLE", "Terms, phone time or job capacity changed", false, grant.user));
     let preset = switch (ConfigLib.getPreset(configState, callPresetVoiceIds, grant.presetId)) {
       case null return #err(agentError("PRESET_NOT_FOUND", "Preset unavailable", false, grant.user));
       case (?p) p;
@@ -954,6 +1123,8 @@ mixin (
         case (?g) g;
       };
       if (current.revoked or current.jobId != null or Time.now() >= current.expiresAt) return #err(agentError("GRANT_EXPIRED", "Grant changed during preparation; inspect status", true, grant.user));
+      if (bulkCallState.pendingJobIds.size() >= BulkLib.MAX_PENDING_JOBS) return #err(agentError("CALL_QUEUE_FULL", "The bounded call queue is full", true, grant.user));
+      pruneFinalizedAgentJobs(grant.user);
       let callRecord = CallsLib.createCallRecord(callsState, grant.user, grant.recipientPhone, grant.presetId);
       let reservation = BillingLib.createReservationCapped(billingState, grant.user, grant.recipientPhone, grant.presetId, callRecord.id, callToken, ?grant.maxSeconds);
       switch (reservation) {
@@ -964,6 +1135,7 @@ mixin (
         case (#ok(reserved)) {
           colonyDelegationState.reservationCaps.add(reserved.id, grant.maxSeconds);
           let job = AgentLib.createCallJob(agentState, grant.user, "colony:" # id.toText() # ":" # key, reserved, callToken, grant.captureOptions);
+          BulkLib.syncPendingJob(bulkCallState, job);
           colonyDelegationState.grants.add(id, { current with jobId = ?job.id; idempotencyKey = key });
           #ok(withLiveAudio(AgentLib.toCallJob(job)));
         };
@@ -1012,35 +1184,9 @@ mixin (
 
   /// Cancels a queued/claimed MCP call before dispatch and releases reserved
   /// phone time. Dispatched calls must be ended with agentEndCall.
-  public shared ({ caller }) func agentCancelQueuedCall(
-    jobId : Text,
-  ) : async Bool {
+  public shared ({ caller }) func agentCancelQueuedCall(jobId : Text) : async Bool {
     requireAgent(caller);
-    switch (AgentLib.cancelCallJob(agentState, jobId, agentAccountOf(caller))) {
-      case null { false };
-      case (?reservationId) {
-        liveCallLinks.remove(jobId);
-        ignore BillingLib.cancelReservation(
-          billingState,
-          reservationId,
-          "Canceled by the authenticated agent before dispatch",
-        );
-        switch (AgentLib.getCallJob(agentState, jobId)) {
-          case (?job) {
-            ignore CallsLib.updateCallRecord(
-              callsState,
-              job.callId,
-              #failed,
-              null,
-              ?Time.now(),
-              ?"Canceled before dispatch",
-            );
-          };
-          case null {};
-        };
-        true;
-      };
-    };
+    agentCancelQueuedCallInternal(jobId, caller);
   };
 
   /// Ends an MCP-created call. Queued/claimed jobs cancel immediately.
@@ -1119,15 +1265,19 @@ mixin (
   };
 
   private func agentCancelQueuedCallInternal(jobId : Text, caller : Principal) : Bool {
-    switch (AgentLib.cancelCallJob(agentState, jobId, agentAccountOf(caller))) {
+    let ownedJob = AgentLib.getCallJob(agentState, jobId) ?? (return false);
+    if (not IdentityLib.sameAccount(identityState, caller, ownedJob.user) and not AccessControl.isAdmin(accessControlState, caller)) { return false };
+    switch (AgentLib.cancelCallJob(agentState, jobId, ownedJob.user)) {
       case null { false };
       case (?reservationId) {
+        bulkCallState.pendingJobIds.remove(jobId);
         liveCallLinks.remove(jobId);
         ignore BillingLib.cancelReservation(
           billingState,
           reservationId,
           "Canceled by the authenticated agent",
         );
+        sweepReleasedAgentBalance(ownedJob.user);
         switch (AgentLib.getCallJob(agentState, jobId)) {
           case (?job) {
             ignore CallsLib.updateCallRecord(
@@ -1167,6 +1317,211 @@ mixin (
   };
 
   /// Voice-server query. Returns only bounded public job metadata.
+  type DispatchCandidate = { owner : Principal; createdAt : Int; source : { #job : Text; #batch : Text } };
+
+  private func jobReservationIsActive(job : AgentTypes.StoredAgentCallJob) : Bool {
+    switch (billingState.callReservations.get(job.reservationId)) {
+      case (?reservation) { reservation.status == #active };
+      case null { false };
+    };
+  };
+
+  private func claimExistingCallJob(id : Text) : ?AgentTypes.AgentCallDispatch {
+    switch (agentState.callJobs.get(id)) {
+      case null { null };
+      case (?job) { AgentLib.claimRecoverableCallJob(agentState, id, jobReservationIsActive(job)) };
+    };
+  };
+
+  private func ownerHasInFlightCall(user : Principal, exceptJobId : ?Text) : Bool {
+    let now = Time.now();
+    for (linkedUser in IdentityLib.accountGroup(identityState, user).values()) {
+    switch (agentState.userCallJobs.get(linkedUser)) {
+      case null {};
+      case (?ids) {
+        for (id in ids.values()) {
+          if (exceptJobId != ?id) {
+            switch (agentState.callJobs.get(id)) {
+              case null {};
+              case (?job) {
+                if (job.status == #claimed) {
+                  switch (billingState.callReservations.get(job.reservationId)) {
+                    case (?reservation) { if (reservation.status == #active) { return true } };
+                    case null {};
+                  };
+                  if (job.expiresAt > now) {
+                    switch (job.claimedAt) { case null {}; case (?at) { if (now - at <= 120_000_000_000) { return true } } };
+                  };
+                };
+                if (job.status == #dispatched) {
+                  switch (billingState.callReservations.get(job.reservationId)) {
+                    case (?reservation) { if (reservation.status == #reserved or reservation.status == #active) { return true } };
+                    case null {};
+                  };
+                };
+              };
+            };
+          };
+        };
+      };
+    };
+    };
+    false;
+  };
+
+  private func nextDispatchCandidate() : ?DispatchCandidate {
+    let owners = Map.empty<Principal, DispatchCandidate>();
+    let now = Time.now();
+    for (pendingId in bulkCallState.pendingJobIds.keys()) {
+      let job = agentState.callJobs.get(pendingId) ?? (continue);
+      let eligible = switch (job.status) {
+        case (#queued) { true };
+        case (#claimed) { switch (job.claimedAt) { case null { true }; case (?at) { now - at > 120_000_000_000 } } };
+        case _ { false };
+      };
+      let activeReservation = jobReservationIsActive(job);
+      if (eligible and (job.expiresAt > now or activeReservation) and (activeReservation or not ownerHasInFlightCall(job.user, ?job.id))) {
+        let owner = agentAccountOf(job.user);
+        let candidate = { owner; createdAt = job.createdAt; source = #job(job.id) };
+        switch (owners.get(owner)) {
+          case null { owners.add(owner, candidate) };
+          case (?prior) { if (candidate.createdAt < prior.createdAt) { owners.add(owner, candidate) } };
+        };
+      };
+    };
+    for (batch in bulkCallState.batches.values()) {
+      if (BulkLib.isPending(batch) and bulkCallState.pendingJobIds.size() < BulkLib.MAX_PENDING_JOBS and BulkLib.isRunnable(batch, AgentLib.termsCurrent(termsState, batch.user), BillingLib.getAvailableSeconds(billingState, batch.user), true, AgentLib.canCreateCallJob(agentState, batch.user)) and not ownerHasInFlightCall(batch.user, null)) {
+        let validPreset = switch (ConfigLib.getPreset(configState, callPresetVoiceIds, batch.presetId)) {
+          case null { false };
+          case (?preset) { IdentityLib.sameAccount(identityState, batch.user, preset.ownerId) or AccessControl.isAdmin(accessControlState, batch.user) };
+        };
+        if (validPreset) {
+          let candidate = { owner = batch.user; createdAt = batch.createdAt; source = #batch(batch.id) };
+          switch (owners.get(batch.user)) {
+            case null { owners.add(batch.user, candidate) };
+            // Recover an existing claimed job before preparing another target,
+            // even when its batch was uploaded before that job was created.
+            case (?prior) {
+              switch (prior.source) {
+                case (#job(_)) {};
+                case (#batch(_)) { if (candidate.createdAt < prior.createdAt) { owners.add(batch.user, candidate) } };
+              };
+            };
+          };
+        };
+      };
+    };
+    let eligibleOwners = List.empty<Principal>();
+    for (owner in owners.keys()) { eligibleOwners.add(owner) };
+    switch (BulkLib.nextOwner(eligibleOwners.toArray(), bulkCallState.lastServedOwner)) {
+      case null { null };
+      case (?owner) { owners.get(owner) };
+    };
+  };
+
+  private func hasExpiredQueuedJobs() : Bool {
+    let now = Time.now();
+    for (pendingId in bulkCallState.pendingJobIds.keys()) {
+      let job = agentState.callJobs.get(pendingId) ?? (continue);
+      if (job.expiresAt <= now and (job.status == #queued or job.status == #claimed) and not jobReservationIsActive(job)) { return true };
+    };
+    false;
+  };
+
+  private func expireQueuedJobs() {
+    let now = Time.now();
+    for (pendingId in bulkCallState.pendingJobIds.keys().toArray().values()) {
+      let job = agentState.callJobs.get(pendingId) ?? {
+        bulkCallState.pendingJobIds.remove(pendingId);
+        continue;
+      };
+      if (job.expiresAt <= now and (job.status == #queued or job.status == #claimed)) {
+        if (jobReservationIsActive(job)) { continue };
+        switch (billingState.callReservations.get(job.reservationId)) {
+          case (?reservation) {
+            if (reservation.status == #finished) {
+              ignore AgentLib.completeCallDispatch(agentState, job.id, reservation.callSid, job.serverSessionId);
+              bulkCallState.pendingJobIds.remove(job.id);
+              continue;
+            };
+          };
+          case null {};
+        };
+        ignore AgentLib.failCallDispatch(agentState, job.id, "Call reservation expired before dispatch");
+        ignore BillingLib.cancelReservation(billingState, job.reservationId, "Call reservation expired before dispatch");
+        sweepReleasedAgentBalance(job.user);
+        ignore CallsLib.updateCallRecord(callsState, job.callId, #failed, null, ?now, ?"Call reservation expired before dispatch");
+        bulkCallState.pendingJobIds.remove(job.id);
+      };
+    };
+  };
+
+  /// Cheap query polling avoids an update/rand call while the queue is idle
+  /// or every pending batch is paused by balance, terms or a missing preset.
+  public query ({ caller }) func agentHasPendingCallsForServer() : async Bool {
+    requireServer(caller);
+    nextDispatchCandidate() != null or hasExpiredQueuedJobs();
+  };
+
+  /// Claim exactly one next owner. Bulk numbers acquire their reservation and
+  /// secure token here; no uploaded list can occupy all bridge capacity.
+  public shared ({ caller }) func claimNextAgentCallForServer() : async ?AgentTypes.AgentCallDispatch {
+    requireServer(caller);
+    if (dispatchClaimLock.active) { return null };
+    expireQueuedJobs();
+    let candidate = nextDispatchCandidate() ?? (return null);
+    switch (candidate.source) {
+      case (#job(id)) {
+        let dispatch = claimExistingCallJob(id);
+        if (dispatch != null) { bulkCallState.lastServedOwner := ?candidate.owner };
+        return dispatch;
+      };
+      case (#batch(_)) {};
+    };
+    dispatchClaimLock.active := true;
+    try {
+      let callToken = await agentRandomCallToken();
+      // Cancellation, top-ups, preset edits and terms expiry can interleave.
+      // Select again after await; everything from reservation to cursor is local.
+      let current = nextDispatchCandidate() ?? (return null);
+      switch (current.source) {
+        case (#job(id)) {
+          let dispatch = claimExistingCallJob(id);
+          if (dispatch != null) { bulkCallState.lastServedOwner := ?current.owner };
+          dispatch;
+        };
+        case (#batch(id)) {
+          let batch = bulkCallState.batches.get(id) ?? (return null);
+          let phone = batch.recipientPhones[batch.nextIndex];
+          pruneFinalizedAgentJobs(batch.user);
+          let callRecord = CallsLib.createCallRecord(callsState, batch.user, phone, batch.presetId);
+          switch (BillingLib.createReservationCapped(billingState, batch.user, phone, batch.presetId, callRecord.id, callToken, ?batch.maxCallSeconds)) {
+            case (#err(message)) {
+              batch.lastError := ?message;
+              ignore CallsLib.updateCallRecord(callsState, callRecord.id, #failed, null, ?Time.now(), ?message);
+              null;
+            };
+            case (#ok(reserved)) {
+              colonyDelegationState.reservationCaps.add(reserved.id, batch.maxCallSeconds);
+              let job = AgentLib.createBatchCallJob(agentState, batch.user, "batch:" # batch.id # ":" # batch.nextIndex.toText(), reserved, callToken, batch.captureOptions);
+              BulkLib.syncPendingJob(bulkCallState, job);
+              batch.nextIndex += 1;
+              if (batch.nextIndex >= batch.recipientPhones.size()) { batch.status := #completed };
+              batch.lastError := null;
+              batch.jobs.add(job.id, AgentLib.toCallJob(job));
+              bulkCallState.lastServedOwner := ?batch.user;
+              AgentLib.claimCallJob(agentState, job.id);
+            };
+          };
+        };
+      };
+    } catch (_) {
+      null;
+    } finally {
+      dispatchClaimLock.active := false;
+    };
+  };
+
   public query ({ caller }) func listPendingAgentCallsForServer(
     limit : Nat,
   ) : async [AgentTypes.AgentCallJob] {
@@ -1180,7 +1535,9 @@ mixin (
     jobId : Text,
   ) : async ?AgentTypes.AgentCallDispatch {
     requireServer(caller);
-    AgentLib.claimCallJob(agentState, jobId);
+    let dispatch = claimExistingCallJob(jobId);
+    switch (dispatch) { case (?claimed) { bulkCallState.lastServedOwner := ?claimed.job.user }; case null {} };
+    dispatch;
   };
 
   /// Voice-server acknowledgement after /initiate-call accepts the job.
@@ -1194,6 +1551,7 @@ mixin (
     if (not AgentLib.completeCallDispatch(agentState, jobId, callSid, serverSessionId)) {
       return false;
     };
+    bulkCallState.pendingJobIds.remove(jobId);
     pruneLiveCallLinks(Time.now());
     liveCallLinks.remove(jobId);
     switch (liveAudioUrl) {
@@ -1262,9 +1620,11 @@ mixin (
     switch (AgentLib.getCallJob(agentState, jobId)) {
       case null { false };
       case (?job) {
+        bulkCallState.pendingJobIds.remove(jobId);
         liveCallLinks.remove(jobId);
         ignore AgentLib.failCallDispatch(agentState, jobId, cleanMessage);
         ignore BillingLib.cancelReservation(billingState, job.reservationId, cleanMessage);
+        sweepReleasedAgentBalance(job.user);
         ignore CallsLib.updateCallRecord(
           callsState,
           job.callId,

@@ -4,6 +4,8 @@ import "dotenv/config";
 import { KEYPAD_TOOL, KEYPAD_INSTRUCTIONS, createPhoneKeypad, extractSuppliedExtension } from "./phone-keypad.js";
 import { CALL_LIFECYCLE_TOOLS, CALL_LIFECYCLE_INSTRUCTIONS, CALL_LIFECYCLE_LIMITS, createCallLifecycle } from "./call-lifecycle.js";
 import { createLineListener } from "./line-audio.js";
+import { createFairCallQueue, boundedPositiveInteger } from "./call-queue.js";
+import { createDestinationPricingGuard } from "./destination-pricing.js";
 import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -97,10 +99,6 @@ const AGENT_CALL_IDLE_POLL_INTERVAL_MS = Math.max(
   AGENT_CALL_POLL_INTERVAL_MS,
   Number(process.env.AGENT_CALL_IDLE_POLL_INTERVAL_MS || 30_000),
 );
-const AGENT_CALL_POLL_LIMIT = Math.max(
-  1,
-  Math.min(20, Number(process.env.AGENT_CALL_POLL_LIMIT || 10)),
-);
 const ORPHANED_TWILIO_CALL_END_MS = Number(
   process.env.ORPHANED_TWILIO_CALL_END_MS || 120_000,
 );
@@ -115,6 +113,9 @@ const BRIDGE_RECORDING_DIR = path.resolve(
 );
 const LINE_CONFIG_REFRESH_MS = Number(process.env.LINE_CONFIG_REFRESH_MS || 30_000);
 const CALL_QUEUE_MAX_WAIT_MS = Number(process.env.CALL_QUEUE_MAX_WAIT_MS || 30 * 60 * 1000);
+const CALL_MAX_CONCURRENT = boundedPositiveInteger(process.env.CALL_MAX_CONCURRENT, 1, 20);
+const CALL_QUEUE_MAX_PENDING = boundedPositiveInteger(process.env.CALL_QUEUE_MAX_PENDING, 100, 1000);
+const CALL_QUEUE_MAX_PER_USER = boundedPositiveInteger(process.env.CALL_QUEUE_MAX_PER_USER, 20, 100);
 const MAX_STEERING_PROMPT_CHARS = 800;
 const MAX_INBOUND_GREETING_CHARS = 260;
 const MAX_OPENING_PRESET_SOURCE_CHARS = 8_000;
@@ -129,7 +130,7 @@ const VOICE_PREVIEW_RATE_LIMIT_WINDOW_MS = Number(
 const VOICE_PREVIEW_RATE_LIMIT_MAX = Number(
   process.env.VOICE_PREVIEW_RATE_LIMIT_MAX || 12,
 );
-const SERVER_VERSION = "2026-09-24-realistic-call-flow";
+const SERVER_VERSION = "2026-10-20-bulk-fair-queue";
 const STREAM_HANDOFF_MS = 12_000;
 const BLOCKED_OUTBOUND_NUMBERS = parseBlockedDestinations(process.env.BLOCKED_OUTBOUND_NUMBERS);
 const VOICE_SESSION_START = "[[vc:session]]";
@@ -425,8 +426,15 @@ const activeLineSessions = new Map();
 /** Metadata index for durable bridge recordings (media bytes live on disk). */
 const bridgeRecordings = new Map();
 const voicePreviewRateLimits = new Map();
-const callQueue = [];
+const callQueue = createFairCallQueue({
+  getSession: id => callSessions.get(id),
+  maxPending: CALL_QUEUE_MAX_PENDING,
+  maxPerUser: CALL_QUEUE_MAX_PER_USER,
+});
 let queueProcessing = false;
+let dispatchCoordinatorProcessing = false;
+let nextDispatchSource = "direct";
+const agentDispatchReservations = new Set();
 let sessionCleanupProcessing = false;
 let backendReconcileProcessing = false;
 let lastBackendReconcileAt = 0;
@@ -446,8 +454,12 @@ let lineRotationCursor = 0;
 
 const twilioClient =
   process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
-    ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+    ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN, { timeout: 10_000 })
     : null;
+const assertProfitableDestination = createDestinationPricingGuard({
+  twilioClient,
+  maxRateUsdPerMinute: process.env.MAX_OUTBOUND_RATE_USD_PER_MINUTE || "0.03",
+});
 const { VoiceResponse } = twilio.twiml;
 
 const stripeClients = new Map();
@@ -1048,8 +1060,11 @@ async function getLinePoolSnapshot() {
   return {
     numbers,
     active,
-    available: numbers.filter((number) => !activeLineSessions.has(number)),
+    available: activeLineSessions.size < CALL_MAX_CONCURRENT
+      ? numbers.filter((number) => !activeLineSessions.has(number)) : [],
     queued: getQueuedSessionIds().length,
+    maxConcurrent: CALL_MAX_CONCURRENT,
+    maxPending: CALL_QUEUE_MAX_PENDING,
   };
 }
 
@@ -3309,10 +3324,7 @@ function isTerminalTwilioStreamEvent(event) {
 }
 
 function getQueuedSessionIds() {
-  return callQueue.filter((sessionId) => {
-    const session = callSessions.get(sessionId);
-    return session && !session.finished && session.state === "queued";
-  });
+  return callQueue.ids();
 }
 
 function getQueuePosition(sessionId) {
@@ -3322,16 +3334,13 @@ function getQueuePosition(sessionId) {
 }
 
 function removeQueuedSession(sessionId) {
-  for (let i = callQueue.length - 1; i >= 0; i -= 1) {
-    if (callQueue[i] === sessionId) callQueue.splice(i, 1);
-  }
+  callQueue.remove(sessionId);
 }
 
 function enqueueCallSession(session) {
   if (!session || session.finished) return;
-  session.state = "queued";
+  callQueue.enqueue(session);
   session.queueEnteredAt ||= Date.now();
-  if (!callQueue.includes(session.id)) callQueue.push(session.id);
 }
 
 function chooseAvailableLineNumber(numbers) {
@@ -3363,6 +3372,8 @@ async function reserveAvailableLineForSession(session) {
   }
 
   const numbers = await getConfiguredTwilioLineNumbers();
+  if (session.finished) return "";
+  if (activeLineSessions.size >= CALL_MAX_CONCURRENT) return "";
   const lineNumber = chooseAvailableLineNumber(numbers);
   if (!lineNumber) return "";
 
@@ -3391,7 +3402,7 @@ function releaseSessionLine(session) {
   }
   session.lineNumber = null;
   setTimeout(() => {
-    dispatchQueuedSessions().catch((error) => {
+    dispatchAvailableCalls().catch((error) => {
       log("error", "Queued call dispatch failed", { error: error.message });
     });
   }, 0).unref?.();
@@ -3518,6 +3529,12 @@ async function createTwilioCallForSession(session, lineNumber, actor) {
     assertAllowedDestination(session.recipientPhone, BLOCKED_OUTBOUND_NUMBERS);
     // Both browser and MCP queued jobs converge here, immediately before dial.
     assertSafeInstructionText(session.preset?.systemPrompt, "Call preset instructions");
+    await assertProfitableDestination(session.recipientPhone, lineNumber);
+    // A stop request or inbound callback can interleave with the carrier lookup.
+    // Never dial after this session has ended or lost its reserved line.
+    if (session.finished || activeLineSessions.get(lineNumber) !== session.id) {
+      throw Object.assign(new Error("Call canceled before dialing."), { code: "CALL_CANCELED_BEFORE_DIAL" });
+    }
 
     const callCreateOptions = {
       to: session.recipientPhone,
@@ -3550,6 +3567,7 @@ async function createTwilioCallForSession(session, lineNumber, actor) {
       await actor.markReservationStarted(session.reservationId, call.sid),
       "Unable to mark paid reservation as started.",
     );
+    nextDispatchSource = session.agentDispatch ? "direct" : "agent";
     log("info", "Twilio call created", {
       callSid: call.sid,
       callId: session.callId,
@@ -3599,20 +3617,21 @@ function registerInboundCallStatusCallback(session) {
     });
 }
 
-async function dispatchQueuedSessions() {
+async function dispatchQueuedSessions(preferredSessionId = "") {
   if (queueProcessing) return;
   queueProcessing = true;
   try {
-    while (callQueue.length > 0) {
-      const sessionId = callQueue[0];
+    while (getQueuedSessionIds().length > 0) {
+      const queuedIds = getQueuedSessionIds();
+      const sessionId = queuedIds.includes(preferredSessionId) ? preferredSessionId : queuedIds[0];
       const session = callSessions.get(sessionId);
       if (!session || session.finished || session.state !== "queued") {
-        callQueue.shift();
+        removeQueuedSession(sessionId);
         continue;
       }
 
       if (Date.now() - session.queueEnteredAt > CALL_QUEUE_MAX_WAIT_MS) {
-        callQueue.shift();
+        removeQueuedSession(sessionId);
         await cancelQueuedSession(
           session,
           "No Twilio line became available before the queue timeout.",
@@ -3623,11 +3642,12 @@ async function dispatchQueuedSessions() {
       const lineNumber = await reserveAvailableLineForSession(session);
       if (!lineNumber) break;
 
-      callQueue.shift();
+      callQueue.dispatched(session);
       try {
         const actor = await getBackendActor();
         await createTwilioCallForSession(session, lineNumber, actor);
       } catch (error) {
+        session.dispatchError = error;
         releaseSessionLine(session);
         log("error", "Unable to dispatch queued call", {
           sessionId,
@@ -3635,10 +3655,57 @@ async function dispatchQueuedSessions() {
         });
         await cancelQueuedSession(session, error.message);
       }
+      nextDispatchSource = session.agentDispatch ? "direct" : "agent";
+      // Let the coordinator reconsider the other source after every attempt.
+      return;
     }
   } finally {
     queueProcessing = false;
   }
+}
+
+async function dispatchAvailableCalls() {
+  if (dispatchCoordinatorProcessing) return 0;
+  dispatchCoordinatorProcessing = true;
+  let agentWork = 0;
+  try {
+    // The bound includes failed direct requests; one invalid destination must
+    // not prevent the next account from getting an available slot.
+    for (let attempt = 0; attempt < (CALL_MAX_CONCURRENT + 1) * 2; attempt += 1) {
+      if (activeLineSessions.size >= CALL_MAX_CONCURRENT) break;
+      const before = activeLineSessions.size;
+      const preferred = nextDispatchSource;
+      if (preferred === "agent") {
+        agentWork += await dispatchAgentTurn();
+        if (activeLineSessions.size > before) continue;
+      }
+      const directSessionId = getQueuedSessionIds().find(id => !callSessions.get(id)?.agentDispatch);
+      if (directSessionId) {
+        const queuedBefore = getQueuedSessionIds().length;
+        await dispatchQueuedSessions(directSessionId);
+        if (activeLineSessions.size > before || getQueuedSessionIds().length < queuedBefore) continue;
+      }
+      if (preferred === "direct") {
+        agentWork += await dispatchAgentTurn();
+        if (activeLineSessions.size > before) continue;
+      }
+      break;
+    }
+  } finally {
+    dispatchCoordinatorProcessing = false;
+  }
+  return agentWork;
+}
+
+async function dispatchAgentTurn() {
+  // An inbound webhook can take the last slot while an IC claim is awaiting
+  // randomness. Finish that already-claimed job before claiming another one.
+  const waitingAgentId = getQueuedSessionIds().find(id => callSessions.get(id)?.agentDispatch);
+  if (waitingAgentId) {
+    await dispatchQueuedSessions(waitingAgentId);
+    return 0;
+  }
+  return dispatchPendingAgentCallJobs();
 }
 
 app.get("/health", async (req, res) => {
@@ -3683,6 +3750,19 @@ app.get("/health", async (req, res) => {
     phoneKeypad: { enabled: true, transport: "twilio-play-digits+inband-fallback", version: 2 },
     callLifecycle: { enabled: true, version: 2, beepDetection: true, ...CALL_LIFECYCLE_LIMITS },
     callRequestVersion: CALL_REQUEST_VERSION,
+    callQueue: {
+      version: 1,
+      policy: "per-user-round-robin",
+      sources: "alternating-browser-and-connector",
+      lazyBulkDispatch: true,
+      maxConcurrent: CALL_MAX_CONCURRENT,
+      maxPending: CALL_QUEUE_MAX_PENDING,
+      maxPendingPerUser: CALL_QUEUE_MAX_PER_USER,
+    },
+    destinationPricing: {
+      enabled: true,
+      maxOutboundRateUsdPerMinute: String(process.env.MAX_OUTBOUND_RATE_USD_PER_MINUTE || "0.03"),
+    },
     ready:
       setupIssues.length === 0 &&
       xaiConfigured &&
@@ -4025,6 +4105,7 @@ app.post("/initiate-call", async (req, res) => {
       reservationId,
       // Account principal that owns the prepaid reservation / call history row.
       userId: reservation.user || "",
+      agentDispatch: agentDispatchReservations.has(reservationId),
       allowedSeconds: reservation.allowedSeconds,
       recipientPhone,
       direction: CALL_DIRECTIONS.OUTBOUND,
@@ -4086,40 +4167,17 @@ app.post("/initiate-call", async (req, res) => {
     };
     callSessions.set(sessionId, session);
 
-    const lineNumber = await reserveAvailableLineForSession(session);
-    if (!lineNumber) {
-      enqueueCallSession(session);
-      log("info", "Call queued because all Twilio lines are busy", {
-        callId,
-        sessionId,
-        queuePosition: getQueuePosition(sessionId),
-      });
-
-      res.status(202).json({
-        ...buildCallSessionPayload(session, { includeMonitorToken: true }),
-        allowedSeconds: reservation.allowedSeconds,
-      });
-      return;
+    // All sources enter the same queue, so a new browser request cannot jump
+    // ahead of another account merely because a line just became available.
+    enqueueCallSession(session);
+    if (session.agentDispatch) await dispatchQueuedSessions(sessionId);
+    else await dispatchAvailableCalls();
+    if (session.finished) {
+      throw session.dispatchError || new Error("The queued call could not be started.");
     }
-
-    const call = await createTwilioCallForSession(session, lineNumber, actor);
-    if (!call) {
-      throw new Error("No Twilio line is currently available.");
-    }
-
-    res.json({
-      ok: true,
-      callSid: call.sid,
-      sessionId,
-      monitorToken,
-      liveAudioUrl: getPublicLiveAudioUrl(sessionId, listenToken),
-      status: call.status,
-      allowedSeconds: reservation.allowedSeconds,
-      liveAudio: {
-        codec: "audio/pcmu",
-        sampleRate: 8000,
-      },
-    });
+    res.status(session.state === "queued" ? 202 : 200).json(
+      buildCallSessionPayload(session, { includeMonitorToken: true }),
+    );
   } catch (error) {
     log("error", "Failed to initiate call", { error: error.message });
     if (session?.callSid && twilioClient) {
@@ -4174,6 +4232,9 @@ app.post("/answering/incoming/:webhookSecret", async (req, res) => {
     }
     if (!callSid) {
       throw new Error("Missing Twilio CallSid.");
+    }
+    if (activeLineSessions.size >= CALL_MAX_CONCURRENT || activeLineSessions.has(twilioToNumber)) {
+      throw new Error("The voice server has reached its concurrent call limit.");
     }
 
     const actor = await getBackendActor();
@@ -4292,7 +4353,13 @@ app.post("/answering/incoming/:webhookSecret", async (req, res) => {
       metrics: createNaturalnessMetrics(),
       monitorClients: new Set(),
     };
+    // Re-check after the IC awaits, then lock synchronously before another
+    // webhook or outbound dispatch can consume this host's last slot.
+    if (activeLineSessions.size >= CALL_MAX_CONCURRENT || activeLineSessions.has(twilioToNumber)) {
+      throw new Error("The voice server has reached its concurrent call limit.");
+    }
     callSessions.set(sessionId, session);
+    assignLineToSession(session, twilioToNumber);
     callsBySid.set(callSid, sessionId);
     registerInboundCallStatusCallback(session);
 
@@ -4330,6 +4397,7 @@ app.post("/answering/incoming/:webhookSecret", async (req, res) => {
       error: error.message,
     });
     if (session) {
+      releaseSessionLine(session);
       callSessions.delete(session.id);
       if (session.callSid) callsBySid.delete(session.callSid);
     }
@@ -4581,6 +4649,7 @@ function requestKeypadSignaling(session, digits, keypad) {
     return false;
   }
   armStreamHandoff(session);
+  const previousStreamSid = session.streamSid;
   twilioClient.calls(session.callSid).update({ twiml }).then(() => {
     log("info", "Sent keypad digits through Twilio", {
       sessionId: session.id,
@@ -4588,12 +4657,16 @@ function requestKeypadSignaling(session, digits, keypad) {
       digitCount: digits.length,
     });
   }).catch((error) => {
+    // A lost REST response can follow successful execution of <Play digits>.
+    // Replaying tones in that case can select the next menu or enter a PIN.
+    if (session.streamSid && session.streamSid !== previousStreamSid) return;
     if (session.streamHandoff && !session.streamHandoff.reattached) session.streamHandoff = null;
-    log("warn", "Twilio keypad signaling failed; using in-band tones", {
+    const rejected = Number(error.status) >= 400 && Number(error.status) < 500;
+    log("warn", rejected ? "Twilio rejected keypad signaling; using in-band tones" : "Twilio keypad delivery is unconfirmed; not replaying digits", {
       sessionId: session.id,
       error: error.message,
     });
-    keypad.onSignalingResult?.("failed");
+    keypad.onSignalingResult?.(rejected ? "failed" : "unconfirmed");
   });
   return true;
 }
@@ -5562,13 +5635,18 @@ async function reconcileOpenBackendCallReservations() {
 async function dispatchPendingAgentCallJobs() {
   if (agentCallPollProcessing) return 0;
   if (!process.env.BACKEND_CANISTER_ID) return 0;
+  // Do not reserve prepaid time or mutate IC state while this small host is
+  // full. Each uploaded list remains durable in the canister until its turn.
+  if (queueProcessing ||
+    activeLineSessions.size >= CALL_MAX_CONCURRENT || !twilioClient) return 0;
   agentCallPollProcessing = true;
+  let dispatchedCount = 0;
   try {
+    const numbers = await getConfiguredTwilioLineNumbers();
+    if (!numbers.some(number => !activeLineSessions.has(number))) return 0;
     const actor = await getBackendActor();
-    const jobs = await actor.listPendingAgentCallsForServer(
-      BigInt(AGENT_CALL_POLL_LIMIT),
-    );
-    if (jobs.length === 0) return 0;
+    // This query avoids an idle update call on every polling tick.
+    if (!await actor.agentHasPendingCallsForServer()) return 0;
     const openReservations = (
       await actor.listOpenCallReservationsForServer(200n)
     ).map(normalizeReservation);
@@ -5576,11 +5654,13 @@ async function dispatchPendingAgentCallJobs() {
       openReservations.map((reservation) => [reservation.id, reservation]),
     );
 
-    for (const pendingJob of jobs) {
-      const claimed = unwrapOptional(
-        await actor.claimAgentCallForServer(pendingJob.id),
-      );
-      if (!claimed) continue;
+    for (let attempt = 0; attempt < 1; attempt += 1) {
+      if (queueProcessing ||
+        activeLineSessions.size >= CALL_MAX_CONCURRENT ||
+        !numbers.some(number => !activeLineSessions.has(number))) break;
+      const claimed = unwrapOptional(await actor.claimNextAgentCallForServer());
+      if (!claimed) break;
+      dispatchedCount += 1;
 
       const job = normalizeAgentCallJob(claimed.job);
       const recoveredReservation = openReservationById.get(job.reservationId);
@@ -5626,6 +5706,7 @@ async function dispatchPendingAgentCallJobs() {
         }
       }
 
+      agentDispatchReservations.add(job.reservationId);
       try {
         const response = await fetch(`http://127.0.0.1:${PORT}/initiate-call`, {
           method: "POST",
@@ -5703,9 +5784,11 @@ async function dispatchPendingAgentCallJobs() {
           callId: job.callId,
           error: message,
         });
+      } finally {
+        agentDispatchReservations.delete(job.reservationId);
       }
     }
-    return jobs.length;
+    return dispatchedCount;
   } catch (error) {
     log("warn", "Unable to poll ICP MCP agent call jobs", {
       error: error.message,
@@ -5720,7 +5803,7 @@ function scheduleAgentCallPoll(delayMs = AGENT_CALL_POLL_INTERVAL_MS) {
   setTimeout(async () => {
     let nextDelay = AGENT_CALL_POLL_INTERVAL_MS;
     try {
-      const pendingJobCount = await dispatchPendingAgentCallJobs();
+      const pendingJobCount = await dispatchAvailableCalls();
       if (pendingJobCount === 0) {
         nextDelay = Math.min(
           AGENT_CALL_IDLE_POLL_INTERVAL_MS,
@@ -5811,7 +5894,7 @@ async function runSessionCleanup() {
         error: error.message,
       });
     }
-    await dispatchQueuedSessions();
+    await dispatchAvailableCalls();
   } catch (error) {
     log("error", "Session cleanup failed", {
       error: error.message,

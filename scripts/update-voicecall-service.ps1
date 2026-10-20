@@ -3,7 +3,8 @@ param(
   [string]$ProjectRoot = "C:\Projects\voicecall-ai",
   [string]$NssmPath = "C:\Tools\nssm\nssm.exe",
   [string]$Remote = "origin",
-  [string]$Branch = "main"
+  [string]$Branch = "main",
+  [string]$ExpectedVersion = "2026-10-20-bulk-fair-queue"
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,6 +37,20 @@ function Require-Command {
 
   if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
     throw "$Name was not found on PATH."
+  }
+}
+
+function Assert-BridgeHealth {
+  param([string]$Content)
+  $health = $Content | ConvertFrom-Json
+  if (-not $health.ready -or $health.serverVersion -ne $ExpectedVersion) {
+    throw "Bridge is not ready at release $ExpectedVersion. Inspect setupIssues and the service logs."
+  }
+  if ($health.backendCanisterId -ne "2dwhz-ziaaa-aaaak-qy2ia-cai") {
+    throw "Bridge points at an unexpected production backend. Check BACKEND_CANISTER_ID."
+  }
+  if (-not $health.callQueue.lazyBulkDispatch -or -not $health.destinationPricing.enabled) {
+    throw "Bridge is missing bulk dispatch or carrier-price protection. Verify the deployed checkout."
   }
 }
 
@@ -127,10 +142,13 @@ try {
 
   Write-Host "Ensuring $ServiceName points at this checkout..."
   & $NssmPath set $ServiceName AppDirectory $ServerDir
+  if ($LASTEXITCODE -ne 0) { throw "Unable to update the service directory." }
   & $NssmPath set $ServiceName AppParameters "server.js"
+  if ($LASTEXITCODE -ne 0) { throw "Unable to update the service parameters." }
 
   Write-Host "Restarting $ServiceName with NSSM..."
   & $NssmPath restart $ServiceName
+  if ($LASTEXITCODE -ne 0) { throw "Unable to restart the voice service." }
   Start-Sleep -Seconds 3
   & $NssmPath status $ServiceName
 
@@ -141,6 +159,7 @@ try {
     Write-Host "Local HTTP status: $($localResponse.StatusCode)"
     Write-Host "Local Access-Control-Allow-Origin: $($localResponse.Headers["Access-Control-Allow-Origin"])"
     Write-Host $localResponse.Content
+    Assert-BridgeHealth $localResponse.Content
     if ($localResponse.Headers["Access-Control-Allow-Origin"] -ne $origin) {
       throw "Local CORS health check did not allow $origin."
     }
@@ -156,6 +175,7 @@ try {
       Write-Host "Public HTTP status: $($publicResponse.StatusCode)"
       Write-Host "Public Access-Control-Allow-Origin: $($publicResponse.Headers["Access-Control-Allow-Origin"])"
       Write-Host $publicResponse.Content
+      Assert-BridgeHealth $publicResponse.Content
       if ($publicResponse.Headers["Access-Control-Allow-Origin"] -ne $origin) {
         throw "Public CORS health check did not allow $origin."
       }

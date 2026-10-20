@@ -5,6 +5,9 @@ VoiceCall AI is an IC-hosted app with a separate Node.js voice bridge for Twilio
 See [agent call behavior](docs/AGENT-CALLS.md) for query-only `agentPreviewCall`,
 capture authorization and failure diagnostics. Follow [Windows setup](docs/WINDOWS.md)
 to update the separate voice service and Genesis worker after an IC deployment.
+See [bulk calling](docs/BULK-CALLS.md) for number uploads and connector batches,
+and [call economics](docs/CALL-ECONOMICS.md) for current cost assumptions and the
+carrier-price ceiling.
 
 The Twilio error happened because the old code generated this webhook URL:
 

@@ -50,6 +50,27 @@
   "capture_authorization": "consentConfirmed is a legacy customer-authorization field, not evidence of another participant's consent. Authenticated capture selections are normalized by the backend.",
   "calling_policy": "Ordinary lawful calls have no blanket prior recipient-consent gate. Harmless comedy and consensual adult roleplay are supported. Required notices/permissions, anti-harassment safeguards and assistant/provider policies still apply.",
   "preview_method": "agentPreviewCall",
+  "bulk_workflow": {
+    "preview_method": "agentPreviewCallBatch",
+    "queue_method": "agentQueueCallBatch",
+    "list_method": "agentListCallBatches",
+    "cancel_method": "agentCancelCallBatch",
+    "attachment_handling": "Extract a readable attachment's phone column in the assistant and pass recipientPhones as Candid text strings. The connector does not upload files or fetch file URLs. Use pasted numbers or the dashboard if the attachment is unavailable.",
+    "max_numbers_per_batch": 100,
+    "max_undialed_per_account": 200,
+    "max_undialed_globally": 2000,
+    "retained_batches_per_account": 10,
+    "max_call_seconds": {
+      "minimum": 60,
+      "maximum": 600,
+      "increment": 60
+    },
+    "undialed_expiry_hours": 24,
+    "funding": "Reserve one full per-call allowance at dispatch; wait for phone time when insufficient. No automatic purchases.",
+    "idempotency_retention": "Recovery lasts while the batch is retained (up to 10/account). Terminal history may be pruned under global pressure; inspect call history before resubmitting old work after its key is gone.",
+    "completion": "completed means all targets handed off; inspect individual job and call outcomes.",
+    "cancellation": "agentCancelCallBatch stops undialed targets only; agentEndCall handles dispatched jobs."
+  },
   "safety_limitations": "Known short codes and reserved patterns are blocked; this does not identify every full-length dispatch number or guarantee prevention of deceptive calls.",
   "payment_workflow": [
     "agentGetAccountIdentity for the exact ICRC-1 deposit account.",
@@ -77,6 +98,10 @@
     "createPreset",
     "agentPreviewCall",
     "agentQueueCall",
+    "agentPreviewCallBatch",
+    "agentQueueCallBatch",
+    "agentListCallBatches",
+    "agentCancelCallBatch",
     "agentListCallJobs",
     "agentEndCall",
     "agentGetLiveCallLink",

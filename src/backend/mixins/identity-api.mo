@@ -2,6 +2,7 @@ import AccessControl "mo:caffeineai-authorization/access-control";
 import Principal "mo:core/Principal";
 import Runtime "mo:core/Runtime";
 import BillingLib "../lib/billing";
+import BulkLib "../lib/bulk";
 import IdentityLib "../lib/identity";
 import IdentityTypes "../types/identity";
 
@@ -12,6 +13,7 @@ mixin (
   accessControlState : AccessControl.AccessControlState,
   identityState : IdentityLib.State,
   billingState : BillingLib.State,
+  bulkCallState : BulkLib.State,
 ) {
   /// Returns the caller's session principal, canonical account principal, and
   /// linked group. Cheap query — no inter-canister calls.
@@ -60,6 +62,7 @@ mixin (
           outcome.secondary,
           outcome.primary,
         );
+        BulkLib.mergeAccounts(bulkCallState, outcome.secondary, outcome.primary);
         #ok(outcome.identity);
       };
     };

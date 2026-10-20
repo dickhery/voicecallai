@@ -235,6 +235,49 @@ module {
     idempotencyKey : Text;
   };
 
+  public type AgentCallBatchInput = {
+    recipientPhones : [Text];
+    presetId : Nat;
+    captureOptions : AgentCallCaptureOptions;
+    /// Whole minutes, from 60 through 600 seconds per call.
+    maxCallSeconds : Nat;
+    idempotencyKey : Text;
+  };
+
+  public type AgentCallBatchStatus = { #queued; #completed; #canceled };
+
+  public type AgentCallBatch = {
+    id : Text;
+    user : Principal;
+    recipientPhones : [Text];
+    presetId : Nat;
+    captureOptions : AgentCallCaptureOptions;
+    maxCallSeconds : Nat;
+    createdAt : Int;
+    /// completed means every target was handed to the bridge, not that calls finished.
+    status : AgentCallBatchStatus;
+    attemptedCount : Nat;
+    remainingCount : Nat;
+    jobs : [AgentCallJob];
+    lastError : ?Text;
+  };
+
+  public type AgentCallBatchResult = { #ok : AgentCallBatch; #err : AgentError };
+
+  public type AgentCallBatchPreview = {
+    recipientPhones : [Text];
+    presetId : Nat;
+    captureOptions : AgentCallCaptureOptions;
+    maxCallSeconds : Nat;
+    availableSeconds : Nat;
+    existingBatch : ?AgentCallBatch;
+    maxBatchSize : Nat;
+    maxPendingNumbers : Nat;
+    note : Text;
+  };
+
+  public type AgentCallBatchPreviewResult = { #ok : AgentCallBatchPreview; #err : AgentError };
+
   public type AgentCallJobStatus = {
     #queued;
     #claimed;

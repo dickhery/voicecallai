@@ -33,6 +33,13 @@ mixin (
     IdentityLib.resolve(identityState, caller);
   };
 
+  /// An older call may finish after its web/MCP identities were linked. Move
+  /// only newly available seconds, preserving every other open reservation.
+  private func sweepReleasedLinkedBalance(user : Principal) {
+    let primary = billingAccountOf(user);
+    if (primary != user) { ignore BillingLib.moveAvailableBalance(billingState, user, primary) };
+  };
+
   private func byteToHex(byte : Nat8) : Text {
     let alphabet = "0123456789abcdef".toArray();
     let value = byte.toNat();
@@ -419,6 +426,7 @@ mixin (
         switch (BillingLib.getReservation(billingState, reservationId)) {
           case null {};
           case (?reservation) {
+            sweepReleasedLinkedBalance(reservation.user);
             switch (reservation.status) {
               case (#canceled) {
                 ignore CallsLib.updateCallRecord(
@@ -455,6 +463,7 @@ mixin (
         switch (BillingLib.getReservationByCallSid(billingState, callSid)) {
           case null {};
           case (?reservation) {
+            sweepReleasedLinkedBalance(reservation.user);
             switch (reservation.status) {
               case (#canceled) {
                 ignore CallsLib.updateCallRecord(
@@ -512,6 +521,7 @@ mixin (
         switch (BillingLib.getReservation(billingState, reservationId)) {
           case null {};
           case (?reservation) {
+            sweepReleasedLinkedBalance(reservation.user);
             let finalCallSid = switch (callSid) {
               case (?sid) { ?sid };
               case null { reservation.callSid };
@@ -568,6 +578,7 @@ mixin (
         switch (BillingLib.getReservationByCallSid(billingState, callSid)) {
           case null {};
           case (?reservation) {
+            sweepReleasedLinkedBalance(reservation.user);
             switch (reservation.status) {
               case (#finished) {
                 let finalTranscript = switch (transcript) {

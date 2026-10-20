@@ -173,6 +173,45 @@ test('opening gate treats a short hello as a person and does not invent a beep',
   assert.equal(h.control.noteBeep(), false);
 });
 
+test('a beep during an active response waits for response.done then requests one message', () => {
+  for (const status of ['completed', 'cancelled', 'incomplete']) {
+    const h = harness({ gateOpenings: true });
+    h.control.responseCreated();
+    assert.equal(h.control.noteBeep(), true);
+    assert.equal(h.control.holdAssistant, true);
+    assert.equal(h.sent.filter(event => event.type === 'response.create').length, 0);
+    h.control.responseDone(status);
+    assert.equal(h.sent.filter(event => event.type === 'response.create').length, 1);
+    assert.equal(h.control.holdAssistant, false);
+    assert.equal(h.control.noteBeep(), false);
+    h.control.responseCreated(); h.audio(15); h.control.responseDone('completed');
+    h.control.onMark(h.marks.at(-1));
+    assert.deepEqual(h.ended, ['voicemail_message_complete']);
+  }
+});
+
+test('a quiet voicemail greeting never instructs recording before a recording cue', () => {
+  const h = harness({ gateOpenings: true });
+  h.tool('set_call_state', { state: 'voicemail_greeting' });
+  h.advance(3000);
+  const update = h.sent.find(event => event.item?.type === 'message').item.content[0].text;
+  assert.match(update, /pause alone is not a voicemail recording cue/i);
+  assert.match(update, /until an actual beep/i);
+  assert.equal(h.ended.length, 0);
+});
+
+test('a confirmed live person cancels a queued voicemail instruction after a false beep', () => {
+  const h = harness({ gateOpenings: true });
+  h.control.responseCreated(); assert.equal(h.control.noteBeep(), true);
+  h.tool('set_call_state', { state: 'human' });
+  h.control.responseDone('completed');
+  const updates = h.sent.filter(event => event.item?.type === 'message');
+  assert.equal(updates.length, 1);
+  assert.match(updates[0].item.content[0].text, /live person/i);
+  assert.doesNotMatch(updates[0].item.content[0].text, /beep/i);
+  h.control.close();
+});
+
 test('live person returning from voicemail cancels its deadline', () => {
   const h = harness(); h.tool('set_call_state', { state: 'voicemail_greeting' });
   h.advance(60_000); h.control.speechStarted(); h.tool('set_call_state', { state: 'human' });

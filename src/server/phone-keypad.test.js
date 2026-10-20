@@ -127,6 +127,25 @@ test("extension hints stay limited to supplied extension digits", () => {
   assert.match(KEYPAD_INSTRUCTIONS, /extension/i);
 });
 
+test("an uncertain Twilio REST result never replays a possibly delivered selection", async () => {
+  const source = readFileSync(new URL("./server.js", import.meta.url), "utf8");
+  const start = source.indexOf("function requestKeypadSignaling(");
+  const end = source.indexOf('app.post("/twiml"', start);
+  for (const [status, expected] of [[400, "failed"], [500, "unconfirmed"], [undefined, "unconfirmed"]]) {
+    const results = [];
+    const session = { id: "session", callSid: "CAcall", streamSid: "MZbefore" };
+    const context = vm.createContext({
+      twilioClient: { calls: () => ({ update: async () => { throw Object.assign(new Error("Provider failure"), { status }); } }) },
+      getPublicWsUrl: () => "wss://bridge.example", buildMediaStreamTwiml: () => "<Response/>",
+      armStreamHandoff: value => { value.streamHandoff = {}; }, log: () => {},
+    });
+    vm.runInContext(source.slice(start, end), context);
+    assert.equal(context.requestKeypadSignaling(session, "1", { onSignalingResult: result => results.push(result) }), true);
+    await new Promise(setImmediate);
+    assert.deepEqual(results, [expected]);
+  }
+});
+
 test("production session builder exposes keypad only on full outbound sessions", () => {
   const source = readFileSync(new URL("./server.js", import.meta.url), "utf8");
   const start = source.indexOf("function buildXaiSessionUpdate(");
