@@ -6,10 +6,30 @@ type AdminConfig__36162014 =
     var twilioFromNumber : Text;
     var xaiApiKey : Text
   };
+type AgentCallBatchStatus__632646850 = {#canceled; #completed; #queued};
 type AgentCallCaptureOptions__597500174 =
   {consentConfirmed : Bool; recordAudio : Bool; saveTranscript : Bool};
 type AgentCallJobStatus__1065128923 =
   {#canceled; #claimed; #dispatched; #failed; #queued};
+type AgentCallJob__829280276 =
+  {
+    callId : Nat;
+    callSid : ?Text;
+    captureOptions : AgentCallCaptureOptions__597500174;
+    claimedAt : ?Int;
+    createdAt : Int;
+    error : ?Text;
+    expiresAt : Int;
+    id : Text;
+    liveAudioNote : ?Text;
+    liveAudioUrl : ?Text;
+    presetId : Nat;
+    recipientPhone : Text;
+    reservationId : Text;
+    serverSessionId : ?Text;
+    status : AgentCallJobStatus__1065128923;
+    user : Principal
+  };
 type AgentConsentGrant__819570921 =
   {
     expiresAt : Int;
@@ -191,6 +211,21 @@ type StoredAnsweringPreset__731606231 =
     voice : Voice__817973016;
     webhookSecret : Text
   };
+type StoredBatch__1042454765 =
+  {
+    captureOptions : AgentCallCaptureOptions__597500174;
+    createdAt : Int;
+    id : Text;
+    idempotencyKey : Text;
+    jobs : Map__254296833<Text, AgentCallJob__829280276>;
+    var lastError : ?Text;
+    maxCallSeconds : Nat;
+    var nextIndex : Nat;
+    presetId : Nat;
+    recipientPhones : [Text];
+    var status : AgentCallBatchStatus__632646850;
+    user : Principal
+  };
 type StoredCallPreset__999262307 =
   {
     audioFormat : AudioFormat__500525639;
@@ -315,6 +350,15 @@ actor {
       processedStripeSessions : Map__254296833<Text, Bool>;
       purchaseIntents : Map__254296833<Text, PurchaseIntent__399492561>;
       reservedSecondsByUser : Map__254296833<Principal, Nat>
+    };
+  stable bulkCallState :
+    {
+      batches : Map__254296833<Text, StoredBatch__1042454765>;
+      var lastServedOwner : ?Principal;
+      var nextId : Nat;
+      var pendingIndexInitialized : Bool;
+      pendingJobIds : Map__254296833<Text, Bool>;
+      userBatches : Map__254296833<Principal, List__341252331<Text>>
     };
   stable callEndState :
     {pendingEnds : Map__254296833<Text, PendingCallEnd__893732215>};
