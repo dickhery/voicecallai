@@ -15,7 +15,7 @@ export const KEYPAD_TOOL = {
 
 export const KEYPAD_INSTRUCTIONS = [
   "Automated phone menus: listen to the entire relevant menu before choosing.",
-  "If an automated system answers, do not introduce yourself or talk over it. Use press_phone_keys for the announced option that serves the user's call goal, including voicemail or customer service.",
+  "If a keypad menu or one-way automated announcement answers, do not introduce yourself or talk over it. Use press_phone_keys for an announced option that serves the user's call goal, including voicemail or customer service. An interactive AI assistant that asks how it can help is a conversation, not a keypad menu: answer it naturally after its greeting.",
   "Extensions: when a prompt asks for an extension, or says you may dial one now, press only the extension digits supplied for this call. Append # only if the prompt asks for pound or hash. If no extension was supplied, do not invent one and do not press random digits.",
   "Navigate one menu at a time. Never guess unannounced shortcuts, account numbers, PINs, or verification codes; use only details the user supplied for this task.",
   "Do not use keypad selections to authorize purchases, payments, account changes, or consent beyond the user's task.",

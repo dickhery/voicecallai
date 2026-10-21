@@ -2,6 +2,7 @@ import AccessControl "mo:caffeineai-authorization/access-control";
 import MixinAuthorization "mo:caffeineai-authorization/MixinAuthorization";
 import ConfigLib "lib/config";
 import CallsLib "lib/calls";
+import DiagnosticsLib "lib/call-diagnostics";
 import BillingLib "lib/billing";
 import AgentLib "lib/agent";
 import BulkLib "lib/bulk";
@@ -43,6 +44,7 @@ shared ({ caller = installer }) persistent actor class Backend() = this {
   let answeringState = ConfigLib.initAnsweringState();
   let answeringPresetVoiceIds = ConfigLib.initVoiceIdState();
   let callsState = CallsLib.initState();
+  let callDiagnosticsState = DiagnosticsLib.initState();
   let answeringLiveState = CallsLib.initAnsweringLiveState();
   // New stable collection for remote hang-up requests (empty on first upgrade).
   let callEndState = CallsLib.initCallEndState();
@@ -64,8 +66,8 @@ shared ({ caller = installer }) persistent actor class Backend() = this {
   // Domain mixins
   include IdentityApi(accessControlState, identityState, billingState, bulkCallState);
   include ConfigApi(accessControlState, identityState, configState, callPresetVoiceIds, twilioLineState, answeringState, answeringPresetVoiceIds, termsState);
-  include CallsApi(accessControlState, identityState, callsState, answeringLiveState, callEndState, configState, callPresetVoiceIds, billingState);
-  include BillingApi(accessControlState, identityState, billingState, callsState, configState, callPresetVoiceIds, answeringState, answeringPresetVoiceIds, termsState, colonyDelegationState);
+  include CallsApi(accessControlState, identityState, callsState, answeringLiveState, callEndState, configState, callPresetVoiceIds, billingState, callDiagnosticsState);
+  include BillingApi(accessControlState, identityState, billingState, callsState, configState, callPresetVoiceIds, answeringState, answeringPresetVoiceIds, termsState, colonyDelegationState, callDiagnosticsState);
   include AgentApi(
     Principal.fromActor(this),
     accessControlState,
@@ -79,6 +81,7 @@ shared ({ caller = installer }) persistent actor class Backend() = this {
     termsState,
     colonyDelegationState,
     bulkCallState,
+    callDiagnosticsState,
   );
 
   // Keep the binding live so the Motoko compiler does not drop it.

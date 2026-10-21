@@ -20,6 +20,7 @@ import AgentLib "../lib/agent";
 import BulkLib "../lib/bulk";
 import BillingLib "../lib/billing";
 import CallsLib "../lib/calls";
+import DiagnosticsLib "../lib/call-diagnostics";
 import CallTypes "../types/calls";
 import ConfigLib "../lib/config";
 import EmergencyLib "../lib/emergency";
@@ -39,6 +40,7 @@ mixin (
   termsState : AgentLib.TermsState,
   colonyDelegationState : AgentLib.ColonyDelegationState,
   bulkCallState : BulkLib.State,
+  callDiagnosticsState : DiagnosticsLib.State,
 ) {
   private func agentAccountOf(caller : Principal) : Principal {
     IdentityLib.resolve(identityState, caller);
@@ -1311,7 +1313,7 @@ mixin (
         ) {
           return null;
         };
-        ?AgentLib.artifacts(CallsLib.toPublic(call));
+        ?{ AgentLib.artifacts(CallsLib.toPublic(call)) with diagnostics = DiagnosticsLib.get(callDiagnosticsState, callId) };
       };
     };
   };

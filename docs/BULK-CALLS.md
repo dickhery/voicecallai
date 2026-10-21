@@ -111,7 +111,7 @@ Run `pnpm test`, `pnpm exec mops check`, `pnpm exec mops build`, `pnpm bindgen`,
 
 Deploy the IC backend and frontend, then update and restart the separate Windows
 voice bridge using [the Windows instructions](WINDOWS.md). The public bridge
-health must report `serverVersion=2026-10-20-bulk-fair-queue` and
+health must report `serverVersion=2026-10-21-call-audio-reliability` and
 `callQueue.lazyBulkDispatch=true`. An old bridge can continue serving existing
 single-call APIs, but it cannot dispatch these lazy bulk lists. No live test call
 is automatically placed by deployment.

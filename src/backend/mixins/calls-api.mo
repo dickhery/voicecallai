@@ -5,6 +5,7 @@ import Text "mo:core/Text";
 import AccessControl "mo:caffeineai-authorization/access-control";
 import BillingLib "../lib/billing";
 import CallsLib "../lib/calls";
+import DiagnosticsLib "../lib/call-diagnostics";
 import ConfigLib "../lib/config";
 import EmergencyLib "../lib/emergency";
 import IdentityLib "../lib/identity";
@@ -20,6 +21,7 @@ mixin (
   configState : ConfigLib.State,
   callPresetVoiceIds : ConfigLib.VoiceIdState,
   billingState : BillingLib.State,
+  callDiagnosticsState : DiagnosticsLib.State,
 ) {
   let MAX_CALL_TRANSCRIPT_CHARS : Nat = 20_000;
 
@@ -128,6 +130,22 @@ mixin (
           Runtime.trap("Unauthorized: can only view your own calls");
         };
         ?CallsLib.toPublic(r);
+      };
+    };
+  };
+
+  /// Read only when inspecting one call. No additional history polling needed.
+  public query ({ caller }) func getCallDiagnostics(id : Common.CallId) : async ?CallTypes.CallDiagnostics {
+    if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
+      Runtime.trap("Unauthorized: must be logged in");
+    };
+    switch (CallsLib.getCallRecord(callsState, id)) {
+      case null { null };
+      case (?call) {
+        if (not IdentityLib.sameAccount(identityState, caller, call.userId) and not AccessControl.isAdmin(accessControlState, caller)) {
+          Runtime.trap("Unauthorized: can only view your own calls");
+        };
+        DiagnosticsLib.get(callDiagnosticsState, id);
       };
     };
   };

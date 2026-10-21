@@ -385,7 +385,14 @@ mixin (
     if (not AccessControl.isAdmin(accessControlState, caller)) {
       Runtime.trap("Unauthorized: server admin only");
     };
-    ConfigLib.getAnsweringPresetForServer(answeringState, answeringPresetVoiceIds, webhookSecret, phoneNumber);
+    switch (ConfigLib.getAnsweringPresetForServer(answeringState, answeringPresetVoiceIds, webhookSecret, phoneNumber)) {
+      case null { null };
+      case (?preset) {
+        // The stored creator may be a linked secondary. The bridge compares
+        // this account with the canonical paid outbound reservation owner.
+        ?{ preset with ownerId = configAccountOf(preset.ownerId) };
+      };
+    };
   };
 
   public shared ({ caller }) func verifyAnsweringPresetForServer(

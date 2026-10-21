@@ -12,7 +12,7 @@ const statusConfig: Record<CallStatus, { label: string; className: string }> = {
     className: "bg-primary/10 text-primary border-primary/30",
   },
   completed: {
-    label: "Completed",
+    label: "Ended",
     className: "bg-green-500/10 text-green-400 border-green-500/30",
   },
   failed: {
@@ -27,6 +27,11 @@ export function CallStatusBadge({ status }: { status: CallStatus }) {
     <Badge
       variant="outline"
       className={cn("text-xs font-medium", config.className)}
+      title={
+        status === "completed"
+          ? "The phone session ended. This does not confirm the conversation goal was achieved."
+          : undefined
+      }
     >
       {config.label}
     </Badge>

@@ -330,6 +330,42 @@ type CallPreset =
    voiceId: opt text;
  };
 type CallId = nat;
+type CallDiagnosticsInput = 
+ record {
+   assistantAudioBytes: nat;
+   assistantConfirmedTurns: nat;
+   assistantSuppressedBytes: nat;
+   assistantUnconfirmedTurns: nat;
+   bridgeVersion: text;
+   callerAudioBytes: nat;
+   connected: bool;
+   terminationReason: text;
+   transportStatus: text;
+   version: nat;
+ };
+type CallDiagnostics = 
+ record {
+   assistantAudioBytes: nat;
+   assistantConfirmedTurns: nat;
+   assistantSuppressedBytes: nat;
+   assistantUnconfirmedTurns: nat;
+   bridgeVersion: text;
+   callerAudioBytes: nat;
+   connected: bool;
+   outcome: CallAudioOutcome;
+   recordedAt: int;
+   terminationReason: text;
+   transportStatus: text;
+   version: nat;
+ };
+type CallAudioOutcome = 
+ variant {
+   audioExchanged;
+   noAssistantAudio;
+   notConnected;
+   playbackUnconfirmed;
+   unknown;
+ };
 type BillingStatus = 
  record {
    availableSeconds: nat;
@@ -415,6 +451,9 @@ type Backend =
    finishAnsweringLiveSessionForServer: (sessionId: text) -> (bool);
    finishCallAndDebit: (reservationId: text, usedSeconds: nat, callSid:
     opt text, transcript: opt text) -> (BillingMutationResult);
+   finishCallAndDebitWithDiagnosticsForServer: (reservationId: text,
+    usedSeconds: nat, callSid: opt text, transcript: opt text, diagnostics:
+    CallDiagnosticsInput) -> (BillingMutationResult);
    finishCallByCallSidForServer: (callSid: text, usedSeconds: nat,
     transcript: opt text) -> (BillingMutationResult);
    getAdminConfig: () ->
@@ -432,6 +471,7 @@ type Backend =
     (opt AnsweringPreset) query;
    getApiDoc: () -> (text) query;
    getBillingPackages: () -> (vec BillingPackage) query;
+   getCallDiagnostics: (id: CallId) -> (opt CallDiagnostics) query;
    getCallRecord: (id: CallId) -> (opt CallRecordPublic) query;
    getCallerUserRole: () -> (UserRole) query;
    getColonyCallGrant: (id: nat) -> (opt ColonyCallGrant) query;
@@ -734,6 +774,7 @@ type AgentCallArtifacts =
    audioMimeType: opt text;
    audioUrl: opt text;
    call: CallRecordPublic;
+   diagnostics: opt CallDiagnostics;
    note: text;
    transcript: opt text;
  };

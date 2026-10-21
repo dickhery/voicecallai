@@ -459,6 +459,8 @@ function EndLiveCallButton({
   );
 }
 
+type MonitorChannel = "caller" | "assistant";
+
 function LiveAudioButton({
   sessionId,
   monitorToken,
@@ -467,121 +469,232 @@ function LiveAudioButton({
   monitorToken: string;
 }) {
   const [listening, setListening] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [audioState, setAudioState] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const inputNodeRef = useRef<AudioNode | null>(null);
-  const nextPlaybackRef = useRef(0);
+  const nextPlaybackRef = useRef<Record<MonitorChannel, number>>({
+    caller: 0,
+    assistant: 0,
+  });
+  const sourcesRef = useRef<Record<MonitorChannel, Set<AudioBufferSourceNode>>>(
+    { caller: new Set(), assistant: new Set() },
+  );
+  const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastAudioAtRef = useRef(0);
 
   const stop = () => {
-    wsRef.current?.close();
+    const socket = wsRef.current;
     wsRef.current = null;
-    if (audioContextRef.current?.state !== "closed") {
+    socket?.close();
+    if (watchdogRef.current) clearInterval(watchdogRef.current);
+    watchdogRef.current = null;
+    if (audioContextRef.current?.state !== "closed")
       void audioContextRef.current?.close();
-    }
     audioContextRef.current = null;
     inputNodeRef.current = null;
-    nextPlaybackRef.current = 0;
+    nextPlaybackRef.current = { caller: 0, assistant: 0 };
+    for (const sources of Object.values(sourcesRef.current)) sources.clear();
     setListening(false);
+    setConnecting(false);
+    setAudioState("");
   };
 
-  const playPayload = (payload: string) => {
+  const playPayload = (payload: string, channel: MonitorChannel) => {
     const audioContext = audioContextRef.current;
     const inputNode = inputNodeRef.current;
     if (!audioContext || !inputNode) return;
+    if (audioContext.state !== "running") {
+      setAudioState(
+        "Your browser paused audio. Stop audio, then click Listen Live again.",
+      );
+      return;
+    }
     const bytes = decodeBase64Payload(payload);
+    if (!bytes.length) return;
     const buffer = audioContext.createBuffer(
       1,
       bytes.length,
       MONITOR_SAMPLE_RATE,
     );
     const samples = buffer.getChannelData(0);
-    for (let i = 0; i < bytes.length; i += 1) {
+    for (let i = 0; i < bytes.length; i += 1)
       samples[i] = decodeMuLawSample(bytes[i]);
-    }
     const source = audioContext.createBufferSource();
     source.buffer = buffer;
     source.connect(inputNode);
-    const startAt =
-      nextPlaybackRef.current > audioContext.currentTime
-        ? nextPlaybackRef.current
-        : audioContext.currentTime + MONITOR_JITTER_SECONDS;
+    const sources = sourcesRef.current[channel];
+    sources.add(source);
+    source.onended = () => {
+      sources.delete(source);
+      source.disconnect();
+    };
+    const startAt = Math.max(
+      nextPlaybackRef.current[channel],
+      audioContext.currentTime + MONITOR_JITTER_SECONDS,
+    );
     source.start(startAt);
-    nextPlaybackRef.current = startAt + buffer.duration;
+    nextPlaybackRef.current[channel] = startAt + buffer.duration;
   };
 
   const start = async () => {
-    const AudioContextCtor =
-      window.AudioContext ||
-      (window as Window & { webkitAudioContext?: typeof AudioContext })
-        .webkitAudioContext;
-    if (!AudioContextCtor) {
-      toast.error("Live audio is not supported in this browser");
+    if (
+      connecting ||
+      (wsRef.current && wsRef.current.readyState < WebSocket.CLOSING)
+    )
       return;
-    }
-    const audioContext = new AudioContextCtor();
-    const highpass = audioContext.createBiquadFilter();
-    highpass.type = "highpass";
-    highpass.frequency.value = 80;
-    const lowpass = audioContext.createBiquadFilter();
-    lowpass.type = "lowpass";
-    lowpass.frequency.value = 3600;
-    const gain = audioContext.createGain();
-    gain.gain.value = 0.95;
-    highpass.connect(lowpass);
-    lowpass.connect(gain);
-    gain.connect(audioContext.destination);
-    audioContextRef.current = audioContext;
-    inputNodeRef.current = highpass;
-    nextPlaybackRef.current = audioContext.currentTime + MONITOR_JITTER_SECONDS;
-    await audioContext.resume();
-
-    const ws = new WebSocket(
-      await getLiveAudioMonitorUrl({ sessionId, monitorToken }),
-    );
-    wsRef.current = ws;
-    ws.onopen = () => setListening(true);
-    ws.onmessage = (event) => {
-      try {
-        const message = JSON.parse(String(event.data));
-        if (message.type === "audio" && message.payload) {
-          playPayload(message.payload);
-        }
-        if (message.type === "ended") stop();
-        if (message.type === "error") throw new Error(message.error);
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : "Live audio failed",
+    setConnecting(true);
+    setAudioState("");
+    try {
+      const AudioContextCtor =
+        window.AudioContext ||
+        (window as Window & { webkitAudioContext?: typeof AudioContext })
+          .webkitAudioContext;
+      if (!AudioContextCtor)
+        throw new Error("Live audio is not supported in this browser.");
+      const audioContext = new AudioContextCtor();
+      const highpass = audioContext.createBiquadFilter();
+      highpass.type = "highpass";
+      highpass.frequency.value = 80;
+      const lowpass = audioContext.createBiquadFilter();
+      lowpass.type = "lowpass";
+      lowpass.frequency.value = 3600;
+      const gain = audioContext.createGain();
+      gain.gain.value = 0.95;
+      highpass.connect(lowpass);
+      lowpass.connect(gain);
+      gain.connect(audioContext.destination);
+      audioContextRef.current = audioContext;
+      inputNodeRef.current = highpass;
+      nextPlaybackRef.current = {
+        caller: audioContext.currentTime + MONITOR_JITTER_SECONDS,
+        assistant: audioContext.currentTime + MONITOR_JITTER_SECONDS,
+      };
+      await audioContext.resume();
+      if (audioContext.state !== "running")
+        throw new Error(
+          "Your browser paused audio. Click Listen Live to enable playback.",
         );
-      }
-    };
-    ws.onerror = () => toast.error("Live audio connection failed");
-    ws.onclose = () => setListening(false);
+      const url = await getLiveAudioMonitorUrl({ sessionId, monitorToken });
+      if (audioContextRef.current !== audioContext) return;
+      const ws = new WebSocket(url);
+      wsRef.current = ws;
+      watchdogRef.current = setInterval(() => {
+        if (wsRef.current === ws && ws.readyState !== WebSocket.OPEN) {
+          stop();
+          setAudioState(
+            "The live listener timed out. Click Listen Live to retry.",
+          );
+        }
+      }, 10_000);
+      ws.onopen = () => {
+        if (wsRef.current !== ws) return;
+        setListening(true);
+        setConnecting(false);
+        setAudioState("Listener connected; waiting for audio.");
+        lastAudioAtRef.current = Date.now();
+        if (watchdogRef.current) clearInterval(watchdogRef.current);
+        watchdogRef.current = setInterval(() => {
+          if (Date.now() - lastAudioAtRef.current > 12_000)
+            setAudioState(
+              "No recent audio. The call may be quiet; stop and retry if speech is missing.",
+            );
+        }, 4_000);
+      };
+      ws.onmessage = (event) => {
+        if (wsRef.current !== ws) return;
+        try {
+          const message = JSON.parse(String(event.data));
+          const channel: MonitorChannel =
+            message.channel === "caller" ? "caller" : "assistant";
+          if (message.type === "audio" && message.payload) {
+            lastAudioAtRef.current = Date.now();
+            setAudioState("Receiving live audio.");
+            playPayload(message.payload, channel);
+          } else if (message.type === "clear") {
+            for (const source of sourcesRef.current[channel]) {
+              try {
+                source.stop();
+              } catch {
+                /* Already ended. */
+              }
+            }
+            sourcesRef.current[channel].clear();
+            nextPlaybackRef.current[channel] =
+              audioContext.currentTime + MONITOR_JITTER_SECONDS;
+          } else if (message.type === "ended") stop();
+          else if (message.type === "error")
+            throw new Error(message.error || "Live audio failed.");
+        } catch (error) {
+          setAudioState(
+            error instanceof Error ? error.message : "Live audio failed.",
+          );
+        }
+      };
+      ws.onerror = () => {
+        if (wsRef.current !== ws) return;
+        stop();
+        setAudioState(
+          "Live audio connection failed. Click Listen Live to retry.",
+        );
+      };
+      ws.onclose = () => {
+        if (wsRef.current !== ws) return;
+        stop();
+        setAudioState(
+          "Listener disconnected. Click Listen Live to reconnect if the call is active.",
+        );
+      };
+    } catch (error) {
+      stop();
+      const message =
+        error instanceof Error ? error.message : "Unable to start live audio.";
+      setAudioState(message);
+      toast.error(message);
+    }
   };
 
-  useEffect(() => {
-    return () => {
-      wsRef.current?.close();
-      if (audioContextRef.current?.state !== "closed") {
+  useEffect(
+    () => () => {
+      const socket = wsRef.current;
+      wsRef.current = null;
+      socket?.close();
+      if (watchdogRef.current) clearInterval(watchdogRef.current);
+      if (audioContextRef.current?.state !== "closed")
         void audioContextRef.current?.close();
-      }
-    };
-  }, []);
+      audioContextRef.current = null;
+    },
+    [],
+  );
 
   return (
-    <Button
-      type="button"
-      variant={listening ? "secondary" : "outline"}
-      size="sm"
-      className="gap-2"
-      onClick={() => (listening ? stop() : void start())}
-    >
-      {listening ? (
-        <VolumeX className="h-4 w-4" />
-      ) : (
-        <Volume2 className="h-4 w-4" />
+    <div className="space-y-1">
+      <Button
+        type="button"
+        variant={listening ? "secondary" : "outline"}
+        size="sm"
+        className="gap-2"
+        disabled={connecting}
+        onClick={() => (listening ? stop() : void start())}
+      >
+        {listening ? (
+          <VolumeX className="h-4 w-4" />
+        ) : (
+          <Volume2 className="h-4 w-4" />
+        )}
+        {connecting
+          ? "Connecting audio…"
+          : listening
+            ? "Stop Audio"
+            : "Listen Live"}
+      </Button>
+      {audioState && (
+        <output className="block max-w-xs text-xs text-muted-foreground">
+          {audioState}
+        </output>
       )}
-      {listening ? "Stop Audio" : "Listen Live"}
-    </Button>
+    </div>
   );
 }
 

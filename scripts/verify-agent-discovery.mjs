@@ -57,6 +57,7 @@ function assertValid(relativePath, body, contentType = "") {
       !body.includes("agentQueueCall") ||
       !body.includes("agentQueueCallBatch") ||
       !body.includes("agentPreviewCallBatch") ||
+      !body.includes("getCallDiagnostics") ||
       !body.includes("agentGetLiveCallLink") ||
       !body.includes("Backend agent API canister"))
   ) {
@@ -75,6 +76,7 @@ function assertValid(relativePath, body, contentType = "") {
       !body.includes("agentPreviewCallBatch") ||
       !body.includes("agentListCallBatches") ||
       !body.includes("agentCancelCallBatch") ||
+      !body.includes("getCallDiagnostics") ||
       !body.includes("agentPreviewCall") ||
       !body.includes("agentGetLiveCallLink"))
   ) {

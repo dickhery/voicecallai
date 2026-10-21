@@ -302,7 +302,7 @@ module {
   public func guide(state : State) : AgentTypes.AgentGuide {
     {
       appName = "VoiceCall AI";
-      apiVersion = "2026-10-agent-v10";
+      apiVersion = "2026-10-agent-v11";
       summary = "VoiceCall AI places user-authorized calls through a prepaid queue and an external Twilio/xAI bridge. The app has no blanket advance recipient-consent gate for ordinary lawful calls. Harmless comedy and consensual adult roleplay are supported. Customer capture authorization does not establish another participant's consent or waive applicable requirements. Assistant and provider policies apply independently.";
       productionMcpUrl = "https://mcp.internetcomputer.org/mcp";
       authentication = [
@@ -341,6 +341,8 @@ module {
         "Poll agentListCallJobs after about 10 seconds, then back off to 20 and 30 seconds while waiting. As soon as a job includes liveAudioUrl, put that exact HTTPS URL in your reply so the user can listen. Do not wait for them to ask and do not replace it with a promise to fetch it later. If status is dispatched and liveAudioUrl is empty, call agentGetLiveCallLink once and present its url the same way. Use agentGetCallArtifacts after completion for the transcript and a signed audio URL when capture was enabled.",
         "To stop a live or queued call you created, call agentEndCall with the job ID. Queued jobs cancel immediately; dispatched calls are hung up by the voice bridge within about 15 seconds. Prefer this over leaving farewell loops running.",
         "Report queued, dispatched, in-progress, or completed according to returned state. Never claim a call was placed or completed without supporting job or call-record state.",
+        "A dispatched job or CallSid proves dispatch, not that someone answered. Call status completed means the phone connection ended, not that the intended person answered or the requested task succeeded. Inspect agentGetCallArtifacts and its optional diagnostics before describing the result. Report noAssistantAudio or playbackUnconfirmed explicitly; audioExchanged indicates transport evidence only, never understanding or goal completion. Older calls may have no diagnostics and may contain generated assistant text that was never played.",
+        "The private liveAudioUrl opens a browser listener. The user must press Start listening to enable audio; an open page or WebSocket does not prove sound arrived. Listen-only audio has no rewind and can expire at call end. If the MCP client cannot render audio inline, provide the exact link without claiming playback succeeded. Playback marks support delivery diagnostics; use actual recording/transcript content to describe the conversation and distinguish an automated service from the intended person.",
         "For a list or CSV attachment, extract the phone column into recipientPhones, validate E.164, remove duplicates and show the final target count, preset, capture choices and per-call limit before paid queueing. No canister file upload is needed: agentPreviewCallBatch and agentQueueCallBatch accept the number array directly through ICP MCP. Never silently split a larger list into paid batches.",
         "A batch accepts 1–100 distinct numbers, with maxCallSeconds a whole minute from 60 to 600. Up to 200 undialed numbers per account and 2,000 globally are queued. agentPreviewCallBatch is free of reservations/randomness/ledger calls. agentQueueCallBatch atomically authorizes the whole validated list but reserves time only just before each call. Available funds can cover fewer targets than the list: the batch pauses unless available phone time covers its full per-call cap, current terms and its preset are available.",
         "The voice bridge claims one target per owner turn across singles and batches, with one in-flight queued-agent call per account. Undialed targets expire after 24 hours. agentListCallBatches returns up to 10 retained batches. completed means every target was handed to the bridge; inspect jobs and listMyCalls for actual call outcomes. agentCancelCallBatch cancels undialed targets; agentEndCall stops an already claimed or dispatched job. Billing rounds to whole minutes within the selected cap.",
@@ -390,6 +392,7 @@ module {
         capability("Batch progress", "agentListCallBatches", "Read up to 10 retained batches, undialed counts and per-target jobs. Batch completed means all targets handed off; call records supply final outcomes.", false),
         capability("Cancel a phone list", "agentCancelCallBatch", "Cancel undialed targets. Already claimed or dispatched calls require agentEndCall.", true),
         capability("End a call", "agentEndCall", "Cancel a queued MCP call or request hang-up of a dispatched/in-progress call you created.", true),
+        capability("Inspect call delivery", "getCallDiagnostics", "Read optional compact transport/audio evidence for one owned call, without fetching audio or polling another service. A completed phone call is not proof of goal completion.", false),
         capability("Read terms", "agentGetTermsStatus", "Read the current terms and whether this account's acceptance is still in force.", false),
         capability("Accept terms", "agentAcceptTerms", "Record the user's agreement to the current terms. Call only after the user agrees.", true),
         capability("Listen to a live call", "agentGetLiveCallLink", "Return the listen-only URL if agentListCallJobs did not already include liveAudioUrl. Present whichever URL you receive without waiting to be asked.", false),
@@ -414,6 +417,8 @@ module {
     "First authenticated call: agentInitialize.\n" #
     "Outbound: createPreset / listMyPresets → agentQueueCall → agentListCallJobs / agentEndCall.\n" #
     "Optional agentPreviewCall uses the same input as agentQueueCall. It is a query with no reservation, randomness, ledger call or XRC refresh. It returns the app's local error, normalized customer capture settings, or the existing job for the same key. A preview is advisory; queue repeats checks and bridge/provider checks run later.\n" #
+    "Results: a queued/dispatched job and CallSid are not proof of an answer. Call status completed means transport ended, not that the user goal succeeded. agentGetCallArtifacts includes optional diagnostics; getCallDiagnostics(callId) is an owner-only query. Diagnostics are retained for at most 2000 recent calls globally and exist only after a supporting bridge finalizes a call. outcome noAssistantAudio means the bridge forwarded no assistant speech; playbackUnconfirmed means no full assistant turn was acknowledged; audioExchanged means both directions and at least one Twilio playback acknowledgement, not recipient understanding. A failed/notConnected result is not a completed conversation. Old calls can lack diagnostics; old assistant transcripts may reflect generated but suppressed audio. Do not infer delivery from transcript text or a recording URL alone. New transcripts omit interrupted/unconfirmed assistant turns.\n" #
+    "Live listening: return the exact private liveAudioUrl as a browser link. Start listening requires a user gesture; opening the link or connecting its WebSocket does not prove audible playback. The page reports waiting/receiving/retry state. No rewind; links expire with the call. A compatible MCP client may play a saved recording inline; otherwise present the signed recording URL. Do not claim that a player worked unless confirmed. An automated conversational service can be an appropriate recipient; it is distinct from a phone menu and a voicemail greeting.\n" #
     "Bulk: agentPreviewCallBatch(input) query → agentQueueCallBatch(input) update → agentListCallBatches() query / agentCancelCallBatch(id) update. Input={recipientPhones:[Text],presetId:Nat,captureOptions:{saveTranscript:Bool,recordAudio:Bool,consentConfirmed:Bool},maxCallSeconds:Nat,idempotencyKey:Text}. Extract numbers from the customer's attachment or text; no binary upload endpoint is required. Reject duplicates/invalid/emergency destinations atomically. Limits:100 unique targets/batch,200 undialed/account,2000 globally; maxCallSeconds60–600 in whole60-second minutes. Queueing authorizes paid calls to every target; show target count, cap, preset and capture choices before queueing. Available seconds are shared with single calls and answering, and are reserved only at dispatch. Available balance below the full per-call cap, expired terms or a missing preset pauses the batch; no automatic purchase occurs. Fair owner turns prevent one list occupying the bridge. Undialed authorization expires24h. Batch completed means every target handed off, not calls finished. Cancel affects undialed targets; agentEndCall handles claimed/dispatched jobs. Billing rounds up to whole minutes within the chosen cap.\n" #
     "Batch responses include recipientPhones,maxCallSeconds,attemptedCount,remainingCount,jobs,lastError. Join job.callId with listMyCalls for final outcomes. Up to10 recent batches are retained per account; idempotency lasts while a batch is retained. The same key with changed inputs returns IDEMPOTENCY_CONFLICT. Single-call keys have a200-live-job retention window. Inspect history and obtain fresh authorization instead of replaying older operations. Timestamps are Unix nanoseconds; prepaid balances/caps are seconds.\n" #
     "Capture: consentConfirmed is the legacy customer-authorization flag, not proof of recipient consent. The app has no blanket advance recipient-consent gate for ordinary lawful calls; legally required notice/permissions still apply. Harmless comedy and consensual adult roleplay are supported; harassment, deceptive sexual solicitation and unlawful recording are unsupported. Assistant and provider policies apply independently.\n" #
@@ -886,6 +891,7 @@ module {
       call;
       transcript = call.transcript;
       audioUrl;
+      diagnostics = null;
       audioMimeType = switch (audioUrl) {
         case (?url) {
           if (url.contains(#text("/bridge-recordings/")) or url.contains(#text(".wav"))) {
@@ -896,10 +902,10 @@ module {
         };
         case null { null };
       };
-      note = switch (audioUrl) {
+      note = "Completed describes the phone transport, not task success. Inspect delivery diagnostics and actual artifacts; a transcript or URL alone is not proof the recipient heard the agent. Older transcripts can include generated but unplayed assistant text. " # (switch (audioUrl) {
         case (?_) { "The audio URL is signed by the voice bridge. Whether the chat can play it inline depends on the MCP client; otherwise present it as a link." };
         case null { "No saved audio URL is available. Audio is never stored in the canister." };
-      };
+      });
     };
   };
 

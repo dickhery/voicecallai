@@ -1,4 +1,5 @@
-const STATES = ['human', 'automated', 'voicemail_greeting', 'voicemail_recording'];
+const STATES = ['human', 'conversational_agent', 'automated', 'voicemail_greeting', 'voicemail_recording'];
+const isConversation = state => state === 'human' || state === 'conversational_agent';
 const REASONS = ['voicemail_left', 'cannot_leave_message', 'conversation_complete', 'no_response'];
 
 export const CALL_LIFECYCLE_LIMITS = Object.freeze({
@@ -18,7 +19,7 @@ export const CALL_LIFECYCLE_LIMITS = Object.freeze({
 export const CALL_LIFECYCLE_TOOLS = [
   {
     type: 'function', name: 'set_call_state',
-    description: 'Report a change in who is on this outbound line, based on what you actually hear. Use voicemail_greeting while the greeting plays, voicemail_recording only after the beep or explicit recording cue, automated for menus/hold, human for a live person.',
+    description: 'Report a change in who is on this outbound line, based on what you actually hear. Use human for a live person, conversational_agent for an interactive AI answering assistant that invites spoken input, automated only for keypad menus/hold/one-way announcements, voicemail_greeting while the greeting plays, and voicemail_recording only after a beep or explicit recording cue. Greeting length alone does not identify a menu or mailbox.',
     parameters: { type: 'object', properties: { state: { type: 'string', enum: STATES } }, required: ['state'], additionalProperties: false },
   },
   {
@@ -29,7 +30,7 @@ export const CALL_LIFECYCLE_TOOLS = [
 ];
 
 export const CALL_LIFECYCLE_INSTRUCTIONS = [
-  'Outbound call lifecycle: use set_call_state when the line changes between a live human, automated menu/hold, voicemail greeting, and voicemail recording. Base this on heard audio, not silence alone. A human receptionist or answering-service operator is a human.',
+  'Outbound call lifecycle: use set_call_state when the line changes between a live human, interactive conversational AI, automated menu/hold, voicemail greeting, and voicemail recording. Base this on what the audio says, not its length or silence alone. A human receptionist is human. An interactive AI answering service or voice assistant (including ChatGPT) that invites spoken questions is conversational_agent: answer its invitation naturally and continue the call goal. Do not wait for a beep or keypad option from a conversational agent.',
   'Voicemail cues include a recorded unavailable greeting, a request to leave a message after the tone, or a mailbox announcement. Report voicemail_greeting immediately; stay silent until the greeting and beep/recording cue finish. Do not answer questions in the recorded greeting, introduce yourself over it, or repeatedly ask if anyone is there.',
   'At the recording cue, or when the bridge says a beep was detected, report voicemail_recording and immediately leave ONE concise message, ideally 15-25 seconds, with the call purpose and only user-supplied identity/callback details. Do not invent facts or disclose sensitive account/medical/payment information to a mailbox. Honor requests not to leave voicemail; end_call with cannot_leave_message instead.',
   'After that single message, call end_call with voicemail_left immediately. Do not ask the mailbox questions, wait for a reply, repeat the message, or exchange goodbyes. The bridge waits for queued speech to finish before disconnecting.',
@@ -52,7 +53,6 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall, g
   let checkedIn = false;
   let voicemailAt = null;
   let greetingAt = null;
-  let longMonologueAt = null;
   let responseActive = false;
   let responseAudio = false;
   let messageRequested = false;
@@ -99,29 +99,13 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall, g
     sendXai({ type: 'response.create' });
   }
 
-  function applyOpeningGate(duration) {
+  function applyOpeningGate() {
     if (!gateOpenings || !active || closed || ending) return;
-    if (state === 'unknown' && duration >= 200 && duration <= CALL_LIFECYCLE_LIMITS.humanTurnMs) {
-      state = 'human';
-      holdSpeech = false;
-      voicemailAt = null;
-      greetingAt = null;
-      longMonologueAt = null;
-      beepNoted = false;
-      if (responseActive) releaseOnce = true;
-      else if (!busy()) {
-        requestResponse('A live person gave a short greeting and paused. Introduce yourself briefly and continue the call goal. If that audio was actually a phone menu, call set_call_state with automated and stop speaking.');
-      }
-      return;
-    }
-    if (duration < CALL_LIFECYCLE_LIMITS.machineTurnMs || state === 'voicemail_recording') return;
-    if (state === 'human') {
-      holdSpeech = true;
-      longMonologueAt = now();
-      return;
-    }
-    if (state === 'unknown') state = 'automated';
-    holdSpeech = true;
+    // A long introduction can be a human or an interactive AI. Duration alone
+    // must never leave that line permanently muted as if it were a phone menu.
+    // server_vad already creates the response at this pause; requesting another
+    // response here races it and can leave the model's response state stuck.
+    if (state === 'unknown' || isConversation(state)) holdSpeech = false;
   }
 
   function maybeEnd() {
@@ -137,8 +121,7 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall, g
       if (gateOpenings && remoteSpeaking && speechStartedAt !== null &&
         now() - speechStartedAt >= CALL_LIFECYCLE_LIMITS.machineTurnMs &&
         state !== 'voicemail_recording') {
-        if (state === 'unknown') state = 'automated';
-        if (state !== 'human') holdSpeech = true;
+        holdSpeech = true;
       }
       if (greetingAt !== null && state === 'voicemail_greeting' &&
         now() - greetingAt >= CALL_LIFECYCLE_LIMITS.greetingMs) {
@@ -149,14 +132,6 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall, g
         requestEnd('voicemail_timeout');
       }
       if (ending) maybeEnd();
-      else if (gateOpenings && longMonologueAt && !remoteSpeaking && state === 'human' &&
-        now() - longMonologueAt >= CALL_LIFECYCLE_LIMITS.machineNudgeMs && !busy()) {
-        longMonologueAt = null;
-        holdSpeech = false;
-        if (!responseActive) {
-          requestResponse('The person finished a long turn. Respond briefly and continue the call goal. If a voicemail greeting just played, wait for the beep instead of answering it.');
-        }
-      }
       else if (!remoteSpeaking) {
         const silence = now() - lastRemoteAt;
         const automated = state === 'automated' || state.startsWith('voicemail');
@@ -167,7 +142,7 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall, g
           nudgeCount < CALL_LIFECYCLE_LIMITS.maxNudges && !responseActive && !busy()) {
           nudgedThisPause = true;
           nudgeCount += 1;
-          requestResponse('Automated audio paused. A pause alone is not a voicemail recording cue: keep silent through the greeting until an actual beep or explicit instruction to record now. Only after that cue, leave one short permitted message and call end_call with voicemail_left. If a menu is waiting, press the announced option or the user-supplied extension and do not speak. If a live person is waiting, report human and greet them in one sentence.');
+          requestResponse('Automated audio paused. A pause alone is not a voicemail recording cue: keep silent through the greeting until an actual beep or explicit instruction to record now. Only after that cue, leave one short permitted message and call end_call with voicemail_left. If a keypad menu is waiting, press the announced option or supplied extension. If an interactive AI invites spoken input, report conversational_agent and answer it naturally. If a live person is waiting, report human and greet them.');
         }
         else if (!automated && !checkedIn && silence >= CALL_LIFECYCLE_LIMITS.checkInMs &&
           !responseActive && now() >= playingUntil && !busy()) {
@@ -197,13 +172,12 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall, g
     noteBeep() {
       if (!active || closed || ending || beepNoted || messageRequested) return false;
       const turnMs = remoteSpeaking && speechStartedAt !== null ? now() - speechStartedAt : 0;
-      const machineLike = state !== 'human' || holdSpeech || turnMs >= CALL_LIFECYCLE_LIMITS.machineTurnMs;
+      const machineLike = !isConversation(state) || holdSpeech || turnMs >= CALL_LIFECYCLE_LIMITS.machineTurnMs;
       if (!machineLike) return false;
       beepNoted = true;
       beepDuringResponse = responseActive;
       state = 'voicemail_recording';
       holdSpeech = false;
-      longMonologueAt = null;
       voicemailAt ??= now();
       messageRequested = true;
       continueState = false;
@@ -246,14 +220,13 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall, g
       else {
         if (value !== state) {
           state = value;
-          continueState = state === 'human' || state === 'automated';
-          if (state === 'human') {
+          continueState = isConversation(state) || state === 'automated';
+          if (isConversation(state)) {
             pendingInstruction = null;
             messageRequested = false;
             beepDuringResponse = false;
             voicemailAt = null;
             greetingAt = null;
-            longMonologueAt = null;
             beepNoted = false;
             lastRemoteAt = now();
             checkedIn = false;
@@ -278,7 +251,6 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall, g
       remoteSpeaking = true;
       speechStartedAt = now();
       nudgedThisPause = false;
-      longMonologueAt = null;
       lastRemoteAt = now();
       checkedIn = false;
       // Cancel an unplayed farewell if the other party interrupts. Twilio also
@@ -287,12 +259,11 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall, g
     },
     speechStopped() {
       if (!active || closed) return;
-      const duration = speechStartedAt === null ? 0 : now() - speechStartedAt;
       remoteSpeaking = false;
       speechStartedAt = null;
       lastRemoteAt = now();
       checkedIn = false;
-      applyOpeningGate(duration);
+      applyOpeningGate();
     },
     responseCreated() {
       if (!active || closed) return;
@@ -338,7 +309,9 @@ export function createCallLifecycle({ ready, busy, sendXai, sendMark, endCall, g
       } else if (shouldContinue && !ending && !responseAudio && !busy()) {
         requestResponse(state === 'human'
           ? 'A live person is on the line. Continue the call goal naturally, introducing yourself if you have not already done so.'
-          : 'Continue from the menu you just heard: select an announced option relevant to the call goal only if the menu is complete. Otherwise remain silent and listen. Do not talk over menus or hold.');
+          : state === 'conversational_agent'
+            ? 'An interactive AI assistant is inviting spoken input. Answer it naturally and continue the call goal, introducing yourself if you have not already done so.'
+            : 'Continue from the menu you just heard: select an announced option relevant to the call goal only if the menu is complete. Otherwise remain silent and listen. Do not talk over menus or hold.');
       }
       maybeEnd();
     },

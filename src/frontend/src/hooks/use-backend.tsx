@@ -6,6 +6,7 @@ import type {
   AnsweringPresetMutationResult,
   BillingMutationResult,
   BillingStatus,
+  CallDiagnostics,
   CallId,
   CallPresetMutationResult,
   CreatePurchaseIntentResult,
@@ -32,7 +33,7 @@ import type {
 } from "@/types";
 import type { Principal } from "@icp-sdk/core/principal";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useActor } from "./use-icp";
+import { useActor, useInternetIdentity } from "./use-icp";
 
 function useBackendActor() {
   return useActor(createActor);
@@ -280,6 +281,24 @@ export function useListMyCalls() {
     },
     enabled: !!actor && !isFetching,
     refetchInterval: 5000,
+  });
+}
+
+/** Fetch only when a finished call is expanded; diagnostics are not a presence channel. */
+export function useGetCallDiagnostics(id: CallId, enabled: boolean) {
+  const { actor, isFetching } = useBackendActor();
+  const { identity } = useInternetIdentity();
+  return useQuery<CallDiagnostics | null>({
+    queryKey: [
+      "callDiagnostics",
+      identity?.getPrincipal().toText(),
+      id.toString(),
+    ],
+    queryFn: async () => (actor ? actor.getCallDiagnostics(id) : null),
+    enabled: enabled && !!actor && !isFetching,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
   });
 }
 

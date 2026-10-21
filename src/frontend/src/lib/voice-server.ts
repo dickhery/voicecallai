@@ -10,11 +10,24 @@ export interface VoiceServerTranscriptEntry {
   text: string;
 }
 
+export interface VoiceServerMediaDiagnostics {
+  callerAudioBytes: number;
+  assistantAudioBytes: number;
+  assistantSuppressedBytes: number;
+  assistantConfirmedTurns: number;
+  assistantUnconfirmedTurns: number;
+  lastCallerAudioAt: number | null;
+  lastAssistantAudioAt: number | null;
+}
+
 export interface VoiceServerCall {
   callSid: string;
   sessionId: string;
   monitorToken?: string;
   status?: string;
+  transportStatus?: string;
+  terminationReason?: string;
+  mediaDiagnostics?: VoiceServerMediaDiagnostics;
   queued?: boolean;
   queuePosition?: number;
   allowedSeconds?: number;

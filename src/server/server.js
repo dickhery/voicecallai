@@ -4,8 +4,12 @@ import "dotenv/config";
 import { KEYPAD_TOOL, KEYPAD_INSTRUCTIONS, createPhoneKeypad, extractSuppliedExtension } from "./phone-keypad.js";
 import { CALL_LIFECYCLE_TOOLS, CALL_LIFECYCLE_INSTRUCTIONS, CALL_LIFECYCLE_LIMITS, createCallLifecycle } from "./call-lifecycle.js";
 import { createLineListener } from "./line-audio.js";
+import { createResponseDelivery } from "./response-delivery.js";
+import { renderLiveAudioPage } from "./live-audio-page.js";
 import { createFairCallQueue, boundedPositiveInteger } from "./call-queue.js";
+import { evaluateIncomingCallAdmission, MAX_PAIRED_INCOMING_CALLS } from "./call-admission.js";
 import { createDestinationPricingGuard } from "./destination-pricing.js";
+import { deriveCallSessionStatus, buildCallDiagnosticsInput, createTerminalSessionCache, advanceTransportStatus } from "./call-session-status.js";
 import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -59,7 +63,6 @@ const XAI_SESSION_RESUMPTION = String(
   .trim()
   .toLowerCase() !== "false";
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
-const STREAM_MARK_PREFIX = "xai-audio";
 const PHONE_SAMPLE_RATE = 8000;
 const PHONE_MULAW_BYTES_PER_MS = PHONE_SAMPLE_RATE / 1000;
 const TRANSCRIPT_FINISH_GRACE_MS = 2_500;
@@ -130,7 +133,7 @@ const VOICE_PREVIEW_RATE_LIMIT_WINDOW_MS = Number(
 const VOICE_PREVIEW_RATE_LIMIT_MAX = Number(
   process.env.VOICE_PREVIEW_RATE_LIMIT_MAX || 12,
 );
-const SERVER_VERSION = "2026-10-20-bulk-fair-queue";
+const SERVER_VERSION = "2026-10-21-call-audio-reliability";
 const STREAM_HANDOFF_MS = 12_000;
 const BLOCKED_OUTBOUND_NUMBERS = parseBlockedDestinations(process.env.BLOCKED_OUTBOUND_NUMBERS);
 const VOICE_SESSION_START = "[[vc:session]]";
@@ -421,8 +424,12 @@ const requiredEnv = [
 ];
 
 const callSessions = new Map();
+const terminalSessionCache = createTerminalSessionCache({ tokenEqual: safeTokenEqual });
 const callsBySid = new Map();
 const activeLineSessions = new Map();
+// The inbound half of a same-owner self-call has its own line lock, including
+// when Twilio uses the same number for both legs. Never more than one extra leg.
+const pairedIncomingLineSessions = new Map();
 /** Metadata index for durable bridge recordings (media bytes live on disk). */
 const bridgeRecordings = new Map();
 const voicePreviewRateLimits = new Map();
@@ -747,175 +754,6 @@ function getPublicLiveAudioUrl(sessionId, listenToken) {
   return url.toString();
 }
 
-function renderLiveAudioPage(sessionId) {
-  const serializedSessionId = JSON.stringify(String(sessionId)).replace(
-    /</g,
-    "\\u003c",
-  );
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
-  <title>VoiceCall AI — Live Call Audio</title>
-  <style>
-    :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif; }
-    * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #070b14; color: #f7f8fb; }
-    main { width: min(92vw, 34rem); padding: 2rem; border: 1px solid #25304a; border-radius: 1rem; background: #101726; box-shadow: 0 1.5rem 5rem #0008; }
-    h1 { margin: 0 0 .7rem; font-size: 1.55rem; }
-    p { color: #b8c2d9; line-height: 1.55; }
-    button { width: 100%; margin-top: 1rem; padding: .85rem 1rem; border: 0; border-radius: .7rem; background: #6d5dfc; color: white; font: inherit; font-weight: 700; cursor: pointer; }
-    button:disabled { cursor: not-allowed; opacity: .6; }
-    #status { min-height: 1.5rem; margin-top: 1rem; color: #9de6bf; }
-    .note { font-size: .9rem; }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Live call audio</h1>
-    <p>This is a listen-only stream of the active VoiceCall AI phone call. It cannot steer or end the call.</p>
-    <button id="listen" type="button">Listen live</button>
-    <div id="status" role="status" aria-live="polite">Ready to connect.</div>
-    <p class="note">Audio starts only after you press the button. This page does not save the call.</p>
-  </main>
-  <script>
-    (() => {
-      const sessionId = ${serializedSessionId};
-      const button = document.getElementById("listen");
-      const status = document.getElementById("status");
-      let socket = null;
-      let audioContext = null;
-      let inputNode = null;
-      const nextPlaybackTime = { caller: 0, assistant: 0 };
-      const jitterSeconds = 0.12;
-
-      function setStatus(message, isError = false) {
-        status.textContent = message;
-        status.style.color = isError ? "#ff9d9d" : "#9de6bf";
-      }
-
-      function decodeMuLawSample(value) {
-        const sample = (~value) & 255;
-        const sign = sample & 128;
-        const exponent = (sample >> 4) & 7;
-        const mantissa = sample & 15;
-        let magnitude = ((mantissa << 3) + 132) << exponent;
-        magnitude -= 132;
-        return Math.max(-1, Math.min(1, (sign ? -magnitude : magnitude) / 32768));
-      }
-
-      function play(payload, channel = "assistant") {
-        if (!audioContext || !inputNode || !payload) return;
-        const binary = window.atob(payload);
-        if (!binary.length) return;
-        const buffer = audioContext.createBuffer(1, binary.length, 8000);
-        const samples = buffer.getChannelData(0);
-        for (let index = 0; index < binary.length; index += 1) {
-          const fadeIn = Math.min(1, index / 8);
-          const fadeOut = Math.min(1, (binary.length - index - 1) / 8);
-          samples[index] =
-            decodeMuLawSample(binary.charCodeAt(index)) *
-            Math.min(fadeIn, fadeOut);
-        }
-        const source = audioContext.createBufferSource();
-        source.buffer = buffer;
-        source.connect(inputNode);
-        const queuedAt = nextPlaybackTime[channel] || 0;
-        const startAt = Math.max(
-          audioContext.currentTime + jitterSeconds,
-          queuedAt,
-        );
-        source.start(startAt);
-        nextPlaybackTime[channel] = startAt + buffer.duration;
-      }
-
-      async function listen() {
-        const token = decodeURIComponent(window.location.hash.slice(1));
-        if (!token) {
-          setStatus("This listening link is incomplete.", true);
-          return;
-        }
-        button.disabled = true;
-        button.textContent = "Connecting…";
-        try {
-          const AudioContextClass =
-            window.AudioContext || window.webkitAudioContext;
-          if (!AudioContextClass) throw new Error("Live audio is not supported in this browser.");
-          audioContext = new AudioContextClass();
-          const highpass = audioContext.createBiquadFilter();
-          highpass.type = "highpass";
-          highpass.frequency.value = 80;
-          const lowpass = audioContext.createBiquadFilter();
-          lowpass.type = "lowpass";
-          lowpass.frequency.value = 3600;
-          const compressor = audioContext.createDynamicsCompressor();
-          const gain = audioContext.createGain();
-          gain.gain.value = 0.95;
-          highpass.connect(lowpass);
-          lowpass.connect(compressor);
-          compressor.connect(gain);
-          gain.connect(audioContext.destination);
-          inputNode = highpass;
-          await audioContext.resume();
-
-          const url = new URL(window.location.href);
-          url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-          url.pathname = "/monitor";
-          url.search = "";
-          url.hash = "";
-          url.searchParams.set("sessionId", sessionId);
-          url.searchParams.set("token", token);
-          socket = new WebSocket(url.toString());
-          socket.addEventListener("open", () => {
-            button.textContent = "Listening live";
-            setStatus("Connected. Waiting for call audio…");
-          });
-          socket.addEventListener("message", (event) => {
-            let message;
-            try {
-              message = JSON.parse(String(event.data));
-            } catch {
-              setStatus("Received an invalid live-audio message.", true);
-              socket.close();
-              return;
-            }
-            if (message.type === "audio") {
-              play(message.payload, message.channel || "assistant");
-              setStatus("Listening live.");
-            } else if (message.type === "ended") {
-              setStatus("The call has ended.");
-              button.textContent = "Call ended";
-              socket.close();
-            } else if (message.type === "error") {
-              setStatus(message.error || "Live audio is unavailable.", true);
-              socket.close();
-            }
-          });
-          socket.addEventListener("error", () => {
-            setStatus("Unable to connect to live audio.", true);
-          });
-          socket.addEventListener("close", () => {
-            if (button.textContent !== "Call ended") {
-              setStatus("Live audio is no longer available.", true);
-              button.textContent = "Unavailable";
-            }
-          });
-        } catch (error) {
-          setStatus(error && error.message ? error.message : "Unable to start live audio.", true);
-          button.disabled = false;
-          button.textContent = "Try again";
-        }
-      }
-
-      button.addEventListener("click", () => void listen());
-    })();
-  </script>
-</body>
-</html>`;
-}
-
 function getPublicRecordingStatusUrl(sessionId) {
   const publicBaseUrl = getPublicBaseUrl();
   if (!publicBaseUrl) return "";
@@ -1056,14 +894,16 @@ async function getConfiguredTwilioLineNumbers({ force = false } = {}) {
 
 async function getLinePoolSnapshot() {
   const numbers = await getConfiguredTwilioLineNumbers();
-  const active = numbers.filter((number) => activeLineSessions.has(number));
+  const active = numbers.filter((number) => isLineInUse(number));
   return {
     numbers,
     active,
-    available: activeLineSessions.size < CALL_MAX_CONCURRENT
-      ? numbers.filter((number) => !activeLineSessions.has(number)) : [],
+    available: getActiveCallCount() < CALL_MAX_CONCURRENT
+      ? numbers.filter((number) => !isLineInUse(number)) : [],
     queued: getQueuedSessionIds().length,
     maxConcurrent: CALL_MAX_CONCURRENT,
+    pairedIncomingMax: MAX_PAIRED_INCOMING_CALLS,
+    pairedIncomingActive: pairedIncomingLineSessions.size,
     maxPending: CALL_QUEUE_MAX_PENDING,
   };
 }
@@ -1556,6 +1396,10 @@ function sendForceOpeningMessage(session, text, { interruptible = false } = {}) 
 
 function sendTwilioClear(session) {
   if (session?.phoneKeypad?.busy) return;
+  if (session?.mediaOwner?.clear) {
+    session.mediaOwner.clear();
+    return;
+  }
   if (!session?.streamSid || !isWebSocketOpen(session.twilioWs)) return;
   session.twilioWs.send(
     JSON.stringify({ event: "clear", streamSid: session.streamSid }),
@@ -1629,8 +1473,8 @@ function twilioRequestUrlCandidates(req) {
   return uniqueValues(candidates);
 }
 
-function validateTwilioRequest(req) {
-  if (process.env.VALIDATE_TWILIO_SIGNATURE !== "true") return true;
+function validateTwilioRequest(req, { required = false } = {}) {
+  if (!required && process.env.VALIDATE_TWILIO_SIGNATURE !== "true") return true;
   const signature = req.get("x-twilio-signature");
   if (!signature || !process.env.TWILIO_AUTH_TOKEN) return false;
   for (const url of twilioRequestUrlCandidates(req)) {
@@ -1673,16 +1517,6 @@ const GOODBYE_UTTERANCE_PATTERN =
 
 function textContainsGoodbye(text) {
   return GOODBYE_UTTERANCE_PATTERN.test(String(text || ""));
-}
-
-function getLatestTranscriptText(session, speaker) {
-  const entries = Array.isArray(session?.transcript) ? session.transcript : [];
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    if (String(entries[i]?.speaker || "") === speaker) {
-      return String(entries[i]?.text || "");
-    }
-  }
-  return "";
 }
 
 /**
@@ -2579,6 +2413,13 @@ function broadcastMonitorEvent(session, payload) {
   const message = JSON.stringify(payload);
   for (const client of session.monitorClients) {
     if (client.readyState === WebSocket.OPEN) {
+      // A backgrounded listener must not build an unlimited copy of a call
+      // in this small bridge's websocket send buffer. The listener can retry.
+      if (client.bufferedAmount > 256 * 1024) {
+        client.close(1013, "Live listener fell behind; reconnect");
+        session.monitorClients.delete(client);
+        continue;
+      }
       client.send(message);
     } else {
       session.monitorClients.delete(client);
@@ -2810,6 +2651,7 @@ function callArtifactsToText(session) {
   }
 
   if (session.saveTranscript && session.permissionConfirmed && session.transcript?.length) {
+    sections.push("Transcript delivery: assistant turns are saved after complete Twilio playback acknowledgement. Interrupted or unconfirmed turns may be omitted. This is transport evidence, not proof the recipient understood or the call goal succeeded.");
     const transcript = session.transcript
       .map((entry) => {
         const text = String(entry.text || "").trim();
@@ -2873,6 +2715,7 @@ function closeMonitorClients(session, reason = "Call ended") {
 
 function markSessionLocallyEnded(session, reason, state = "completed") {
   if (!session) return;
+  session.terminationReason ||= String(reason || "unknown").slice(0, 120);
   session.finished = true;
   session.state = state;
   removeQueuedSession(session.id);
@@ -2898,6 +2741,8 @@ function clearBackendFinalizeRetry(session) {
 function forgetFinalizedSession(session) {
   if (!session) return;
   clearBackendFinalizeRetry(session);
+  terminalSessionCache.remember(session.id, session.monitorToken,
+    buildCallSessionPayload(session, { includeMonitorToken: true }));
   callSessions.delete(session.id);
   if (session.callSid) callsBySid.delete(session.callSid);
 }
@@ -3095,11 +2940,12 @@ async function finishPaidSession(session, reason = "completed") {
       const actor = await getBackendActor();
       try {
         okOrThrow(
-          await actor.finishCallAndDebit(
+          await actor.finishCallAndDebitWithDiagnosticsForServer(
             session.reservationId,
             BigInt(Math.max(0, usedSeconds)),
             session.callSid ? [session.callSid] : [],
             artifactsText ? [artifactsText] : [],
+            buildCallDiagnosticsInput(session, reason, SERVER_VERSION),
           ),
           "Unable to finish and debit paid call.",
         );
@@ -3343,6 +3189,24 @@ function enqueueCallSession(session) {
   session.queueEnteredAt ||= Date.now();
 }
 
+function getActiveCallCount() {
+  return activeLineSessions.size + pairedIncomingLineSessions.size;
+}
+
+function isLineInUse(number) {
+  return activeLineSessions.has(number) || pairedIncomingLineSessions.has(number);
+}
+
+function getIncomingCallAdmission(toNumber, fromNumber, callSid, ownerId, signatureValidated = false) {
+  return evaluateIncomingCallAdmission({
+    toNumber, fromNumber, callSid, ownerId, signatureValidated,
+    sessions: callSessions,
+    activeLines: activeLineSessions,
+    pairedIncomingLines: pairedIncomingLineSessions,
+    maxConcurrent: CALL_MAX_CONCURRENT,
+  });
+}
+
 function chooseAvailableLineNumber(numbers) {
   if (!Array.isArray(numbers) || numbers.length === 0) {
     lineRotationCursor = 0;
@@ -3353,7 +3217,7 @@ function chooseAvailableLineNumber(numbers) {
   for (let offset = 0; offset < numbers.length; offset += 1) {
     const index = (lineRotationCursor + offset) % numbers.length;
     const number = numbers[index];
-    if (!activeLineSessions.has(number)) {
+    if (!isLineInUse(number)) {
       lineRotationCursor = (index + 1) % numbers.length;
       return number;
     }
@@ -3373,7 +3237,7 @@ async function reserveAvailableLineForSession(session) {
 
   const numbers = await getConfiguredTwilioLineNumbers();
   if (session.finished) return "";
-  if (activeLineSessions.size >= CALL_MAX_CONCURRENT) return "";
+  if (getActiveCallCount() >= CALL_MAX_CONCURRENT) return "";
   const lineNumber = chooseAvailableLineNumber(numbers);
   if (!lineNumber) return "";
 
@@ -3394,11 +3258,29 @@ function assignLineToSession(session, lineNumber) {
   activeLineSessions.set(lineNumber, session.id);
 }
 
+function assignIncomingLineToSession(session, lineNumber, admission) {
+  // The admission check and this lock must remain synchronous: no IC awaits.
+  if (admission.pairedOutboundSessionId) {
+    session.pairedOutboundSessionId = admission.pairedOutboundSessionId;
+    pairedIncomingLineSessions.set(lineNumber, session.id);
+    callSessions.get(admission.pairedOutboundSessionId).pairedIncomingSessionId = session.id;
+  } else {
+    assignLineToSession(session, lineNumber);
+  }
+}
+
 function releaseSessionLine(session) {
   const lineNumber = session?.lineNumber;
   if (!lineNumber) return;
   if (activeLineSessions.get(lineNumber) === session.id) {
     activeLineSessions.delete(lineNumber);
+  }
+  if (pairedIncomingLineSessions.get(lineNumber) === session.id) {
+    pairedIncomingLineSessions.delete(lineNumber);
+  }
+  const parent = callSessions.get(session.pairedOutboundSessionId);
+  if (parent?.pairedIncomingSessionId === session.id) {
+    delete parent.pairedIncomingSessionId;
   }
   session.lineNumber = null;
   setTimeout(() => {
@@ -3409,10 +3291,7 @@ function releaseSessionLine(session) {
 }
 
 function getSessionStatus(session) {
-  if (session?.finished) return "completed";
-  const lastStatus = String(session?.lastStatus || "").toLowerCase();
-  if (isTerminalTwilioStatus(lastStatus)) return lastStatus;
-  return session?.state || (session?.callSid ? "active" : "queued");
+  return deriveCallSessionStatus(session);
 }
 
 function getRemainingPaidSeconds(session) {
@@ -3439,6 +3318,9 @@ function buildCallSessionPayload(session, { includeMonitorToken = false } = {}) 
     callSid: session.callSid || "",
     monitorToken: includeMonitorToken ? session.monitorToken || "" : "",
     status: getSessionStatus(session),
+    transportStatus: session.lastStatus || null,
+    terminationReason: session.terminationReason || null,
+    mediaDiagnostics: session.mediaDiagnostics || null,
     queued: session.state === "queued",
     queuePosition: getQueuePosition(session.id),
     allowedSeconds: session.allowedSeconds,
@@ -3493,7 +3375,8 @@ async function cancelQueuedSession(session, reason = "queued_call_canceled") {
   if (!session || session.finished) return;
   removeQueuedSession(session.id);
   session.finished = true;
-  session.state = "canceled";
+  session.state = session.dispatchError ? "failed" : "canceled";
+  session.terminationReason ||= String(reason).slice(0, 120);
   session.billingStoppedAt ||= Date.now();
   releaseSessionLine(session);
   if (session.reservationId) {
@@ -3509,6 +3392,8 @@ async function cancelQueuedSession(session, reason = "queued_call_canceled") {
     }
   }
   broadcastMonitorEvent(session, { type: "ended", reason });
+  if (session.monitorToken) terminalSessionCache.remember(session.id, session.monitorToken,
+    buildCallSessionPayload(session, { includeMonitorToken: true }));
   callSessions.delete(session.id);
 }
 
@@ -3672,22 +3557,22 @@ async function dispatchAvailableCalls() {
     // The bound includes failed direct requests; one invalid destination must
     // not prevent the next account from getting an available slot.
     for (let attempt = 0; attempt < (CALL_MAX_CONCURRENT + 1) * 2; attempt += 1) {
-      if (activeLineSessions.size >= CALL_MAX_CONCURRENT) break;
-      const before = activeLineSessions.size;
+      if (getActiveCallCount() >= CALL_MAX_CONCURRENT) break;
+      const before = getActiveCallCount();
       const preferred = nextDispatchSource;
       if (preferred === "agent") {
         agentWork += await dispatchAgentTurn();
-        if (activeLineSessions.size > before) continue;
+        if (getActiveCallCount() > before) continue;
       }
       const directSessionId = getQueuedSessionIds().find(id => !callSessions.get(id)?.agentDispatch);
       if (directSessionId) {
         const queuedBefore = getQueuedSessionIds().length;
         await dispatchQueuedSessions(directSessionId);
-        if (activeLineSessions.size > before || getQueuedSessionIds().length < queuedBefore) continue;
+        if (getActiveCallCount() > before || getQueuedSessionIds().length < queuedBefore) continue;
       }
       if (preferred === "direct") {
         agentWork += await dispatchAgentTurn();
-        if (activeLineSessions.size > before) continue;
+        if (getActiveCallCount() > before) continue;
       }
       break;
     }
@@ -3748,7 +3633,8 @@ app.get("/health", async (req, res) => {
   res.json({
     ok: true,
     phoneKeypad: { enabled: true, transport: "twilio-play-digits+inband-fallback", version: 2 },
-    callLifecycle: { enabled: true, version: 2, beepDetection: true, ...CALL_LIFECYCLE_LIMITS },
+    callLifecycle: { enabled: true, version: 3, beepDetection: true, ...CALL_LIFECYCLE_LIMITS },
+    callDelivery: { version: 1, playbackConfirmedTranscripts: true, diagnostics: true, terminalSessionTtlSeconds: 120 },
     callRequestVersion: CALL_REQUEST_VERSION,
     callQueue: {
       version: 1,
@@ -3756,6 +3642,7 @@ app.get("/health", async (req, res) => {
       sources: "alternating-browser-and-connector",
       lazyBulkDispatch: true,
       maxConcurrent: CALL_MAX_CONCURRENT,
+      pairedIncomingMax: MAX_PAIRED_INCOMING_CALLS,
       maxPending: CALL_QUEUE_MAX_PENDING,
       maxPendingPerUser: CALL_QUEUE_MAX_PER_USER,
     },
@@ -4227,13 +4114,16 @@ app.post("/answering/incoming/:webhookSecret", async (req, res) => {
     const twilioToNumber = normalizePhone(req.body.To);
     const callerPhone = normalizeIncomingCallerPhone(req.body.From);
     const callSid = normalizeCallSid(req.body.CallSid);
+    // The bounded self-call exception always requires a genuine Twilio
+    // signature, even when ordinary webhook validation is disabled for local dev.
+    const signatureValidated = validateTwilioRequest(req, { required: true });
     if (!webhookSecret) {
       throw new Error("Missing answering webhook secret.");
     }
     if (!callSid) {
       throw new Error("Missing Twilio CallSid.");
     }
-    if (activeLineSessions.size >= CALL_MAX_CONCURRENT || activeLineSessions.has(twilioToNumber)) {
+    if (!getIncomingCallAdmission(twilioToNumber, callerPhone, callSid, undefined, signatureValidated).allowed) {
       throw new Error("The voice server has reached its concurrent call limit.");
     }
 
@@ -4258,6 +4148,9 @@ app.post("/answering/incoming/:webhookSecret", async (req, res) => {
     }
     if (!answeringPreset.enabled) {
       throw new Error("Answering service is turned off for this preset.");
+    }
+    if (!getIncomingCallAdmission(twilioToNumber, callerPhone, callSid, answeringPreset.ownerId, signatureValidated).allowed) {
+      throw new Error("The voice server has reached its concurrent call limit.");
     }
 
     const reservationResult = await actor.reserveIncomingAnsweringCall(
@@ -4355,11 +4248,12 @@ app.post("/answering/incoming/:webhookSecret", async (req, res) => {
     };
     // Re-check after the IC awaits, then lock synchronously before another
     // webhook or outbound dispatch can consume this host's last slot.
-    if (activeLineSessions.size >= CALL_MAX_CONCURRENT || activeLineSessions.has(twilioToNumber)) {
+    const admission = getIncomingCallAdmission(twilioToNumber, callerPhone, callSid, answeringPreset.ownerId, signatureValidated);
+    if (!admission.allowed) {
       throw new Error("The voice server has reached its concurrent call limit.");
     }
     callSessions.set(sessionId, session);
-    assignLineToSession(session, twilioToNumber);
+    assignIncomingLineToSession(session, twilioToNumber, admission);
     callsBySid.set(callSid, sessionId);
     registerInboundCallStatusCallback(session);
 
@@ -4516,27 +4410,14 @@ async function endCallFromRequest(req, res, reason = "user_requested_end_fallbac
     const activeSessionId = sessionId || (callSid ? callsBySid.get(callSid) : "");
     const session = activeSessionId ? callSessions.get(activeSessionId) : null;
     if (!session) {
-      const normalizedCallSid = getValidCallSid(callSid);
-      if (normalizedCallSid && twilioClient) {
-        try {
-          await twilioClient.calls(normalizedCallSid).update({ status: "completed" });
-          settleBackendReservationFromTwilioFetch(
-            normalizedCallSid,
-            `${reason}_without_memory_session`,
-          ).catch((error) => {
-            log("error", "Unable to settle backend reservation after untracked end-call", {
-              callSid: normalizedCallSid,
-              error: error.message,
-            });
-          });
-        } catch (error) {
-          log("warn", "Unable to end untracked Twilio call", {
-            callSid: normalizedCallSid,
-            error: error.message,
-          });
-        }
+      const terminal = activeSessionId ? terminalSessionCache.get(activeSessionId, token) : null;
+      if (terminal && (!callSid || callSid === terminal.callSid)) {
+        res.json({ ok: true });
+        return;
       }
-      res.json({ ok: true });
+      // A CallSid is an identifier, not authorization. After a bridge restart,
+      // the authenticated History/agent hang-up path can recover the call.
+      res.status(404).json({ ok: false, error: "Call session not found. Use authenticated Call History to request a stop." });
       return;
     }
     if (!isSessionControlTokenValid(session, token)) {
@@ -4551,7 +4432,13 @@ async function endCallFromRequest(req, res, reason = "user_requested_end_fallbac
       res.json({ ok: true });
       return;
     }
-    callSid = session.callSid || callSid;
+    // The token authorizes this session only, including while provider creation
+    // is awaiting a response. Never use a request-supplied SID as its target.
+    if (!session.callSid) {
+      res.status(409).json({ ok: false, error: "Call dispatch is still pending. Retry the stop request shortly." });
+      return;
+    }
+    callSid = session.callSid;
     if (!/^CA[a-fA-F0-9]{32}$/.test(callSid)) {
       throw new Error("A valid Twilio CallSid is required.");
     }
@@ -4587,6 +4474,11 @@ app.get("/end-call/:sessionId", async (req, res) => {
 app.get("/call-session/:sessionId", (req, res) => {
   const session = callSessions.get(String(req.params.sessionId || ""));
   if (!session) {
+    const terminal = terminalSessionCache.get(String(req.params.sessionId || ""), getRequestControlToken(req));
+    if (terminal) {
+      res.json(terminal);
+      return;
+    }
     res.status(404).json({ ok: false, error: "Call session not found." });
     return;
   }
@@ -4649,6 +4541,9 @@ function requestKeypadSignaling(session, digits, keypad) {
     return false;
   }
   armStreamHandoff(session);
+  // Replacing <Connect><Stream> also discards that stream's queued speech.
+  // Invalidate playback ACKs and reset live listeners before the replacement.
+  session.mediaOwner?.clear?.();
   const previousStreamSid = session.streamSid;
   twilioClient.calls(session.callSid).update({ twiml }).then(() => {
     log("info", "Sent keypad digits through Twilio", {
@@ -4705,15 +4600,16 @@ app.post("/call-status", async (req, res) => {
 
   const { sessionId, session } = getSessionFromRequest(req);
   const callSid = getValidCallSid(req.body.CallSid);
-  const callStatus = String(req.body.CallStatus || "").toLowerCase();
+  const receivedStatus = String(req.body.CallStatus || "").toLowerCase();
+  const callStatus = advanceTransportStatus(session?.lastStatus, receivedStatus);
   const twilioDurationSeconds = parseTwilioCallDurationSeconds(
     req.body.CallDuration,
   );
   if (session) {
-    session.lastStatus = req.body.CallStatus;
+    session.lastStatus = callStatus;
     const statusAt = markBillingActivity(session, "lastStatusAt");
     updateSessionRecordingFromBody(session, req.body);
-    if (twilioDurationSeconds !== null) {
+    if (twilioDurationSeconds !== null && callStatus === receivedStatus) {
       session.twilioDurationSeconds = twilioDurationSeconds;
     }
     if (isTerminalTwilioStatus(callStatus)) {
@@ -4891,10 +4787,33 @@ mediaWss.on("connection", (twilioWs, request) => {
   let xaiWs = null;
   let session = null;
   let borrowed = false;
-  let markCounter = 0;
   let closed = false;
   let suppressKeypadResponseAudio = false;
   let lineListener = { push() {}, suspend() {} };
+  function mediaDiagnostics() {
+    if (!session) return null;
+    session.mediaDiagnostics ||= {
+      callerAudioBytes: 0, assistantAudioBytes: 0, assistantSuppressedBytes: 0,
+      assistantConfirmedTurns: 0, assistantUnconfirmedTurns: 0,
+      lastCallerAudioAt: null, lastAssistantAudioAt: null,
+    };
+    return session.mediaDiagnostics;
+  }
+  const delivery = createResponseDelivery({
+    sendMark: (name) => sendToTwilio({ event: "mark", streamSid: link.streamSid, mark: { name } }),
+    onDelivered: (text) => {
+      const diagnostics = mediaDiagnostics();
+      if (diagnostics) diagnostics.assistantConfirmedTurns += 1;
+      if (text.trim() && session?.saveTranscript && session.permissionConfirmed) {
+        appendTranscript(session, "assistant", `${text.trim()}\n`);
+      }
+      noteGoodbyeUtterance(session, "assistant", text, "twilio_playback_confirmed");
+    },
+    onUnconfirmed: () => {
+      const diagnostics = mediaDiagnostics();
+      if (diagnostics) diagnostics.assistantUnconfirmedTurns += 1;
+    },
+  });
   const keypad = createPhoneKeypad({
     ready: () => !closed && !borrowed && session?.direction === CALL_DIRECTIONS.OUTBOUND &&
       !session.billingStoppedAt && !lifecycle.ending && Boolean(link.streamSid) &&
@@ -4935,15 +4854,22 @@ mediaWss.on("connection", (twilioWs, request) => {
     closed = true;
     keypad.close();
     lifecycle.close();
+    delivery.close();
     if (xaiWs && xaiWs.readyState === WebSocket.OPEN) xaiWs.close();
     if (link.twilioWs?.readyState === WebSocket.OPEN) link.twilioWs.close();
   }
 
   function sendToTwilio(payload) {
-    if (payload.event === "clear") lifecycle.clear();
+    if (payload.event === "clear") {
+      lifecycle.clear();
+      delivery.clear();
+      broadcastMonitorEvent(session, { type: "clear", channel: "assistant" });
+    }
     if (link.twilioWs?.readyState === WebSocket.OPEN) {
       link.twilioWs.send(JSON.stringify(payload));
+      return true;
     }
+    return false;
   }
 
   function getVoiceSessionFromPreset() {
@@ -5148,7 +5074,18 @@ mediaWss.on("connection", (twilioWs, request) => {
       }
 
       if (event.type === "response.output_audio.delta" && event.delta && link.streamSid) {
-        if (keypad.busy || suppressKeypadResponseAudio || lifecycle.holdAssistant) return;
+        const bytes = Buffer.from(event.delta, "base64").length;
+        const diagnostics = mediaDiagnostics();
+        if (keypad.busy || suppressKeypadResponseAudio || lifecycle.holdAssistant || !isWebSocketOpen(link.twilioWs)) {
+          delivery.audio(bytes, false);
+          if (diagnostics) diagnostics.assistantSuppressedBytes += bytes;
+          return;
+        }
+        delivery.audio(bytes, true);
+        if (diagnostics) {
+          diagnostics.assistantAudioBytes += bytes;
+          diagnostics.lastAssistantAudioAt = Date.now();
+        }
         lifecycle.audio(event.delta);
         if (session.metrics) {
           session.metrics.assistantAudioChunks += 1;
@@ -5161,16 +5098,11 @@ mediaWss.on("connection", (twilioWs, request) => {
         });
         broadcastMonitorAudio(session, "assistant", event.delta);
         appendBridgeRecordingAudio(session, event.delta, "assistant");
-        markCounter += 1;
-        sendToTwilio({
-          event: "mark",
-          streamSid: link.streamSid,
-          mark: { name: `${STREAM_MARK_PREFIX}-${markCounter}` },
-        });
         return;
       }
 
       if (event.type === "response.created") {
+        delivery.begin(getXaiResponseId(event));
         lifecycle.responseCreated();
         suppressKeypadResponseAudio = false;
         const direction = normalizeCallDirection(session.direction);
@@ -5227,6 +5159,9 @@ mediaWss.on("connection", (twilioWs, request) => {
 
       if (event.type === "response.done") {
         const responseId = getXaiResponseId(event);
+        // Enqueue this mark before lifecycle's hangup mark, so transcript
+        // confirmation is processed before lifecycle may close the call.
+        delivery.done(responseId, event.response?.status);
         const completedOpening =
           session.openingTurnActive &&
           !session.fullInstructionsApplied &&
@@ -5237,13 +5172,6 @@ mediaWss.on("connection", (twilioWs, request) => {
         lifecycle.responseDone(event.response?.status);
         if (completedOpening) {
           applyFullSessionInstructions("opening_response_done");
-        } else if (session.fullInstructionsApplied && !suppressKeypadResponseAudio && !keypad.busy) {
-          noteGoodbyeUtterance(
-            session,
-            "assistant",
-            getLatestTranscriptText(session, "assistant"),
-            "assistant_response_done",
-          );
         }
         return;
       }
@@ -5281,7 +5209,9 @@ mediaWss.on("connection", (twilioWs, request) => {
         if (session.metrics) {
           session.metrics.assistantTranscriptChars += String(event.delta).length;
         }
-        appendTranscript(session, "assistant", event.delta);
+        // Transient text also drives the confirmed-playback goodbye guard.
+        // onDelivered persists it only when transcript capture is authorized.
+        delivery.transcript(event.delta);
         return;
       }
 
@@ -5294,7 +5224,7 @@ mediaWss.on("connection", (twilioWs, request) => {
         if (session.metrics) {
           session.metrics.callerTranscriptChars += text.length;
         }
-        if (text) {
+        if (text && session.saveTranscript && session.permissionConfirmed) {
           appendTranscript(session, "caller", `${text}\n`);
           noteGoodbyeUtterance(session, "caller", text, "caller_transcription");
         }
@@ -5316,6 +5246,7 @@ mediaWss.on("connection", (twilioWs, request) => {
     xaiWs.on("close", () => {
       keypad.close();
       lifecycle.close();
+      delivery.close();
       log("info", "xAI WebSocket closed", {
         sessionId: session?.id,
         streamSid: link.streamSid,
@@ -5340,6 +5271,11 @@ mediaWss.on("connection", (twilioWs, request) => {
     if (data.event === "media") {
       if (session) markBillingActivity(session, "lastMediaAt");
       if (data.media?.payload) {
+        const diagnostics = mediaDiagnostics();
+        if (diagnostics) {
+          diagnostics.callerAudioBytes += Buffer.from(data.media.payload, "base64").length;
+          diagnostics.lastCallerAudioAt = Date.now();
+        }
         if (session?.direction === CALL_DIRECTIONS.OUTBOUND) lineListener.push(data.media.payload);
         broadcastMonitorAudio(session, "caller", data.media.payload);
         appendBridgeRecordingAudio(
@@ -5361,6 +5297,7 @@ mediaWss.on("connection", (twilioWs, request) => {
     }
 
     if (data.event === "mark") {
+      delivery.onMark(data.mark?.name);
       keypad.onMark(data.mark?.name);
       lifecycle.onMark(data.mark?.name);
       return;
@@ -5452,7 +5389,10 @@ mediaWss.on("connection", (twilioWs, request) => {
         return;
       }
       session.mediaLink = link;
-      session.mediaOwner = { handle: handleTwilioEvent, close: closeBoth };
+      session.mediaOwner = {
+        handle: handleTwilioEvent, close: closeBoth,
+        clear: () => sendToTwilio({ event: "clear", streamSid: link.streamSid }),
+      };
       session.twilioWs = twilioWs;
       session.phoneKeypad = keypad;
       if (session.direction === CALL_DIRECTIONS.OUTBOUND) session.callLifecycle = lifecycle;
@@ -5487,6 +5427,7 @@ mediaWss.on("connection", (twilioWs, request) => {
     }
     keypad.close();
     lifecycle.close();
+    delivery.close();
     if (xaiWs && xaiWs.readyState === WebSocket.OPEN) xaiWs.close();
     if (session?.twilioWs === twilioWs) session.twilioWs = null;
     if (session) {
@@ -5638,12 +5579,12 @@ async function dispatchPendingAgentCallJobs() {
   // Do not reserve prepaid time or mutate IC state while this small host is
   // full. Each uploaded list remains durable in the canister until its turn.
   if (queueProcessing ||
-    activeLineSessions.size >= CALL_MAX_CONCURRENT || !twilioClient) return 0;
+    getActiveCallCount() >= CALL_MAX_CONCURRENT || !twilioClient) return 0;
   agentCallPollProcessing = true;
   let dispatchedCount = 0;
   try {
     const numbers = await getConfiguredTwilioLineNumbers();
-    if (!numbers.some(number => !activeLineSessions.has(number))) return 0;
+    if (!numbers.some(number => !isLineInUse(number))) return 0;
     const actor = await getBackendActor();
     // This query avoids an idle update call on every polling tick.
     if (!await actor.agentHasPendingCallsForServer()) return 0;
@@ -5656,8 +5597,8 @@ async function dispatchPendingAgentCallJobs() {
 
     for (let attempt = 0; attempt < 1; attempt += 1) {
       if (queueProcessing ||
-        activeLineSessions.size >= CALL_MAX_CONCURRENT ||
-        !numbers.some(number => !activeLineSessions.has(number))) break;
+        getActiveCallCount() >= CALL_MAX_CONCURRENT ||
+        !numbers.some(number => !isLineInUse(number))) break;
       const claimed = unwrapOptional(await actor.claimNextAgentCallForServer());
       if (!claimed) break;
       dispatchedCount += 1;
@@ -5825,6 +5766,7 @@ async function runSessionCleanup() {
   sessionCleanupProcessing = true;
   const cutoff = Date.now() - SESSION_TTL_MS;
   const now = Date.now();
+  terminalSessionCache.prune();
   try {
     for (const [_sessionId, session] of callSessions.entries()) {
       if (

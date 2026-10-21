@@ -54,7 +54,7 @@ $local = Invoke-RestMethod http://127.0.0.1:3000/health
 $public = Invoke-RestMethod https://voicecall.richardhery.com/health
 $local | Select-Object ready, callRequestVersion, serverVersion, model, backendCanisterId, callQueue, destinationPricing
 $public | Select-Object ready, callRequestVersion, serverVersion, model, backendCanisterId, callQueue, destinationPricing
-if (-not $public.ready -or $public.serverVersion -ne '2026-10-20-bulk-fair-queue') {
+if (-not $public.ready -or $public.serverVersion -ne '2026-10-21-call-audio-reliability') {
   throw 'The current bridge release is not ready; inspect setupIssues and service logs.'
 }
 $cors = Invoke-WebRequest https://voicecall.richardhery.com/health `
@@ -69,8 +69,10 @@ prerequisites, not a completed Twilio/xAI call. The production backend must rema
 or the bridge was not restarted. Read `logs\voicecall-err.log` locally for diagnostics;
 do not publish secrets, phone numbers or bearer recording/listening URLs.
 
-This release defaults to one concurrent call across browser, bulk/MCP, and inbound
-answering traffic. Existing environment files need no new values to receive these
+This release defaults to one ordinary concurrent call across browser, bulk/MCP, and
+inbound answering traffic. One extra signed incoming companion is allowed when
+a live outbound call reaches the same account’s verified answering preset. Both
+legs reserve and bill phone time separately; other work still waits for capacity. Existing environment files need no new values to receive these
 defaults. `CALL_MAX_CONCURRENT`, `CALL_QUEUE_MAX_PENDING` (100) and
 `CALL_QUEUE_MAX_PER_USER` (20) tune the bridge's bounded queues. Leave concurrency
 at one on a small host. `MAX_OUTBOUND_RATE_USD_PER_MINUTE` defaults to `0.03`;
@@ -84,6 +86,24 @@ the older bridge during the transition. New bulk lists remain waiting until this
 bridge release is running. Verify `callQueue.lazyBulkDispatch=true` in public
 health before submitting production bulk work. The updater checks readiness,
 release version and production backend mapping after restarting.
+
+## Verify audio reliability
+
+Public health must report `serverVersion=2026-10-21-call-audio-reliability`,
+`callLifecycle.version=3` and `callDelivery.playbackConfirmedTranscripts=true`.
+The IC upgrade must precede the bridge restart because new finalization includes
+bounded delivery counters in the same update. A `ready` bridge still does not
+prove a successful telephone conversation.
+
+To verify with a number you control, enable the answering preset, use an owned
+outbound preset and start one call with the desired capture settings. Press
+**Start listening** in the private live page; wait for its audio-received status.
+Afterward inspect History or `agentGetCallArtifacts`: phone connection, sent audio,
+playback acknowledgements and actual recording/transcript content are separate
+pieces of evidence. A self-call uses two billable legs. No live call is started by
+the updater. Do not repeatedly dial a public service to diagnose a silent player.
+
+See [call audio and result semantics](CALL-RELIABILITY.md).
 
 ## Pull Genesis and update its installed worker copy
 

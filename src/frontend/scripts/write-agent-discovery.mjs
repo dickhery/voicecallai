@@ -94,6 +94,14 @@ Authorize Internet Identity with Actions and questions for updates, then agentIn
 6. Poll agentListCallJobs at 10 seconds, then back off to 20 and 30 seconds. Present liveAudioUrl privately to the authorized user when available. If a dispatched job has no URL, agentGetLiveCallLink is a one-query fallback. Queued/dispatched is not completed.
 7. agentEndCall cancels a queued call or requests hang-up of a dispatched call. Read agentGetCallArtifacts after completion for selected transcripts and recordings.
 
+## Call outcomes, recordings and live listening
+
+Queued or dispatched means accepted or handed to the bridge; a CallSid is not proof of an answer. A completed call record means the phone connection ended, not that the intended person answered or the call goal succeeded. Inspect the actual artifacts before summarizing the result. Distinguish an interactive AI assistant from a keypad menu and from voicemail.
+agentGetCallArtifacts includes optional diagnostics. getCallDiagnostics(callId) is the equivalent owner-only query for one call. The supporting bridge stores small counters in its existing finalization update, with at most 2,000 recent call IDs retained globally. Older calls and recovery after a bridge restart may have no diagnostics; report the uncertainty. outcome noAssistantAudio means no assistant speech was forwarded; playbackUnconfirmed means no complete assistant turn was acknowledged; audioExchanged means both audio directions and at least one full Twilio playback acknowledgement, not recipient comprehension or task success. These counters do not prove microphone/speaker audibility or recording content.
+New assistant transcripts contain only complete, wholly forwarded turns after Twilio playback acknowledgement; interrupted, suppressed or unconfirmed turns may be absent. Older transcripts may contain generated text that was never played. Do not claim successful delivery from transcript text or a recording URL alone. If the recording is pending, check artifacts after a short delay; do not automatically requeue and spend phone time again.
+Present liveAudioUrl as an exact private browser link. The user must press Start listening or the app's Live Audio button to enable browser sound. The page reports waiting, receiving, blocked or retry state. Opening a page or WebSocket is not evidence sound reached the user. Live listening has no rewind; it can expire when the call ends. If the chat client cannot play signed recordings inline, provide the link without promising successful playback. Keep all bearer URLs private.
+The small host normally permits one call, plus at most one signed, matching inbound companion when a caller tests their own verified answering preset. Both outbound and inbound legs have separate prepaid reservations and are billed separately. This exception does not allow unrelated callers to bypass capacity. The website update alone cannot install the Windows bridge fixes.
+
 ## Bulk lists and call-center work
 
 The dashboard imports CSV/text locally. Through ICP MCP, read a user-provided attachment in the assistant and extract its phone column, then pass the numbers directly as recipientPhones; the connector accepts Candid text arrays, not file uploads or arbitrary file URLs. Do not invent recipients or dial while parsing. If the assistant cannot read the attachment, ask for the phone column pasted as text or use the dashboard upload.
@@ -206,6 +214,22 @@ const structuredGuide = {
   capture_authorization: "consentConfirmed is a legacy customer-authorization field, not evidence of another participant's consent. Authenticated capture selections are normalized by the backend.",
   calling_policy: "Ordinary lawful calls have no blanket prior recipient-consent gate. Harmless comedy and consensual adult roleplay are supported. Required notices/permissions, anti-harassment safeguards and assistant/provider policies still apply.",
   preview_method: "agentPreviewCall",
+  call_results: {
+    diagnostics_query: "getCallDiagnostics",
+    diagnostics_in_artifacts: true,
+    diagnostics_retained_call_ids: 2000,
+    completed_means: "The phone transport ended; goal completion must be supported by actual conversation content.",
+    diagnostic_outcomes: {
+      noAssistantAudio: "No assistant speech forwarded.",
+      playbackUnconfirmed: "No complete assistant turn acknowledged by Twilio.",
+      audioExchanged: "Both audio directions and a full playback acknowledgement; not proof of comprehension or goal success.",
+      notConnected: "No media connection recorded.",
+      unknown: "Insufficient evidence; do not infer success.",
+    },
+    transcript_semantics: "New assistant turns require full playback acknowledgement; interrupted/unconfirmed turns may be omitted. Legacy text can include generated but unheard speech.",
+    live_listening: "A browser link requiring the user's Start listening gesture. An open page or socket does not prove audible playback. No rewind; expires at call end.",
+    own_answering_test: "At most one signed same-owner incoming companion; both call legs billed separately.",
+  },
   bulk_workflow: {
     preview_method: "agentPreviewCallBatch",
     queue_method: "agentQueueCallBatch",
@@ -258,6 +282,7 @@ const structuredGuide = {
     "agentEndCall",
     "agentGetLiveCallLink",
     "agentGetCallArtifacts",
+    "getCallDiagnostics",
     "listMyAnsweringPresets",
     "createAnsweringPreset",
     "setAnsweringPresetEnabled",

@@ -1,4 +1,31 @@
 module {
+  // Small delivery metadata only; no audio, prompts, phone numbers or bearer URLs.
+  public type CallDiagnosticsInput = {
+    version : Nat;
+    bridgeVersion : Text;
+    transportStatus : Text;
+    terminationReason : Text;
+    connected : Bool;
+    callerAudioBytes : Nat;
+    assistantAudioBytes : Nat;
+    assistantSuppressedBytes : Nat;
+    assistantConfirmedTurns : Nat;
+    assistantUnconfirmedTurns : Nat;
+  };
+
+  public type CallAudioOutcome = {
+    #audioExchanged;
+    #noAssistantAudio;
+    #notConnected;
+    #playbackUnconfirmed;
+    #unknown;
+  };
+
+  public type CallDiagnostics = CallDiagnosticsInput and {
+    outcome : CallAudioOutcome;
+    recordedAt : Int;
+  };
+
   public type CallStatus = {
     #pending;
     #inProgress;

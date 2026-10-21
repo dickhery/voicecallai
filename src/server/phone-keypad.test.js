@@ -5,6 +5,7 @@ import vm from "node:vm";
 import { EventEmitter } from "node:events";
 import { createPhoneKeypad, makeKeypadAudio, extractSuppliedExtension, KEYPAD_TOOL, KEYPAD_INSTRUCTIONS } from "./phone-keypad.js";
 import { createCallLifecycle, CALL_LIFECYCLE_TOOLS, CALL_LIFECYCLE_INSTRUCTIONS } from "./call-lifecycle.js";
+import { createResponseDelivery } from "./response-delivery.js";
 
 function harness(overrides = {}) {
   const sent = [], results = [], timers = new Map();
@@ -132,8 +133,9 @@ test("an uncertain Twilio REST result never replays a possibly delivered selecti
   const start = source.indexOf("function requestKeypadSignaling(");
   const end = source.indexOf('app.post("/twiml"', start);
   for (const [status, expected] of [[400, "failed"], [500, "unconfirmed"], [undefined, "unconfirmed"]]) {
-    const results = [];
-    const session = { id: "session", callSid: "CAcall", streamSid: "MZbefore" };
+    const results = [], clears = [];
+    const session = { id: "session", callSid: "CAcall", streamSid: "MZbefore",
+      mediaOwner: { clear: () => clears.push(true) } };
     const context = vm.createContext({
       twilioClient: { calls: () => ({ update: async () => { throw Object.assign(new Error("Provider failure"), { status }); } }) },
       getPublicWsUrl: () => "wss://bridge.example", buildMediaStreamTwiml: () => "<Response/>",
@@ -141,6 +143,7 @@ test("an uncertain Twilio REST result never replays a possibly delivered selecti
     });
     vm.runInContext(source.slice(start, end), context);
     assert.equal(context.requestKeypadSignaling(session, "1", { onSignalingResult: result => results.push(result) }), true);
+    assert.equal(clears.length, 1);
     await new Promise(setImmediate);
     assert.deepEqual(results, [expected]);
   }
@@ -196,7 +199,7 @@ test("real bridge event handlers navigate the first menu and protect tones from 
   const ended = [];
   const noop = () => {};
   const context = vm.createContext({
-    mediaWss, WebSocket: Socket, createPhoneKeypad, createCallLifecycle, KEYPAD_TOOL,
+    mediaWss, WebSocket: Socket, createPhoneKeypad, createCallLifecycle, createResponseDelivery, KEYPAD_TOOL, Buffer,
     CALL_DIRECTIONS: { OUTBOUND: "outbound", INBOUND: "inbound" },
     callSessions: new Map([["test", session]]),
     isWebSocketOpen: ws => ws?.readyState === 1, safeTokenEqual: (a,b) => a === b,
@@ -205,7 +208,7 @@ test("real bridge event handlers navigate the first menu and protect tones from 
     buildXaiSessionUpdate: (_, options) => ({ type: "session.update", options }),
     setTimeout: () => ({ unref: noop }), normalizeCallDirection: x => x,
     getXaiResponseId: e => e.response?.id, getLatestTranscriptText: () => "", noteGoodbyeUtterance: noop,
-    broadcastMonitorAudio: noop, appendBridgeRecordingAudio: noop, STREAM_MARK_PREFIX: "xai-audio",
+    broadcastMonitorAudio: noop, broadcastMonitorEvent: noop, appendBridgeRecordingAudio: noop,
     scheduleFinishPaidSession: noop,
     endSessionFromRemoteRequest: async (session, reason) => ended.push({ session, reason }),
   });

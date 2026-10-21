@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  useGetCallDiagnostics,
   useListMyAnsweringPresets,
   useListMyCalls,
   useListMyPresets,
@@ -195,7 +196,7 @@ const ALL_STATUSES: Array<{ value: CallStatus | "all"; label: string }> = [
   { value: "all", label: "All Statuses" },
   { value: CallStatus.pending, label: "Pending" },
   { value: CallStatus.inProgress, label: "In Progress" },
-  { value: CallStatus.completed, label: "Completed" },
+  { value: CallStatus.completed, label: "Ended" },
   { value: CallStatus.failed, label: "Failed" },
 ];
 
@@ -282,7 +283,9 @@ export default function HistoryPage() {
                 Call History
               </h1>
               <p className="text-sm text-muted-foreground mt-0.5">
-                Outbound calls and AI answering sessions
+                Outbound calls and AI answering sessions. Ended means the phone
+                session finished; review its audio and transcript to confirm the
+                result.
               </p>
             </div>
             <Button
@@ -508,6 +511,9 @@ function CallRow({
   onToggle: () => void;
 }) {
   const artifacts = parseCallArtifacts(call.transcript);
+  const finished =
+    call.status === CallStatus.completed || call.status === CallStatus.failed;
+  const diagnostics = useGetCallDiagnostics(call.id, expanded && finished);
   const inbound = isAnsweringCall(call.presetId);
 
   return (
@@ -629,6 +635,77 @@ function CallRow({
                 )}
             </div>
           </div>
+          {finished && (
+            <div
+              className="mb-4 rounded-lg border border-border bg-background p-3 text-xs"
+              data-ocid="history.call.audio_diagnostics"
+            >
+              <p className="font-medium mb-2">Audio delivery</p>
+              {diagnostics.isLoading ? (
+                <Skeleton className="h-4 w-48" />
+              ) : diagnostics.error ? (
+                <div className="flex items-center gap-3 text-muted-foreground">
+                  <p>Audio diagnostics could not be loaded.</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => void diagnostics.refetch()}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              ) : diagnostics.data ? (
+                <div className="space-y-2 text-muted-foreground">
+                  <p className="text-foreground">
+                    {(
+                      {
+                        audioExchanged: "Phone audio exchanged",
+                        noAssistantAudio: "No agent audio was sent",
+                        notConnected: "Phone connection not confirmed",
+                        playbackUnconfirmed: "Agent playback not confirmed",
+                        unknown: "Outcome unconfirmed",
+                      } as Record<string, string>
+                    )[String(diagnostics.data.outcome)] ??
+                      "Outcome unconfirmed"}
+                  </p>
+                  <p>
+                    Phone audio received:{" "}
+                    {diagnostics.data.callerAudioBytes > 0n ? "Yes" : "No"}.
+                    Agent audio sent:{" "}
+                    {diagnostics.data.assistantAudioBytes > 0n ? "Yes" : "No"}.
+                    Playback acknowledged:{" "}
+                    {diagnostics.data.assistantConfirmedTurns.toString()}{" "}
+                    turn(s).
+                  </p>
+                  {diagnostics.data.assistantUnconfirmedTurns > 0n && (
+                    <p>Some generated speech has no confirmed playback.</p>
+                  )}
+                  <p>
+                    Phone service acknowledgement does not confirm the recipient
+                    understood the message or the task succeeded. Review the
+                    recording for the conversation result.
+                  </p>
+                  <details>
+                    <summary className="cursor-pointer">
+                      Technical details
+                    </summary>
+                    <p className="mt-1 break-all font-mono">
+                      Phone status:{" "}
+                      {diagnostics.data.transportStatus || "unknown"}. End
+                      reason: {diagnostics.data.terminationReason || "unknown"}.
+                      Bridge: {diagnostics.data.bridgeVersion || "unknown"}.
+                    </p>
+                  </details>
+                </div>
+              ) : (
+                <p className="text-muted-foreground">
+                  No saved audio diagnostics are available for this call.
+                </p>
+              )}
+            </div>
+          )}
           {artifacts.recordingUrl && (
             <RecordingArtifact
               recordingUrl={artifacts.recordingUrl}
@@ -664,6 +741,11 @@ function CallRow({
                   Save text
                 </Button>
               </div>
+              <p className="text-xs text-muted-foreground mb-2">
+                Transcript text alone does not confirm that speech was played or
+                understood. Older calls may include generated speech that was
+                interrupted or never sent.
+              </p>
               <div className="bg-background rounded-lg border border-border p-4 max-h-48 overflow-y-auto">
                 <p className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">
                   {artifacts.transcript}
@@ -714,20 +796,22 @@ function RecordingArtifact({
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
   const [isResolving, setIsResolving] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [resolveAttempt, setResolveAttempt] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const captionSrc = useMemo(() => toCaptionDataUrl(transcript), [transcript]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveAttempt explicitly retries playback link resolution.
   useEffect(() => {
     let cancelled = false;
     const needsProxy = isTwilioRecordingUrl(recordingUrl);
     setError(null);
 
     if (!needsProxy) {
-      // Probe signed bridge (or other non-Twilio) links so missing media shows
-      // a clear message instead of a broken audio control / raw JSON page.
+      // Probe metadata without eagerly downloading the full recording on expand.
+      // Native playback and explicit download fetch media only when needed.
       setPlaybackUrl(null);
       setIsResolving(true);
-      fetch(recordingUrl, { method: "GET", credentials: "omit" })
+      fetch(recordingUrl, { method: "HEAD", credentials: "omit" })
         .then(async (response) => {
           if (cancelled) return;
           if (!response.ok) {
@@ -741,21 +825,12 @@ function RecordingArtifact({
             );
             return;
           }
-          // Prefer a blob URL so download reuses media and missing files show
-          // a clear message instead of navigating to a JSON error page.
-          const blob = await response.blob();
-          if (cancelled) return;
-          if (!blob || blob.size === 0) {
+          if (response.headers.get("content-length") === "0") {
             setPlaybackUrl(null);
             setError("Recording media is empty or unavailable.");
             return;
           }
-          const objectUrl = URL.createObjectURL(blob);
-          if (cancelled) {
-            URL.revokeObjectURL(objectUrl);
-            return;
-          }
-          setPlaybackUrl(objectUrl);
+          setPlaybackUrl(recordingUrl);
         })
         .catch(() => {
           if (cancelled) return;
@@ -806,23 +881,13 @@ function RecordingArtifact({
     return () => {
       cancelled = true;
     };
-  }, [callSid, recordingSid, recordingUrl]);
-
-  // Revoke blob object URLs created for bridge playback.
-  useEffect(() => {
-    return () => {
-      if (playbackUrl?.startsWith("blob:")) {
-        URL.revokeObjectURL(playbackUrl);
-      }
-    };
-  }, [playbackUrl]);
+  }, [callSid, recordingSid, recordingUrl, resolveAttempt]);
 
   const downloadUrl = playbackUrl
     ? playbackUrl.startsWith("blob:")
       ? playbackUrl
       : withDownloadParam(playbackUrl)
     : null;
-  // Blob object URLs lose path/format hints; use the original recording URL.
   const mimeType = getRecordingMimeType(recordingUrl);
   const downloadExtension = mimeType === "audio/wav" ? "wav" : "mp3";
 
@@ -918,7 +983,18 @@ function RecordingArtifact({
         </p>
       )}
       {error && playbackUrl && (
-        <p className="text-[10px] text-muted-foreground mt-1">{error}</p>
+        <p className="text-xs text-muted-foreground mt-1">{error}</p>
+      )}
+      {error && !isResolving && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="mt-2 h-7 text-xs"
+          onClick={() => setResolveAttempt((value) => value + 1)}
+        >
+          Retry recording
+        </Button>
       )}
       {recordingSid && (
         <p className="text-[10px] text-muted-foreground mt-1 font-mono break-all">

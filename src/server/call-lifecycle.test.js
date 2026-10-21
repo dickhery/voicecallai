@@ -143,11 +143,12 @@ test('voicemail greeting cap cannot be extended by repeated state calls or backg
   assert.deepEqual(h.ended, ['voicemail_timeout']);
 });
 
-test('opening gate holds a long greeting until the beep, then allows one message', () => {
+test('opening gate holds a classified voicemail greeting until the beep, then allows one message', () => {
   const h = harness({ gateOpenings: true });
   assert.equal(h.control.holdAssistant, true);
   h.control.speechStarted();
   h.advance(4_000);
+  h.tool('set_call_state', { state: 'voicemail_greeting' });
   assert.equal(h.control.holdAssistant, true);
   h.control.speechStopped();
   h.advance(2_000);
@@ -163,14 +164,42 @@ test('opening gate holds a long greeting until the beep, then allows one message
   assert.equal(h.control.noteBeep(), false);
 });
 
-test('opening gate treats a short hello as a person and does not invent a beep', () => {
+test('a short hello allows the VAD response without creating a duplicate response', () => {
   const h = harness({ gateOpenings: true });
   h.control.speechStarted();
   h.advance(700);
   h.control.speechStopped();
   assert.equal(h.control.holdAssistant, false);
-  assert.equal(h.sent.filter((event) => event.type === 'response.create').length, 1);
+  assert.equal(h.sent.filter((event) => event.type === 'response.create').length, 0);
+  h.tool('set_call_state', { state: 'human' });
   assert.equal(h.control.noteBeep(), false);
+});
+
+test('long human or conversational AI introductions do not leave the line muted', () => {
+  for (const state of ['unknown', 'human', 'conversational_agent']) {
+    const h = harness({ gateOpenings: true });
+    if (state !== 'unknown') h.tool('set_call_state', { state });
+    h.control.speechStarted();
+    h.advance(12_000);
+    assert.equal(h.control.holdAssistant, true);
+    h.control.speechStopped();
+    assert.equal(h.control.holdAssistant, false);
+    assert.equal(h.sent.filter(event => event.type === 'response.create').length, 0);
+    h.control.responseCreated(); h.audio(5); h.control.responseDone('completed');
+    assert.equal(h.marks.length, 1);
+    h.advance(5_000); h.control.onMark(h.marks.at(-1));
+    assert.equal(h.ended.length, 0);
+    h.control.close();
+  }
+});
+
+test('an explicit keypad menu remains silent at the pause until its next control response', () => {
+  const h = harness({ gateOpenings: true });
+  h.control.speechStarted(); h.advance(5_000);
+  h.tool('set_call_state', { state: 'automated' });
+  h.control.speechStopped();
+  assert.equal(h.control.holdAssistant, true);
+  h.control.close();
 });
 
 test('a beep during an active response waits for response.done then requests one message', () => {

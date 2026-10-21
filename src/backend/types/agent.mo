@@ -349,6 +349,7 @@ module {
     transcript : ?Text;
     audioUrl : ?Text;
     audioMimeType : ?Text;
+    diagnostics : ?CallTypes.CallDiagnostics;
     note : Text;
   };
 

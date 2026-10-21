@@ -61,6 +61,29 @@ type AnsweringLiveSession__281546138 =
   };
 type AnsweringPresetStatus__939164445 = {#pendingVerification; #verified};
 type AudioFormat__500525639 = {#pcm; #pcma; #pcmu};
+type CallAudioOutcome__412792305 =
+  {
+    #audioExchanged;
+    #noAssistantAudio;
+    #notConnected;
+    #playbackUnconfirmed;
+    #unknown
+  };
+type CallDiagnostics__895525370 =
+  {
+    assistantAudioBytes : Nat;
+    assistantConfirmedTurns : Nat;
+    assistantSuppressedBytes : Nat;
+    assistantUnconfirmedTurns : Nat;
+    bridgeVersion : Text;
+    callerAudioBytes : Nat;
+    connected : Bool;
+    outcome : CallAudioOutcome__412792305;
+    recordedAt : Int;
+    terminationReason : Text;
+    transportStatus : Text;
+    version : Nat
+  };
 type CallId__642369320 = Nat;
 type CallRecord__52248411 =
   {
@@ -360,6 +383,8 @@ actor {
       pendingJobIds : Map__254296833<Text, Bool>;
       userBatches : Map__254296833<Principal, List__341252331<Text>>
     };
+  stable callDiagnosticsState :
+    {entries : Map__254296833<Nat, CallDiagnostics__895525370>};
   stable callEndState :
     {pendingEnds : Map__254296833<Text, PendingCallEnd__893732215>};
   stable callPresetVoiceIds :

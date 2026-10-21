@@ -8,6 +8,19 @@ const StripeMode = IDL.Variant({
   live: IDL.Null,
 });
 
+const CallDiagnosticsInput = IDL.Record({
+  version: IDL.Nat,
+  bridgeVersion: IDL.Text,
+  transportStatus: IDL.Text,
+  terminationReason: IDL.Text,
+  connected: IDL.Bool,
+  callerAudioBytes: IDL.Nat,
+  assistantAudioBytes: IDL.Nat,
+  assistantSuppressedBytes: IDL.Nat,
+  assistantConfirmedTurns: IDL.Nat,
+  assistantUnconfirmedTurns: IDL.Nat,
+});
+
 const PurchaseIntentStatus = IDL.Variant({
   pending: IDL.Null,
   paid: IDL.Null,
@@ -281,6 +294,11 @@ const idlFactory = ({ IDL }) =>
     ),
     finishCallAndDebit: IDL.Func(
       [IDL.Text, IDL.Nat, IDL.Opt(IDL.Text), IDL.Opt(IDL.Text)],
+      [BillingMutationResult],
+      [],
+    ),
+    finishCallAndDebitWithDiagnosticsForServer: IDL.Func(
+      [IDL.Text, IDL.Nat, IDL.Opt(IDL.Text), IDL.Opt(IDL.Text), CallDiagnosticsInput],
       [BillingMutationResult],
       [],
     ),

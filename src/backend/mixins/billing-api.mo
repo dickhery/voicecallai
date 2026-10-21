@@ -8,6 +8,7 @@ import Nat8 "mo:core/Nat8";
 import AccessControl "mo:caffeineai-authorization/access-control";
 import BillingLib "../lib/billing";
 import CallsLib "../lib/calls";
+import DiagnosticsLib "../lib/call-diagnostics";
 import ConfigLib "../lib/config";
 import EmergencyLib "../lib/emergency";
 import AgentLib "../lib/agent";
@@ -26,6 +27,7 @@ mixin (
   answeringPresetVoiceIds : ConfigLib.VoiceIdState,
   termsState : AgentLib.TermsState,
   colonyDelegationState : AgentLib.ColonyDelegationState,
+  callDiagnosticsState : DiagnosticsLib.State,
 ) {
   let ANSWERING_PRESET_ID_OFFSET : Nat = 1_000_000_000;
 
@@ -257,22 +259,36 @@ mixin (
     switch (ConfigLib.getAnsweringPresetForIncoming(answeringState, answeringPresetVoiceIds, webhookSecret, twilioToNumber)) {
       case (#err(message)) { return #err(message) };
       case (#ok(preset)) {
-        let available = BillingLib.getAvailableSeconds(billingState, preset.ownerId);
+        let available = BillingLib.getAvailableSeconds(billingState, billingAccountOf(preset.ownerId));
         if (available == 0) {
           return #err("No prepaid phone time is available for this answering preset.");
         };
 
         let callToken = await randomCallToken();
-        let callPresetId = preset.id + ANSWERING_PRESET_ID_OFFSET;
+        // Entropy yields to other updates: the preset may have been disabled,
+        // removed, rerouted or its creator linked to a different paid account.
+        // Resolve and validate again before creating either durable record.
+        let currentPreset = switch (ConfigLib.getAnsweringPresetForIncoming(answeringState, answeringPresetVoiceIds, webhookSecret, twilioToNumber)) {
+          case (#err(message)) { return #err(message) };
+          case (#ok(value)) { value };
+        };
+        if (currentPreset.id != preset.id or currentPreset.ownerId != preset.ownerId) {
+          return #err("Answering preset changed while accepting the call. Please retry.");
+        };
+        let account = billingAccountOf(currentPreset.ownerId);
+        if (BillingLib.getAvailableSeconds(billingState, account) == 0) {
+          return #err("No prepaid phone time is available for this answering preset.");
+        };
+        let callPresetId = currentPreset.id + ANSWERING_PRESET_ID_OFFSET;
         let callRecord = CallsLib.createCallRecord(
           callsState,
-          preset.ownerId,
+          account,
           callerPhone,
           callPresetId,
         );
         let reservation = BillingLib.createReservation(
           billingState,
-          preset.ownerId,
+          account,
           callerPhone,
           callPresetId,
           callRecord.id,
@@ -290,7 +306,7 @@ mixin (
                   null,
                   null,
                 );
-                ConfigLib.markAnsweringPresetIncoming(answeringState, preset.id);
+                ConfigLib.markAnsweringPresetIncoming(answeringState, currentPreset.id);
                 CallsLib.addSystemLog(
                   callsState,
                   #info,
@@ -509,6 +525,34 @@ mixin (
     if (not AccessControl.isAdmin(accessControlState, caller)) {
       Runtime.trap("Unauthorized: server admin only");
     };
+    finalizeReservation(reservationId, usedSeconds, callSid, transcript, null);
+  };
+
+  /// The new bridge includes compact delivery evidence in the same paid-call
+  /// finalization. Older bridges keep the original API; no extra update is polled.
+  public shared ({ caller }) func finishCallAndDebitWithDiagnosticsForServer(
+    reservationId : Text,
+    usedSeconds : Nat,
+    callSid : ?Text,
+    transcript : ?Text,
+    diagnostics : CallTypes.CallDiagnosticsInput,
+  ) : async BillingTypes.BillingMutationResult {
+    if (not AccessControl.isAdmin(accessControlState, caller)) {
+      Runtime.trap("Unauthorized: server admin only");
+    };
+    if (not DiagnosticsLib.valid(diagnostics)) {
+      return #err("Invalid call diagnostics");
+    };
+    finalizeReservation(reservationId, usedSeconds, callSid, transcript, ?diagnostics);
+  };
+
+  private func finalizeReservation(
+    reservationId : Text,
+    usedSeconds : Nat,
+    callSid : ?Text,
+    transcript : ?Text,
+    diagnostics : ?CallTypes.CallDiagnosticsInput,
+  ) : BillingTypes.BillingMutationResult {
     let result = BillingLib.finishCallAndDebit(
       billingState,
       reservationId,
@@ -530,10 +574,22 @@ mixin (
               case (?text) { ?text };
               case null { reservation.transcript };
             };
+            let effectiveDiagnostics : ?CallTypes.CallDiagnosticsInput = switch (diagnostics) {
+              case (?value) { ?value };
+              case null { DiagnosticsLib.get(callDiagnosticsState, reservation.callId) };
+            };
+            let finalStatus : CallTypes.CallStatus = switch (reservation.status) {
+              case (#canceled) { #failed };
+              case _ { DiagnosticsLib.callStatus(effectiveDiagnostics) };
+            };
+            switch (diagnostics) {
+              case null {};
+              case (?value) { ignore DiagnosticsLib.save(callDiagnosticsState, reservation.callId, value) };
+            };
             ignore CallsLib.updateCallRecord(
               callsState,
               reservation.callId,
-              #completed,
+              finalStatus,
               finalCallSid,
               ?Time.now(),
               finalTranscript,
@@ -588,7 +644,7 @@ mixin (
                 ignore CallsLib.updateCallRecord(
                   callsState,
                   reservation.callId,
-                  #completed,
+                  DiagnosticsLib.callStatus(DiagnosticsLib.get(callDiagnosticsState, reservation.callId)),
                   ?callSid,
                   ?Time.now(),
                   finalTranscript,

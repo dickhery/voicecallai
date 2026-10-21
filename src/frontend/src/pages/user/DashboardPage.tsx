@@ -77,7 +77,7 @@ import {
 } from "@/lib/voice-server";
 import type { CallPreset } from "@/types";
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   AlertTriangle,
   BookOpen,
@@ -145,7 +145,7 @@ const STATUS_LABELS: Record<XaiCallStatus, string> = {
   queued: "Queued",
   connecting: "Connecting...",
   in_call: "Live",
-  completed: "Completed",
+  completed: "Call ended",
   error: "Error",
 };
 const MAX_AI_INSTRUCTIONS_CHARS = 8000;
@@ -221,6 +221,9 @@ function ActiveCallPanel({
     liveAudioAvailable,
     isListeningLive,
     liveAudioError,
+    liveAudioState,
+    callId,
+    mediaDiagnostics,
     isSendingSteeringPrompt,
     steeringError,
     liveTranscript,
@@ -365,7 +368,7 @@ function ActiveCallPanel({
                 variant="outline"
                 className="text-xs border-primary/40 text-primary"
               >
-                Twilio Media Stream
+                Phone connected
               </Badge>
             )}
             {isListeningLive && (
@@ -373,7 +376,9 @@ function ActiveCallPanel({
                 variant="outline"
                 className="text-xs border-green-500/40 text-green-400"
               >
-                Live Audio
+                {liveAudioState === "receiving"
+                  ? "Receiving live audio"
+                  : "Listener waiting for audio"}
               </Badge>
             )}
 
@@ -408,11 +413,22 @@ function ActiveCallPanel({
                   Dismiss
                 </Button>
               )}
+              {(status === "completed" || status === "error") && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs"
+                  asChild
+                >
+                  <Link to="/user/history">View history</Link>
+                </Button>
+              )}
               {isActive && liveAudioAvailable && (
                 <Button
                   variant={isListeningLive ? "secondary" : "outline"}
                   size="sm"
                   onClick={() => void toggleLiveAudio()}
+                  disabled={liveAudioState === "connecting"}
                   data-ocid="dashboard.active_call.listen_button"
                   className="gap-1.5 h-8 text-xs"
                 >
@@ -421,7 +437,11 @@ function ActiveCallPanel({
                   ) : (
                     <Volume2 className="w-3.5 h-3.5" />
                   )}
-                  {isListeningLive ? "Stop Audio" : "Listen Live"}
+                  {liveAudioState === "connecting"
+                    ? "Connecting audio…"
+                    : isListeningLive
+                      ? "Stop Audio"
+                      : "Listen Live"}
                 </Button>
               )}
               {isActive && (
@@ -439,14 +459,59 @@ function ActiveCallPanel({
             </div>
           </div>
 
-          {status === "in_call" && liveTranscript.length > 0 && (
+          {callId && (
+            <p className="mt-3 text-xs text-muted-foreground">Call #{callId}</p>
+          )}
+          {(status === "completed" || status === "error") && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              {status === "completed"
+                ? "The phone session has ended. Check the recording and conversation in Call History to confirm the result; an ended call does not confirm the task was completed."
+                : "Check Call History for any saved result and recording before retrying."}
+            </p>
+          )}
+          {isActive && liveAudioAvailable && !isListeningLive && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Click Listen Live to enable your browser audio. Listening is
+              optional and does not control the phone conversation.
+            </p>
+          )}
+          {mediaDiagnostics && (
+            <div
+              className="mt-3 rounded-lg border border-border bg-muted/20 p-3 text-xs text-muted-foreground space-y-1"
+              data-ocid="dashboard.active_call.audio_diagnostics"
+            >
+              <p>
+                Phone audio received:{" "}
+                {mediaDiagnostics.callerAudioBytes > 0 ? "Yes" : "Not yet"}.
+                Agent audio sent:{" "}
+                {mediaDiagnostics.assistantAudioBytes > 0 ? "Yes" : "Not yet"}.
+                Playback acknowledged:{" "}
+                {mediaDiagnostics.assistantConfirmedTurns} turn(s).
+              </p>
+              {mediaDiagnostics.assistantUnconfirmedTurns > 0 && (
+                <p>
+                  Some generated speech has no confirmed playback. Review the
+                  recording before assuming it was heard.
+                </p>
+              )}
+              <p>
+                A phone service playback acknowledgement does not confirm that
+                the recipient understood the message.
+              </p>
+            </div>
+          )}
+          {liveTranscript.length > 0 && (
             <div
               className="mt-4 border-t border-border pt-4"
               data-ocid="dashboard.active_call.transcript"
             >
               <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
                 <FileText className="w-3.5 h-3.5 text-primary" />
-                Live transcript
+                {isActive ? "Live transcript" : "Session transcript"}
+              </p>
+              <p className="text-xs text-muted-foreground mb-2">
+                Transcript text alone does not confirm audible delivery. Review
+                audio and playback diagnostics for the result.
               </p>
               <div className="max-h-40 overflow-y-auto rounded-lg bg-muted/30 border border-border p-3 space-y-2 font-mono text-xs">
                 {liveTranscript.map((line, idx) => (

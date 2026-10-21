@@ -4,7 +4,7 @@ param(
   [string]$NssmPath = "C:\Tools\nssm\nssm.exe",
   [string]$Remote = "origin",
   [string]$Branch = "main",
-  [string]$ExpectedVersion = "2026-10-20-bulk-fair-queue"
+  [string]$ExpectedVersion = "2026-10-21-call-audio-reliability"
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,6 +51,9 @@ function Assert-BridgeHealth {
   }
   if (-not $health.callQueue.lazyBulkDispatch -or -not $health.destinationPricing.enabled) {
     throw "Bridge is missing bulk dispatch or carrier-price protection. Verify the deployed checkout."
+  }
+  if (-not $health.callDelivery.playbackConfirmedTranscripts -or $health.callLifecycle.version -lt 3) {
+    throw "Bridge is missing the call-audio reliability fixes. Verify the deployed checkout."
   }
 }
 

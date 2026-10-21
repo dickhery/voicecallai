@@ -50,6 +50,22 @@
   "capture_authorization": "consentConfirmed is a legacy customer-authorization field, not evidence of another participant's consent. Authenticated capture selections are normalized by the backend.",
   "calling_policy": "Ordinary lawful calls have no blanket prior recipient-consent gate. Harmless comedy and consensual adult roleplay are supported. Required notices/permissions, anti-harassment safeguards and assistant/provider policies still apply.",
   "preview_method": "agentPreviewCall",
+  "call_results": {
+    "diagnostics_query": "getCallDiagnostics",
+    "diagnostics_in_artifacts": true,
+    "diagnostics_retained_call_ids": 2000,
+    "completed_means": "The phone transport ended; goal completion must be supported by actual conversation content.",
+    "diagnostic_outcomes": {
+      "noAssistantAudio": "No assistant speech forwarded.",
+      "playbackUnconfirmed": "No complete assistant turn acknowledged by Twilio.",
+      "audioExchanged": "Both audio directions and a full playback acknowledgement; not proof of comprehension or goal success.",
+      "notConnected": "No media connection recorded.",
+      "unknown": "Insufficient evidence; do not infer success."
+    },
+    "transcript_semantics": "New assistant turns require full playback acknowledgement; interrupted/unconfirmed turns may be omitted. Legacy text can include generated but unheard speech.",
+    "live_listening": "A browser link requiring the user's Start listening gesture. An open page or socket does not prove audible playback. No rewind; expires at call end.",
+    "own_answering_test": "At most one signed same-owner incoming companion; both call legs billed separately."
+  },
   "bulk_workflow": {
     "preview_method": "agentPreviewCallBatch",
     "queue_method": "agentQueueCallBatch",
@@ -106,6 +122,7 @@
     "agentEndCall",
     "agentGetLiveCallLink",
     "agentGetCallArtifacts",
+    "getCallDiagnostics",
     "listMyAnsweringPresets",
     "createAnsweringPreset",
     "setAnsweringPresetEnabled",

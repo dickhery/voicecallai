@@ -8,6 +8,8 @@ to update the separate voice service and Genesis worker after an IC deployment.
 See [bulk calling](docs/BULK-CALLS.md) for number uploads and connector batches,
 and [call economics](docs/CALL-ECONOMICS.md) for current cost assumptions and the
 carrier-price ceiling.
+See [call audio reliability](docs/CALL-RELIABILITY.md) for answering-service tests,
+live listening, playback-confirmed transcripts and call-result diagnostics.
 
 The Twilio error happened because the old code generated this webhook URL:
 
