@@ -437,6 +437,8 @@ type Backend =
    createAccountLinkOffer: () -> (CreateLinkOfferResult);
    createAnsweringPreset: (input: AnsweringPresetInput) ->
     (AnsweringPresetMutationResult);
+   createAnsweringPresetSimple: (input: AnsweringPresetSimpleInput) ->
+    (AnsweringPresetMutationResult);
    createPreset: (input: CallPresetInput) -> (CallPreset);
    createPurchaseIntent: (packageId: text) -> (CreatePurchaseIntentResult);
    creditPaidSeconds: (stripeSessionId: text, purchaseIntentId: text, user:
@@ -469,6 +471,8 @@ type Backend =
    getAnsweringPreset: (id: PresetId) -> (opt AnsweringPreset) query;
    getAnsweringPresetForServer: (webhookSecret: text, phoneNumber: text) ->
     (opt AnsweringPreset) query;
+   getAnsweringSetupStatus: (id: PresetId) ->
+    (opt AnsweringSetupStatus) query;
    getApiDoc: () -> (text) query;
    getBillingPackages: () -> (vec BillingPackage) query;
    getCallDiagnostics: (id: CallId) -> (opt CallDiagnostics) query;
@@ -537,10 +541,33 @@ type AudioFormat =
    pcma;
    pcmu;
  };
+type AnsweringSetupStatus =
+ record {
+   availablePhoneSeconds: nat;
+   enabled: bool;
+   nextSteps: vec text;
+   note: text;
+   phoneNumber: text;
+   presetId: nat;
+   readyForCalls: bool;
+   termsCurrent: bool;
+   verificationStatus: AnsweringPresetStatus;
+   webhookMethod: text;
+   webhookUrl: text;
+ };
 type AnsweringPresetStatus = 
  variant {
    pendingVerification;
    verified;
+ };
+type AnsweringPresetSimpleInput =
+ record {
+   captureOptions: AnsweringCaptureOptions;
+   name: text;
+   phoneNumber: text;
+   systemPrompt: text;
+   voice: opt Voice;
+   webhookSecret: text;
  };
 type AnsweringPresetMutationResult = 
  variant {

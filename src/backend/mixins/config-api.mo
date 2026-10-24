@@ -3,6 +3,7 @@ import Principal "mo:core/Principal";
 import AccessControl "mo:caffeineai-authorization/access-control";
 import ConfigLib "../lib/config";
 import AgentLib "../lib/agent";
+import BillingLib "../lib/billing";
 import IdentityLib "../lib/identity";
 import ConfigTypes "../types/config";
 import Common "../types/common";
@@ -16,6 +17,7 @@ mixin (
   answeringState : ConfigLib.AnsweringState,
   answeringPresetVoiceIds : ConfigLib.VoiceIdState,
   termsState : AgentLib.TermsState,
+  billingState : BillingLib.State,
 ) {
   private func configAccountOf(caller : Principal) : Principal {
     IdentityLib.resolve(identityState, caller);
@@ -226,27 +228,77 @@ mixin (
     };
   };
 
-  public shared ({ caller }) func createAnsweringPreset(
+  private func createAnsweringForCaller(
+    caller : Principal,
     input : ConfigTypes.AnsweringPresetInput,
-  ) : async ConfigTypes.AnsweringPresetMutationResult {
-    if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
+  ) : ConfigTypes.AnsweringPresetMutationResult {
+    if (caller.isAnonymous() or not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
     };
     if (not AgentLib.termsCurrent(termsState, configAccountOf(caller))) {
       return #err("Accept the current VoiceCall AI terms before creating an answering preset.");
     };
+    // Existing presets keep their original owner after account linking. Apply
+    // setup limits to the whole linked account, not just its new canonical ID.
+    let presets = ConfigLib.listAnsweringPresetsForUsers(
+      answeringState,
+      answeringPresetVoiceIds,
+      IdentityLib.accountGroup(identityState, caller),
+    );
+    if (presets.size() >= 10) {
+      return #err("A maximum of 10 answering presets can be stored per account.");
+    };
+    for (preset in presets.values()) {
+      if (preset.verificationStatus == #pendingVerification) {
+        return #err("Finish verifying your pending Twilio number before creating another answering preset.");
+      };
+    };
     ConfigLib.createAnsweringPreset(answeringState, answeringPresetVoiceIds, configAccountOf(caller), input);
+  };
+
+  public shared ({ caller }) func createAnsweringPreset(
+    input : ConfigTypes.AnsweringPresetInput,
+  ) : async ConfigTypes.AnsweringPresetMutationResult {
+    createAnsweringForCaller(caller, input);
+  };
+
+  public shared ({ caller }) func createAnsweringPresetSimple(
+    input : ConfigTypes.AnsweringPresetSimpleInput,
+  ) : async ConfigTypes.AnsweringPresetMutationResult {
+    createAnsweringForCaller(caller, ConfigLib.simpleAnsweringInput(input));
   };
 
   public query ({ caller }) func listMyAnsweringPresets() : async [ConfigTypes.AnsweringPreset] {
     if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
       Runtime.trap("Unauthorized: must be logged in");
     };
-    ConfigLib.listAnsweringPresetsForUser(
+    ConfigLib.listAnsweringPresetsForUsers(
       answeringState,
       answeringPresetVoiceIds,
-      configAccountOf(caller),
+      IdentityLib.accountGroup(identityState, caller),
     );
+  };
+
+  public query ({ caller }) func getAnsweringSetupStatus(
+    id : Common.PresetId,
+  ) : async ?ConfigTypes.AnsweringSetupStatus {
+    if (caller.isAnonymous() or not AccessControl.hasPermission(accessControlState, caller, #user)) {
+      Runtime.trap("Unauthorized: must be logged in");
+    };
+    switch (ConfigLib.getAnsweringPreset(answeringState, answeringPresetVoiceIds, id)) {
+      case null { null };
+      case (?preset) {
+        if (not IdentityLib.sameAccount(identityState, caller, preset.ownerId)) {
+          return null;
+        };
+        let account = configAccountOf(preset.ownerId);
+        ?ConfigLib.answeringSetupStatus(
+          preset,
+          BillingLib.getAvailableSeconds(billingState, account),
+          AgentLib.termsCurrent(termsState, account),
+        );
+      };
+    };
   };
 
   public query ({ caller }) func getAnsweringPreset(
@@ -284,6 +336,13 @@ mixin (
           not AccessControl.isAdmin(accessControlState, caller)
         ) {
           Runtime.trap("Unauthorized: not the owner");
+        };
+        if (
+          input.enabled and not preset.enabled and
+          input.phoneNumber == preset.phoneNumber and
+          not AgentLib.termsCurrent(termsState, configAccountOf(caller))
+        ) {
+          return #err("Accept the current VoiceCall AI terms before enabling an answering line.");
         };
         ConfigLib.updateAnsweringPreset(
           answeringState,

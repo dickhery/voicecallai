@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.2",
+  "schema_version": "1.3",
   "name": "VoiceCall AI",
   "canonical_origin": "https://voicecallai.online",
-  "summary": "Place and manage real AI phone calls, fund prepaid phone time with ICP, and set up inbound AI answering on a user-owned Twilio number through the VoiceCall AI backend canister and off-chain xAI Voice/Twilio bridge.",
+  "summary": "Place real AI calls and configure inbound answering in the app or through the Internet Computer Protocol plugin / ICP MCP. Incoming lines must be supported by the operator's configured Twilio bridge account.",
   "discovery_warning": "The frontend canister is an asset canister. If it is the only canister initially discovered, continue with the declared backend canister before deciding telephony is unavailable.",
   "mcp": {
     "name": "Official Internet Computer MCP / Agent Identity",
@@ -10,6 +10,22 @@
     "authentication": "Internet Identity",
     "required_permission": "Actions and questions"
   },
+  "setup_options": {
+    "web": "https://voicecallai.online/user/answering",
+    "assistant": "Use the Internet Computer Protocol plugin in ChatGPT if available, or add the official ICP MCP connector in an MCP client. Internet Identity authorizes app-specific actions.",
+    "example_request": "Help me set up an after-hours receptionist for my business. Gather my number, greeting, business facts and message-taking preferences, show me the setup, then help me connect and test it.",
+    "human_guide": "https://voicecallai.online/guide.html#answering",
+    "external_steps": "ICP MCP changes app configuration only. Twilio webhook configuration and optional carrier forwarding require the user or a separately authorized tool.",
+    "number_requirement": "Number provisioned in the operator bridge's configured Twilio account. A separate customer Twilio account is not supported by webhook URL alone; contact the operator for onboarding."
+  },
+  "answering_use_cases": [
+    "Business front desk",
+    "After-hours messages",
+    "Business FAQs",
+    "Appointment request intake",
+    "Personal call screening"
+  ],
+  "answering_limitations": "No built-in calendar booking, live transfer, SMS/email notifications or automatic follow-up. Messages remain in History only with selected saved capture; realtime audio still passes through Twilio/xAI. Bridge capacity and provider availability apply.",
   "canisters": {
     "frontend": {
       "canister_id": "2nukr-cyaaa-aaaak-qy2ja-cai",
@@ -35,11 +51,13 @@
     "Retrieve artifacts after completion when the user asked for a transcript or recording."
   ],
   "answering_workflow": [
-    "Collect the user's Twilio E.164 number, AI instructions, and whether to save a transcript or recording.",
-    "Confirm shared prepaid phone time exists (ICP or Stripe).",
-    "listMyAnsweringPresets then createAnsweringPreset with a random webhookSecret.",
-    "Give the user https://voicecall.richardhery.com/answering/incoming/{webhookSecret} for Twilio Voice POST.",
-    "User verifies by calling the number once; then setAnsweringPresetEnabled when verified."
+    "Confirm a supported Twilio number in the bridge's configured account, service name, business facts/greeting, instructions and saved capture choices. Defaults keep capture off.",
+    "Read current terms for user agreement and check shared prepaid phone time (ICP or Stripe); purchases require authorization.",
+    "listMyAnsweringPresets then createAnsweringPresetSimple with name, phoneNumber, systemPrompt, optional voice, captureOptions and a cryptographically random webhookSecret. Defaults create disabled; advanced createAnsweringPreset is still supported. Resolve pending setup before another create.",
+    "getAnsweringSetupStatus(id) returns the exact private webhookUrl and HTTP POST. User or a separately authorized Twilio tool configures and saves it in Twilio Voice settings.",
+    "User calls the number to verify. Disabled verification may play unavailable. Recheck on demand; when verified, enable with user authorization, then make a second test call to hear the AI and inspect selected capture in History.",
+    "readyForCalls reports app prerequisites only, not Twilio configuration/provider health or available bridge capacity. Do not equate it to successful end-to-end testing.",
+    "Disabling stops new AI answering, not an ongoing call or carrier forwarding. Arrange fallback in the carrier/Twilio configuration."
   ],
   "human_guide": "https://voicecallai.online/guide.html",
   "stripe_workflow": [
@@ -95,7 +113,7 @@
     "Shared phone-time balance funds outbound calls and inbound answering."
   ],
   "required_answering_information": [
-    "User-owned Twilio number in E.164",
+    "Twilio number in E.164 provisioned in the operator bridge's configured account; contact operator for a supported number",
     "Ability to set Twilio Voice webhook",
     "Answering AI instructions and name",
     "Customer-selected transcript/recording flags; applicable notice and participant permissions remain required",
@@ -124,6 +142,8 @@
     "agentGetCallArtifacts",
     "getCallDiagnostics",
     "listMyAnsweringPresets",
+    "createAnsweringPresetSimple",
+    "getAnsweringSetupStatus",
     "createAnsweringPreset",
     "setAnsweringPresetEnabled",
     "updateAnsweringPreset",
@@ -134,7 +154,8 @@
     "Do not repeatedly call live balance queries.",
     "Poll job state at 10 seconds, then back off to 20 and 30 seconds.",
     "Read the transient live call link at most once per dispatched call.",
-    "Refresh ICP pricing only when the cached quote is stale."
+    "Refresh ICP pricing only when the cached quote is stale.",
+    "Answering readiness is query-only; read after a setup change or user test, without background polling."
   ],
   "instructions": {
     "concise": "https://voicecallai.online/llms.txt",

@@ -65,7 +65,7 @@ shared ({ caller = installer }) persistent actor class Backend() = this {
 
   // Domain mixins
   include IdentityApi(accessControlState, identityState, billingState, bulkCallState);
-  include ConfigApi(accessControlState, identityState, configState, callPresetVoiceIds, twilioLineState, answeringState, answeringPresetVoiceIds, termsState);
+  include ConfigApi(accessControlState, identityState, configState, callPresetVoiceIds, twilioLineState, answeringState, answeringPresetVoiceIds, termsState, billingState);
   include CallsApi(accessControlState, identityState, callsState, answeringLiveState, callEndState, configState, callPresetVoiceIds, billingState, callDiagnosticsState);
   include BillingApi(accessControlState, identityState, billingState, callsState, configState, callPresetVoiceIds, answeringState, answeringPresetVoiceIds, termsState, colonyDelegationState, callDiagnosticsState);
   include AgentApi(

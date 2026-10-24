@@ -47,6 +47,16 @@ function assertValid(relativePath, body, contentType = "") {
   if (relativePath === "guide.html" && (!body.includes("Stripe") || !body.includes("mcp.internetcomputer.org/mcp"))) {
     throw new Error("Public guide is missing payment or connector setup.");
   }
+  if (relativePath === "agent-guide.json") {
+    const guide = JSON.parse(body);
+    if (!guide.setup_options?.external_steps ||
+        !guide.setup_options?.number_requirement ||
+        !guide.answering_use_cases?.length ||
+        !guide.primary_methods?.includes("createAnsweringPresetSimple") ||
+        !guide.primary_methods?.includes("getAnsweringSetupStatus")) {
+      throw new Error("Agent guide is missing assisted answering setup, number requirements or readiness methods.");
+    }
+  }
   if (relativePath === ".well-known/ii-derivation-origin" && body.trim() !== "https://voicecallai.online") {
     throw new Error("Unexpected production derivation origin.");
   }
@@ -59,6 +69,9 @@ function assertValid(relativePath, body, contentType = "") {
       !body.includes("agentPreviewCallBatch") ||
       !body.includes("getCallDiagnostics") ||
       !body.includes("agentGetLiveCallLink") ||
+      !body.includes("Internet Computer Protocol plugin") ||
+      !body.includes("createAnsweringPresetSimple") ||
+      !body.includes("getAnsweringSetupStatus") ||
       !body.includes("Backend agent API canister"))
   ) {
     throw new Error("llms.txt is missing required discovery instructions.");
@@ -78,6 +91,8 @@ function assertValid(relativePath, body, contentType = "") {
       !body.includes("agentCancelCallBatch") ||
       !body.includes("getCallDiagnostics") ||
       !body.includes("agentPreviewCall") ||
+      !body.includes("createAnsweringPresetSimple") ||
+      !body.includes("getAnsweringSetupStatus") ||
       !body.includes("agentGetLiveCallLink"))
   ) {
     throw new Error(

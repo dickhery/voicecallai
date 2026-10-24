@@ -162,7 +162,26 @@ export function useListMyAnsweringPresets() {
       return actor.listMyAnsweringPresets();
     },
     enabled: !!actor && !isFetching,
-    refetchInterval: 5000,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** Stored readiness only; checking it never calls Twilio or buys phone time. */
+export function useGetAnsweringSetupStatus(id: PresetId) {
+  const { actor, isFetching } = useBackendActor();
+  const { identity } = useInternetIdentity();
+  return useQuery({
+    queryKey: [
+      "answeringSetupStatus",
+      identity?.getPrincipal().toText(),
+      id.toString(),
+    ],
+    queryFn: async () => (actor ? actor.getAnsweringSetupStatus(id) : null),
+    enabled: !!actor && !isFetching,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
   });
 }
 
@@ -178,7 +197,10 @@ export function useCreateAnsweringPreset() {
       if (!actor) throw new Error("Actor not available");
       return actor.createAnsweringPreset(input);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["myAnsweringPresets"] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["myAnsweringPresets"] });
+      void qc.invalidateQueries({ queryKey: ["answeringSetupStatus"] });
+    },
   });
 }
 
@@ -194,7 +216,10 @@ export function useUpdateAnsweringPreset() {
       if (!actor) throw new Error("Actor not available");
       return actor.updateAnsweringPreset(id, input);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["myAnsweringPresets"] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["myAnsweringPresets"] });
+      void qc.invalidateQueries({ queryKey: ["answeringSetupStatus"] });
+    },
   });
 }
 
@@ -210,7 +235,10 @@ export function useUpdateAnsweringPresetInstructions() {
       if (!actor) throw new Error("Actor not available");
       return actor.updateAnsweringPresetInstructions(id, systemPrompt);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["myAnsweringPresets"] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["myAnsweringPresets"] });
+      void qc.invalidateQueries({ queryKey: ["answeringSetupStatus"] });
+    },
   });
 }
 
@@ -222,7 +250,10 @@ export function useDeleteAnsweringPreset() {
       if (!actor) throw new Error("Actor not available");
       return actor.deleteAnsweringPreset(id);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["myAnsweringPresets"] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["myAnsweringPresets"] });
+      void qc.invalidateQueries({ queryKey: ["answeringSetupStatus"] });
+    },
   });
 }
 
@@ -238,11 +269,14 @@ export function useSetAnsweringPresetEnabled() {
       if (!actor) throw new Error("Actor not available");
       return actor.setAnsweringPresetEnabled(id, enabled);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["myAnsweringPresets"] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["myAnsweringPresets"] });
+      void qc.invalidateQueries({ queryKey: ["answeringSetupStatus"] });
+    },
   });
 }
 
-export function useListMyAnsweringLiveSessions() {
+export function useListMyAnsweringLiveSessions(enabled = true) {
   const { actor, isFetching } = useBackendActor();
   return useQuery<AnsweringLiveSession[]>({
     queryKey: ["myAnsweringLiveSessions"],
@@ -250,7 +284,7 @@ export function useListMyAnsweringLiveSessions() {
       if (!actor) return [];
       return actor.listMyAnsweringLiveSessions();
     },
-    enabled: !!actor && !isFetching,
+    enabled: enabled && !!actor && !isFetching,
     refetchInterval: 3000,
   });
 }

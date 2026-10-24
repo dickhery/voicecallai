@@ -826,6 +826,68 @@ module {
     };
   };
 
+  public func simpleAnsweringInput(input : Types.AnsweringPresetSimpleInput) : Types.AnsweringPresetInput {
+    {
+      name = input.name;
+      phoneNumber = input.phoneNumber;
+      systemPrompt = input.systemPrompt;
+      voice = input.voice ?? #eve;
+      voiceId = null;
+      turnDetection = {
+        serverVad = true;
+        threshold = 0.5;
+        silenceDurationMs = 500;
+        prefixPaddingMs = 200;
+      };
+      audioFormat = #pcmu;
+      sampleRate = #hz8000;
+      toolsEnabled = { webSearch = false; xSearch = false; functionCalling = false };
+      captureOptions = input.captureOptions;
+      // A verification call must never silently activate paid answering.
+      enabled = false;
+      webhookSecret = input.webhookSecret;
+    };
+  };
+
+  /// Local state only: no ledger calls, timers, randomness, or bridge requests.
+  public func answeringSetupStatus(
+    preset : Types.AnsweringPreset,
+    availablePhoneSeconds : Nat,
+    termsCurrent : Bool,
+  ) : Types.AnsweringSetupStatus {
+    let nextSteps = List.empty<Text>();
+    if (not termsCurrent) {
+      nextSteps.add("Review the current VoiceCall AI terms and accept them before enabling this line.");
+    };
+    if (preset.verificationStatus != #verified) {
+      nextSteps.add("Confirm this number belongs to the Twilio account configured by the VoiceCall AI service operator, or ask the operator to confirm support. A number in an unrelated Twilio account cannot be connected just by pasting this webhook.");
+      nextSteps.add("In Twilio Console, open this phone number's Voice configuration, paste webhookUrl as the incoming-call webhook, choose HTTP POST, and save.");
+      nextSteps.add("Call the number from another phone, then refresh this status. This verifies the route even while answering is off; the first call may hear an unavailable message and does not start paid AI answering.");
+    };
+    if (availablePhoneSeconds == 0) {
+      nextSteps.add("Add prepaid phone time in the app or authorize an ICP purchase through your agent. Inbound and outbound calls share the same available balance.");
+    };
+    if (not preset.enabled) {
+      nextSteps.add("After verification, turn on this line with setAnsweringPresetEnabled(id, true) when you are ready to use prepaid phone time.");
+    };
+    if (preset.verificationStatus == #verified and preset.enabled and availablePhoneSeconds > 0 and termsCurrent) {
+      nextSteps.add("Make a short test call from another phone to confirm the greeting and instructions. Review its result in Call History when capture was enabled.");
+    };
+    {
+      presetId = preset.id;
+      phoneNumber = preset.phoneNumber;
+      webhookUrl = "https://voicecall.richardhery.com/answering/incoming/" # preset.webhookSecret;
+      webhookMethod = "POST";
+      verificationStatus = preset.verificationStatus;
+      enabled = preset.enabled;
+      availablePhoneSeconds;
+      termsCurrent;
+      readyForCalls = preset.verificationStatus == #verified and preset.enabled and availablePhoneSeconds > 0 and termsCurrent;
+      nextSteps = nextSteps.toArray();
+      note = "Readiness describes stored app prerequisites, not a live check of Twilio or the voice bridge. The bridge uses the service operator's configured Twilio account; an unrelated customer Twilio account is not supported just by pasting a webhook. Confirm number support with the operator. Verification records a past signed Twilio callback; it does not prove the current webhook, provider credentials, capacity, or phone connection still work. Test the number after enabling it. Each answered call uses prepaid phone time, billed in whole minutes. Webhook URLs are private routing information; share them only with the account owner and their authorized agent.";
+    };
+  };
+
   public func listAnsweringPresetsForUser(
     state : AnsweringState,
     voiceIds : VoiceIdState,
@@ -841,6 +903,20 @@ module {
             case (?preset) { presets.add(toPublicAnsweringPreset(voiceIds, preset)) };
           };
         });
+      };
+    };
+    presets.toArray().sort(compareAnsweringNewestFirst);
+  };
+
+  public func listAnsweringPresetsForUsers(
+    state : AnsweringState,
+    voiceIds : VoiceIdState,
+    owners : [Principal],
+  ) : [Types.AnsweringPreset] {
+    let presets = List.empty<Types.AnsweringPreset>();
+    for (owner in owners.values()) {
+      for (preset in listAnsweringPresetsForUser(state, voiceIds, owner).values()) {
+        presets.add(preset);
       };
     };
     presets.toArray().sort(compareAnsweringNewestFirst);
@@ -916,6 +992,13 @@ module {
         switch (sanitizeAnsweringInput(input)) {
           case (#err(message)) { #err(message) };
           case (#ok(cleanInput)) {
+            let phoneChanged = cleanInput.phoneNumber != existing.phoneNumber;
+            // A settings edit must not bypass the dedicated enable endpoint.
+            // Phone changes always turn the line off below; unchanged pending
+            // routes must stay off until verification is complete.
+            if (not phoneChanged and cleanInput.enabled and existing.verificationStatus != #verified) {
+              return #err("Verify this Twilio number before turning on the answering service.");
+            };
             if (cleanInput.phoneNumber != existing.phoneNumber) {
               switch (state.presetIdByPhoneNumber.get(cleanInput.phoneNumber)) {
                 case (?otherId) {
@@ -937,7 +1020,6 @@ module {
               };
             };
 
-            let phoneChanged = cleanInput.phoneNumber != existing.phoneNumber;
             if (phoneChanged) {
               state.presetIdByPhoneNumber.remove(existing.phoneNumber);
               state.presetIdByPhoneNumber.add(cleanInput.phoneNumber, id);

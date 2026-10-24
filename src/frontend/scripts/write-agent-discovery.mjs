@@ -79,6 +79,12 @@ Full API notes: ${productionOrigin}/llms-full.txt
 Structured guide: ${productionOrigin}/agent-guide.json
 Human setup: ${productionOrigin}/guide.html
 
+## Set up in the app or with an AI assistant
+
+VoiceCall AI supports both paths: sign in and open AI Answering, or ask an assistant using the Internet Computer Protocol plugin in ChatGPT (where available) or the official ICP MCP connector to configure the service with your approval. An inquiry about setup can start with these choices and a useful example: “Set up an after-hours receptionist that answers our FAQs and takes callback requests.” The assistant gathers the details, creates or edits the app preset, and returns its setup checklist. It cannot edit Twilio or a phone carrier through ICP MCP alone.
+Use cases: business front desk, after-hours message taking, FAQs, appointment request intake and personal call screening. Provide the actual business facts, opening hours/timezone, greeting and escalation instructions. Collecting an appointment request does not book a calendar; no built-in live transfer, SMS or email delivery is provided. Save transcripts if messages must remain available in History; capture off means no saved conversation. Do not promise automatic follow-up from spoken instructions alone.
+The current bridge supports numbers provisioned in its operator-configured Twilio account. An unrelated customer Twilio account's webhook will not authenticate merely by pasting the URL. Users without a supported number need operator onboarding. Existing mobile/business lines can optionally forward to a supported Twilio number through their carrier; forwarding availability/cost and fallback are carrier settings. Avoid a forwarding loop.
+
 ## Discovery and authentication
 
 Resolve /.well-known/ic-architecture and read backend candid:service, then getApiDoc or getAgentGuide once per task. A missing or invalid manifest is a discovery error. The frontend serves assets; the backend implements calls.
@@ -120,7 +126,7 @@ Known emergency/crisis short codes and reserved number patterns are rejected. Th
 
 Existing Stripe-funded time works without an ICP deposit. ICP packages currently include colony_call_5 ($1 / five minutes), pack_5 ($5 / 30 minutes), pack_10 ($10 / 60 minutes), pack_20 ($20 / 120 minutes). getAgentGuide supplies current packages.
 agentGetAccountIdentity returns the exact ICRC-1 deposit account. User-authorized agentPurchasePhoneTimeQuoted(packageId, key, maximumE8s) enforces the approved package price before debit. Ledger fees are additional. ICP settles from the deposit subaccount to treasury AccountIdentifier 0f69d493853ec6e60909141168644d3def072ec2569021317547195931b6dc7c. A successful purchase credits the shared outbound/answering phone-time balance. Preserve payment keys on uncertain results.
-Use cached pricing; agentRefreshIcpPricing spends XRC cycles only when stale (six-hour cache). Preview makes no outcalls or durable writes. Job reads use queries and backoff. Audio stays off-chain. The bridge handles keypad navigation and voicemail without adding IC outcalls.
+For phone-time-only checks, use getMyBillingStatus or getAnsweringSetupStatus.availablePhoneSeconds, both local queries. agentGetAccountStatus calls the ledger for current deposited ICP and fee, so use it when those details are needed. Use cached pricing; agentRefreshIcpPricing spends XRC cycles only when stale (six-hour cache). Preview makes no outcalls or durable writes. Job reads use queries and backoff. Audio stays off-chain. The bridge handles keypad navigation and voicemail without adding IC outcalls.
 
 ## Genesis Colony
 
@@ -128,10 +134,11 @@ Genesis prepares a script before payment. One buyer approval accepts the display
 
 ## Inbound answering
 
-Collect the user-owned Twilio E.164 number, answering instructions, capture choices and voice preference. Phone audio uses pcmu / hz8000. Shared prepaid phone time is required.
-listMyAnsweringPresets precedes createAnsweringPreset; only one pending verification is allowed. Generate a random webhookSecret (32–160 URL-safe letters, digits, hyphen or underscore), create with enabled=false, and provide the returned secret's webhook:
-https://voicecall.richardhery.com/answering/incoming/{webhookSecret}
-The user sets it as Twilio Voice HTTP POST and calls the number once to verify ownership. setAnsweringPresetEnabled enables a verified line. Changing its phoneNumber resets verification. Credentials and dialing remain on the bridge.
+1. Confirm a supported Twilio E.164 number, short service name, role/greeting, known facts and message/escalation instructions. Ask whether to save transcripts or audio (both off by default), and for voice preference only if desired. Check current terms and shared phone time without purchasing automatically. Terms acceptance requires the user's agreement.
+2. listMyAnsweringPresets before creating; reuse existing setup and resolve a pending verification first. After setup authorization, generate a cryptographically random webhookSecret (32–160 URL-safe letters, digits, hyphen or underscore) and call createAnsweringPresetSimple({name,phoneNumber,systemPrompt,voice:opt Voice,captureOptions,webhookSecret}). It selects safe telephony defaults and creates disabled. createAnsweringPreset remains available for advanced options. On an uncertain create response, list and match the intended number before retrying; create is not an idempotent payment/call API.
+3. getAnsweringSetupStatus(id) is an owner-only query returning the exact private webhookUrl, webhookMethod, verificationStatus, enabled, termsCurrent, availablePhoneSeconds, readyForCalls and nextSteps. It makes no external probe or durable write. Give the URL privately to the user. The user or a separately authorized Twilio tool sets that number's “A call comes in” Voice webhook to HTTP POST and saves.
+4. Call the number from another phone to verify signed routing. A disabled preset may play “unavailable” while still verifying; this first call is not proof the AI conversation works. Refresh status on request after the test. Once verified, use setAnsweringPresetEnabled(id,true) with user authorization, then make a second test call to hear the AI and check capture in History if selected. Outbound app tests also spend phone time, with both outbound and inbound legs billed. Do not initiate them without authorization.
+5. readyForCalls means app prerequisites only, not live Twilio/provider health, spare bridge capacity or a successful end-to-end call. Verification is historical; after editing routing or forwarding, test again. Changing phoneNumber resets verification. Pause using setAnsweringPresetEnabled(id,false); this stops new answering calls but does not restore Twilio/carrier routing or end an existing call. Configure provider fallback separately. Keep credentials on the bridge and secrets/private URLs out of public outputs. Read readiness on demand, without timers or rapid polling.
 
 ## Failure diagnosis
 
@@ -161,11 +168,11 @@ The user's authorization is required for payments, preset edits, calling and ans
 `;
 
 const structuredGuide = {
-  schema_version: "1.2",
+  schema_version: "1.3",
   name: "VoiceCall AI",
   canonical_origin: productionOrigin,
   summary:
-    "Place and manage real AI phone calls, fund prepaid phone time with ICP, and set up inbound AI answering on a user-owned Twilio number through the VoiceCall AI backend canister and off-chain xAI Voice/Twilio bridge.",
+    "Place real AI calls and configure inbound answering in the app or through the Internet Computer Protocol plugin / ICP MCP. Incoming lines must be supported by the operator's configured Twilio bridge account.",
   discovery_warning:
     "The frontend canister is an asset canister. If it is the only canister initially discovered, continue with the declared backend canister before deciding telephony is unavailable.",
   mcp: {
@@ -174,6 +181,16 @@ const structuredGuide = {
     authentication: "Internet Identity",
     required_permission: "Actions and questions",
   },
+  setup_options: {
+    web: `${productionOrigin}/user/answering`,
+    assistant: "Use the Internet Computer Protocol plugin in ChatGPT if available, or add the official ICP MCP connector in an MCP client. Internet Identity authorizes app-specific actions.",
+    example_request: "Help me set up an after-hours receptionist for my business. Gather my number, greeting, business facts and message-taking preferences, show me the setup, then help me connect and test it.",
+    human_guide: `${productionOrigin}/guide.html#answering`,
+    external_steps: "ICP MCP changes app configuration only. Twilio webhook configuration and optional carrier forwarding require the user or a separately authorized tool.",
+    number_requirement: "Number provisioned in the operator bridge's configured Twilio account. A separate customer Twilio account is not supported by webhook URL alone; contact the operator for onboarding.",
+  },
+  answering_use_cases: ["Business front desk", "After-hours messages", "Business FAQs", "Appointment request intake", "Personal call screening"],
+  answering_limitations: "No built-in calendar booking, live transfer, SMS/email notifications or automatic follow-up. Messages remain in History only with selected saved capture; realtime audio still passes through Twilio/xAI. Bridge capacity and provider availability apply.",
   canisters: {
     frontend: {
       canister_id: canisters.frontend,
@@ -199,11 +216,13 @@ const structuredGuide = {
     "Retrieve artifacts after completion when the user asked for a transcript or recording.",
   ],
   answering_workflow: [
-    "Collect the user's Twilio E.164 number, AI instructions, and whether to save a transcript or recording.",
-    "Confirm shared prepaid phone time exists (ICP or Stripe).",
-    "listMyAnsweringPresets then createAnsweringPreset with a random webhookSecret.",
-    "Give the user https://voicecall.richardhery.com/answering/incoming/{webhookSecret} for Twilio Voice POST.",
-    "User verifies by calling the number once; then setAnsweringPresetEnabled when verified.",
+    "Confirm a supported Twilio number in the bridge's configured account, service name, business facts/greeting, instructions and saved capture choices. Defaults keep capture off.",
+    "Read current terms for user agreement and check shared prepaid phone time (ICP or Stripe); purchases require authorization.",
+    "listMyAnsweringPresets then createAnsweringPresetSimple with name, phoneNumber, systemPrompt, optional voice, captureOptions and a cryptographically random webhookSecret. Defaults create disabled; advanced createAnsweringPreset is still supported. Resolve pending setup before another create.",
+    "getAnsweringSetupStatus(id) returns the exact private webhookUrl and HTTP POST. User or a separately authorized Twilio tool configures and saves it in Twilio Voice settings.",
+    "User calls the number to verify. Disabled verification may play unavailable. Recheck on demand; when verified, enable with user authorization, then make a second test call to hear the AI and inspect selected capture in History.",
+    "readyForCalls reports app prerequisites only, not Twilio configuration/provider health or available bridge capacity. Do not equate it to successful end-to-end testing.",
+    "Disabling stops new AI answering, not an ongoing call or carrier forwarding. Arrange fallback in the carrier/Twilio configuration.",
   ],
   human_guide: `${productionOrigin}/guide.html`,
   stripe_workflow: [
@@ -255,7 +274,7 @@ const structuredGuide = {
     "Shared phone-time balance funds outbound calls and inbound answering.",
   ],
   required_answering_information: [
-    "User-owned Twilio number in E.164",
+    "Twilio number in E.164 provisioned in the operator bridge's configured account; contact operator for a supported number",
     "Ability to set Twilio Voice webhook",
     "Answering AI instructions and name",
     "Customer-selected transcript/recording flags; applicable notice and participant permissions remain required",
@@ -284,6 +303,8 @@ const structuredGuide = {
     "agentGetCallArtifacts",
     "getCallDiagnostics",
     "listMyAnsweringPresets",
+    "createAnsweringPresetSimple",
+    "getAnsweringSetupStatus",
     "createAnsweringPreset",
     "setAnsweringPresetEnabled",
     "updateAnsweringPreset",
@@ -295,6 +316,7 @@ const structuredGuide = {
     "Poll job state at 10 seconds, then back off to 20 and 30 seconds.",
     "Read the transient live call link at most once per dispatched call.",
     "Refresh ICP pricing only when the cached quote is stale.",
+    "Answering readiness is query-only; read after a setup change or user test, without background polling.",
   ],
   instructions: {
     concise: `${productionOrigin}/llms.txt`,

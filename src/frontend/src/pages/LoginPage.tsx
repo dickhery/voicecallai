@@ -2,6 +2,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
+import { ANSWERING_AGENT_PROMPT, ICP_MCP_URL } from "@/lib/agent-access";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import {
   CheckCircle2,
   Mic,
@@ -12,6 +14,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
+import { toast } from "sonner";
 
 const features = [
   {
@@ -21,8 +24,8 @@ const features = [
   },
   {
     icon: Zap,
-    title: "Real Calls",
-    desc: "Twilio integration for actual outbound phone calls",
+    title: "Calls & Answering",
+    desc: "Make calls or answer your Twilio number with AI",
   },
   {
     icon: Settings2,
@@ -261,12 +264,13 @@ export default function LoginPage({
           aria-labelledby="agent-start"
         >
           <h2 id="agent-start" className="font-display text-lg font-semibold">
-            Your assistant can make the call
+            Set up here or ask your AI assistant
           </h2>
           <p className="text-sm text-muted-foreground">
-            Appointment follow-ups, business inquiries, and AI answering. Start
-            with prepaid time: $5 / 30 minutes, $10 / 60 minutes, or $20 / 120
-            minutes.
+            Create a front desk, after-hours message taker, or appointment
+            request intake on a supported Twilio number. Your assistant can
+            gather your instructions and configure the app for you. Shared
+            prepaid time starts at $5 / 30 minutes.
           </p>
           <ol className="list-decimal pl-5 space-y-3 text-sm text-muted-foreground">
             <li>
@@ -274,19 +278,36 @@ export default function LoginPage({
               purchase through your assistant.
             </li>
             <li>
-              Add the official ICP MCP connector to an MCP-compatible assistant
-              and authorize VoiceCall AI through Internet Identity.
+              Use the Internet Computer Protocol plugin in ChatGPT if available,
+              or add the official ICP MCP connector in your MCP client.
+              Authorize VoiceCall AI through Internet Identity.
             </li>
             <li>
-              Tell your assistant who to call and what to say, including a
-              fictional name. It queues and tracks the call without a separate
-              consent step.
+              Ask for answering setup. Review its instructions, connect the
+              provided webhook in Twilio, verify the number, then enable and
+              test the service. The line must use the operator’s configured
+              Twilio account; contact the operator for a supported number. An
+              existing number can forward to it if your carrier supports it.
             </li>
           </ol>
           <p className="text-xs text-muted-foreground">Connector URL</p>
           <code className="block select-all break-all rounded-lg bg-muted p-3 text-xs">
-            https://mcp.internetcomputer.org/mcp
+            {ICP_MCP_URL}
           </code>
+          <Button
+            variant="outline"
+            onClick={async () => {
+              if (await copyTextToClipboard(ANSWERING_AGENT_PROMPT)) {
+                toast.success("Answering setup request copied");
+              } else {
+                toast.error(
+                  "Unable to copy. Open the setup guide for a sample request.",
+                );
+              }
+            }}
+          >
+            Copy answering setup request
+          </Button>
           <div className="flex flex-wrap gap-4 text-sm text-primary">
             <a className="underline underline-offset-4" href="/guide.html">
               Setup, pricing & FAQ

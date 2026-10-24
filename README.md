@@ -10,6 +10,8 @@ and [call economics](docs/CALL-ECONOMICS.md) for current cost assumptions and th
 carrier-price ceiling.
 See [call audio reliability](docs/CALL-RELIABILITY.md) for answering-service tests,
 live listening, playback-confirmed transcripts and call-result diagnostics.
+See [answering-service setup](docs/ANSWERING-SETUP.md) for the browser and
+ChatGPT/plugin/MCP setup paths, Twilio verification, use cases and limitations.
 
 The Twilio error happened because the old code generated this webhook URL:
 

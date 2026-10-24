@@ -17,6 +17,12 @@ import {
   useGetMyBillingStatus,
   useRefreshAgentIcpPricing,
 } from "@/hooks/use-backend";
+import {
+  AGENT_GUIDE_URL,
+  AGENT_READY_PROMPT,
+  ANSWERING_AGENT_PROMPT,
+  ICP_MCP_URL,
+} from "@/lib/agent-access";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import {
   BookOpen,
@@ -30,13 +36,10 @@ import {
   RefreshCw,
   Wallet,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 
-const ICP_MCP_URL = "https://mcp.internetcomputer.org/mcp";
 const II_SETTINGS_URL = "https://id.ai/manage/settings";
-const AGENT_GUIDE_URL = "https://voicecallai.online/llms.txt";
-const AGENT_READY_PROMPT = `Open ${AGENT_GUIDE_URL} first. Use the official Internet Computer MCP (Agent Identity) connector to resolve VoiceCall AI and follow the backend agent API instructions. If you initially find only the frontend asset canister, continue with the backend canister declared in the guide; do not conclude phone calling is unavailable. Call getAgentGuide (or getApiDoc), authenticate with Internet Identity for voicecallai.online, and agentInitialize once. For outbound calls: confirm the recipient, purpose, preset, recording/transcript choices, and consent before agentQueueCall; use agentGetLiveCallLink if I ask to listen and tell me to open the link and press Listen. Treat queued, dispatched, connected, and completed as phone-session states; do not claim the conversation succeeded from those alone. Retrieve final artifacts and diagnostics before reporting the result; generated transcript text alone does not prove speech was played or understood. For AI answering: collect my Twilio E.164 number, answering instructions, capture choices, and consent; createAnsweringPreset; then give me the Twilio Voice webhook URL https://voicecall.richardhery.com/answering/incoming/{webhookSecret} and tell me to paste it in Twilio and call the number once to verify, then enable the preset. For ICP phone time: show agentGetAccountIdentity deposit details, purchase only after I authorize a package via agentPurchasePhoneTime, and confirm availableSeconds increased — that balance funds both outbound calls and answering.`;
 const E8S_PER_ICP = 100_000_000n;
 
 function formatIcp(e8s: bigint): string {
@@ -102,27 +105,6 @@ export function AgentAccessCard() {
     "";
   const sessionPrincipalText =
     identity?.sessionPrincipal?.toText?.() ?? accountPrincipalText;
-
-  useEffect(() => {
-    // Only warm agent balances when the card is expanded — saves an update
-    // call when users never open MCP setup.
-    if (
-      isOpen &&
-      accountQuery.isSuccess &&
-      !statusMutation.data &&
-      !statusMutation.isPending
-    ) {
-      void statusMutation.mutateAsync().catch(() => {
-        // Balance can still come from getMyBillingStatus.
-      });
-    }
-  }, [
-    isOpen,
-    accountQuery.isSuccess,
-    statusMutation.data,
-    statusMutation.isPending,
-    statusMutation.mutateAsync,
-  ]);
 
   const handleCheckBalance = async () => {
     try {
@@ -212,8 +194,8 @@ export function AgentAccessCard() {
               </CardTitle>
               <CardDescription className="mt-1">
                 Connect ChatGPT, Claude, or another MCP client to manage
-                presets, fund phone time with ICP, place calls, and retrieve
-                call results.
+                presets, set up an answering service, fund phone time, place
+                calls, and retrieve call results.
               </CardDescription>
             </div>
           </div>
@@ -245,8 +227,8 @@ export function AgentAccessCard() {
             data-ocid="settings.agent_access.collapsed_summary"
           >
             <p className="text-xs text-muted-foreground">
-              Optional MCP setup for agents. Expand only if you want AI chat
-              clients to place calls and manage phone time.
+              Your assistant can set up AI answering, edit its instructions, and
+              check readiness with your approval.
             </p>
             <Button
               type="button"
@@ -272,12 +254,12 @@ export function AgentAccessCard() {
                 body: "In Internet Identity, enable AI access and trust the official connector.",
               },
               {
-                title: "Add the connector",
-                body: "Paste the MCP URL into your AI app and authorize Actions and questions.",
+                title: "Connect your assistant",
+                body: "Use the Internet Computer Protocol plugin in ChatGPT if available, or add the ICP MCP URL in your MCP client. Authorize Actions and questions for setup changes.",
               },
               {
                 title: "Ask naturally",
-                body: "Try: “Check my VoiceCall AI balance and show my call presets.”",
+                body: "Try: “Set up an after-hours answering service for my business.” Your assistant gathers the details and prepares the app configuration.",
               },
             ].map((step, index) => (
               <li
@@ -347,11 +329,14 @@ export function AgentAccessCard() {
                 </p>
               </div>
             </div>
-            <div className="rounded-md bg-background/70 border border-border px-3 py-2.5">
+            <details className="rounded-md bg-background/70 border border-border px-3 py-2.5">
+              <summary className="cursor-pointer text-xs">
+                Read the request
+              </summary>
               <p className="text-[11px] leading-relaxed text-foreground">
                 {AGENT_READY_PROMPT}
               </p>
-            </div>
+            </details>
             <Button
               size="sm"
               variant="secondary"
@@ -364,6 +349,22 @@ export function AgentAccessCard() {
               <Copy className="w-3.5 h-3.5" />
               Copy request
             </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-2"
+              onClick={() =>
+                copyValue(ANSWERING_AGENT_PROMPT, "Answering setup request")
+              }
+            >
+              <Copy className="w-3.5 h-3.5" />
+              Copy answering setup request
+            </Button>
+            <p className="text-[11px] text-muted-foreground">
+              The ICP connector configures VoiceCall AI. You or a separately
+              authorized Twilio tool connects the phone number in Twilio; your
+              carrier controls forwarding from an existing number.
+            </p>
           </div>
 
           <div className="rounded-lg border border-border p-4 space-y-3">
@@ -619,10 +620,11 @@ export function AgentAccessCard() {
           </div>
 
           <p className="text-[11px] leading-relaxed text-muted-foreground">
-            Humans signed into the web app can buy phone time with Stripe.
-            Agents authenticated through MCP can deposit ICP to the deposit
-            account above and purchase the same packages. Both paths credit the
-            shared phone-time balance and appear in the same call history.
+            Live ICP balances load only when you choose Check balances. Humans
+            signed into the web app can buy phone time with Stripe. Agents
+            authenticated through MCP can deposit ICP to the deposit account
+            above and purchase the same packages. Both paths credit the shared
+            phone-time balance and appear in the same call history.
           </p>
         </CardContent>
       ) : null}

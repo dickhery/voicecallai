@@ -20,6 +20,11 @@ import {
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -43,17 +48,24 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   useCreateAnsweringPreset,
   useDeleteAnsweringPreset,
+  useGetAnsweringSetupStatus,
   useListMyAnsweringLiveSessions,
   useListMyAnsweringPresets,
   useSetAnsweringPresetEnabled,
   useUpdateAnsweringPreset,
 } from "@/hooks/use-backend";
+import { ANSWERING_AGENT_PROMPT, ICP_MCP_URL } from "@/lib/agent-access";
 import {
   type AgentPresetTemplate,
   agentPresetToAnsweringDraft,
   appendVoiceSessionBlock,
   stripVoiceSessionBlock,
 } from "@/lib/agent-presets";
+import {
+  ANSWERING_STARTERS,
+  isValidAnsweringPhoneNumber,
+  normalizeAnsweringPhoneNumber,
+} from "@/lib/answering-setup";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import {
   TURN_TIMING_PROFILES,
@@ -67,8 +79,12 @@ import {
   getVoiceServerUrl,
 } from "@/lib/voice-server";
 import type { AnsweringPreset, AnsweringPresetInput } from "@/types";
+import { useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import {
+  Bot,
   CheckCircle2,
+  ChevronDown,
   Copy,
   Headphones,
   Loader2,
@@ -77,6 +93,8 @@ import {
   PhoneOff,
   Plus,
   Radio,
+  RefreshCw,
+  Settings2,
   Trash2,
   Volume2,
   VolumeX,
@@ -105,10 +123,6 @@ const TURN_DETECTION_HELP =
 
 const MONITOR_SAMPLE_RATE = 8000;
 const MONITOR_JITTER_SECONDS = 0.12;
-
-function validateE164(phone: string): boolean {
-  return /^\+[1-9]\d{1,14}$/.test(phone.replace(/\s/g, ""));
-}
 
 function generateWebhookSecret(): string {
   const bytes = new Uint8Array(32);
@@ -146,7 +160,9 @@ function answeringPresetToInput(preset: AnsweringPreset): AnsweringPresetInput {
     sampleRate: preset.sampleRate,
     toolsEnabled: { ...preset.toolsEnabled },
     captureOptions: { ...preset.captureOptions },
-    enabled: preset.enabled,
+    enabled:
+      preset.verificationStatus === AnsweringPresetStatus.verified &&
+      preset.enabled,
     webhookSecret: preset.webhookSecret,
   };
 }
@@ -166,7 +182,7 @@ function normalizeAnsweringPresetInput(
   return {
     ...input,
     name: input.name.trim(),
-    phoneNumber: input.phoneNumber.replace(/\s/g, ""),
+    phoneNumber: normalizeAnsweringPhoneNumber(input.phoneNumber),
     systemPrompt: input.systemPrompt.trim(),
     audioFormat: AudioFormat.pcmu,
     sampleRate: SampleRate.hz8000,
@@ -196,7 +212,7 @@ function buildDefaultPreset(): AnsweringPresetInput {
       recordAudio: false,
       consentConfirmed: false,
     },
-    enabled: true,
+    enabled: false,
     webhookSecret: generateWebhookSecret(),
   };
 }
@@ -220,6 +236,42 @@ function webhookUrl(
   preset: Pick<AnsweringPreset, "webhookSecret">,
 ) {
   return baseUrl ? `${baseUrl}/answering/incoming/${preset.webhookSecret}` : "";
+}
+
+async function copySetupText(value: string, label: string) {
+  try {
+    if (!(await copyTextToClipboard(value))) throw new Error("Copy failed");
+    toast.success(`${label} copied`);
+  } catch {
+    toast.error(`Unable to copy ${label.toLowerCase()}`);
+  }
+}
+
+function OptionalVoiceSettings({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <Collapsible className="rounded-md border border-border">
+      <CollapsibleTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          className="h-auto w-full justify-start gap-2 whitespace-normal p-3 text-left"
+        >
+          <Settings2 className="h-4 w-4 shrink-0" />
+          <span className="flex-1">
+            Optional: voice and conversation timing
+          </span>
+          <ChevronDown className="h-4 w-4 shrink-0" />
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="space-y-4 border-t border-border p-3">
+        {children}
+      </CollapsibleContent>
+    </Collapsible>
+  );
 }
 
 function decodeBase64Payload(payload: string): Uint8Array {
@@ -708,16 +760,22 @@ function AnsweringPresetCard({
   const setEnabled = useSetAnsweringPresetEnabled();
   const deletePreset = useDeleteAnsweringPreset();
   const updatePreset = useUpdateAnsweringPreset();
+  const setupStatus = useGetAnsweringSetupStatus(preset.id);
+  const presetsQuery = useListMyAnsweringPresets();
   const [isEditingPreset, setIsEditingPreset] = useState(false);
   const [draftPreset, setDraftPreset] = useState<AnsweringPresetInput>(() =>
     answeringPresetToInput(preset),
   );
   const isVerified =
     preset.verificationStatus === AnsweringPresetStatus.verified;
-  const url = webhookUrl(baseUrl, preset);
+  const url = setupStatus.data?.webhookUrl || webhookUrl(baseUrl, preset);
   const draftCaptureRequested =
     draftPreset.captureOptions.saveTranscript ||
     draftPreset.captureOptions.recordAudio;
+  const canEnableDraft =
+    isVerified &&
+    normalizeAnsweringPhoneNumber(draftPreset.phoneNumber) ===
+      preset.phoneNumber;
 
   useEffect(() => {
     if (!isEditingPreset) {
@@ -731,17 +789,51 @@ function AnsweringPresetCard({
   };
 
   const toggleEnabled = async (enabled: boolean) => {
-    const result = await setEnabled.mutateAsync({ id: preset.id, enabled });
-    if (result.__kind__ === "err") {
-      toast.error(result.err);
-      return;
+    try {
+      const result = await setEnabled.mutateAsync({ id: preset.id, enabled });
+      if (result.__kind__ === "err") {
+        toast.error(result.err);
+        return;
+      }
+      toast.success(
+        enabled
+          ? "Answering service on — make a test call"
+          : "Answering service off",
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Unable to change answering status",
+      );
     }
-    toast.success(enabled ? "Answering service on" : "Answering service off");
   };
 
   const remove = async () => {
-    await deletePreset.mutateAsync(preset.id);
-    toast.success("Answering preset deleted");
+    try {
+      const deleted = await deletePreset.mutateAsync(preset.id);
+      if (!deleted)
+        throw new Error("This answering preset could not be deleted");
+      toast.success("Answering preset deleted");
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Unable to delete answering preset",
+      );
+    }
+  };
+
+  const refreshSetup = async () => {
+    const [statusResult, presetsResult] = await Promise.all([
+      setupStatus.refetch(),
+      presetsQuery.refetch(),
+    ]);
+    if (statusResult.isError || presetsResult.isError) {
+      toast.error("Unable to refresh setup. Please try again.");
+    } else {
+      toast.success("Setup status refreshed");
+    }
   };
 
   const savePreset = async (event: FormEvent<HTMLFormElement>) => {
@@ -759,8 +851,10 @@ function AnsweringPresetCard({
       toast.error("AI instructions must be 8000 characters or fewer");
       return;
     }
-    if (!validateE164(cleanInput.phoneNumber)) {
-      toast.error("Enter the Twilio number in E.164 format");
+    if (!isValidAnsweringPhoneNumber(cleanInput.phoneNumber)) {
+      toast.error(
+        "Enter your Twilio number with its country code, for example +15551234567",
+      );
       return;
     }
     if (
@@ -769,27 +863,42 @@ function AnsweringPresetCard({
     ) {
       cleanInput.captureOptions.consentConfirmed = true;
     }
-    const result = await updatePreset.mutateAsync({
-      id: preset.id,
-      input: {
-        ...cleanInput,
-        systemPrompt: restoreAnsweringSystemPrompt(
-          cleanInput.systemPrompt,
-          preset.systemPrompt,
-        ),
-      },
-    });
-    if (result.__kind__ === "err") {
-      toast.error(result.err);
-      return;
+    try {
+      const result = await updatePreset.mutateAsync({
+        id: preset.id,
+        input: {
+          ...cleanInput,
+          enabled:
+            isVerified &&
+            cleanInput.phoneNumber === preset.phoneNumber &&
+            cleanInput.enabled,
+          systemPrompt: restoreAnsweringSystemPrompt(
+            cleanInput.systemPrompt,
+            preset.systemPrompt,
+          ),
+        },
+      });
+      if (result.__kind__ === "err") {
+        toast.error(result.err);
+        return;
+      }
+      toast.success("Answering preset updated");
+      setIsEditingPreset(false);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Unable to update answering preset",
+      );
     }
-    toast.success("Answering preset updated");
-    setIsEditingPreset(false);
   };
 
   return (
     <>
-      <Card className="border-border bg-card">
+      <Card
+        id={`answering-preset-${preset.id}`}
+        className="scroll-mt-4 border-border bg-card"
+      >
         <CardHeader className="pb-3">
           <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div className="space-y-1">
@@ -807,13 +916,14 @@ function AnsweringPresetCard({
                     : "border-yellow-500/40 text-yellow-400"
                 }
               >
-                {isVerified ? "Verified" : "Pending"}
+                {isVerified ? "Webhook verified" : "Connect Twilio"}
               </Badge>
               <div className="flex items-center gap-2 rounded-md border border-border px-2 py-1">
                 <Switch
                   checked={preset.enabled}
                   disabled={!isVerified || setEnabled.isPending}
                   onCheckedChange={(enabled) => void toggleEnabled(enabled)}
+                  aria-label={`Answer incoming calls for ${preset.name}`}
                 />
                 <span className="text-xs text-muted-foreground">
                   {preset.enabled ? "On" : "Off"}
@@ -847,6 +957,75 @@ function AnsweringPresetCard({
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          <div className="space-y-3 rounded-md border border-primary/25 bg-primary/5 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-medium">
+                {setupStatus.data?.readyForCalls
+                  ? "App prerequisites complete — test the live line"
+                  : "Finish connecting your answering service"}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={setupStatus.isFetching || presetsQuery.isFetching}
+                onClick={() => void refreshSetup()}
+                className="gap-1.5"
+                data-ocid={`answering.preset.refresh_setup.${preset.id}`}
+              >
+                <RefreshCw
+                  className={`h-3.5 w-3.5 ${setupStatus.isFetching ? "animate-spin" : ""}`}
+                />
+                Refresh setup
+              </Button>
+            </div>
+            {setupStatus.data ? (
+              <>
+                <p className="text-xs text-muted-foreground">
+                  Shared prepaid phone time:{" "}
+                  {formatMinutes(setupStatus.data.availablePhoneSeconds)}{" "}
+                  available.
+                  {setupStatus.data.availablePhoneSeconds < 60n &&
+                    " Add phone time before testing the AI."}
+                </p>
+                {!!setupStatus.data.nextSteps.length && (
+                  <ol className="list-decimal space-y-1 pl-4 text-xs leading-relaxed text-muted-foreground">
+                    {setupStatus.data.nextSteps.map((step) => (
+                      <li key={step}>{step}</li>
+                    ))}
+                  </ol>
+                )}
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  {setupStatus.data.note}
+                </p>
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                {setupStatus.isError
+                  ? "Setup status could not be loaded. Refresh setup to try again."
+                  : setupStatus.isPending
+                    ? "Checking app prerequisites…"
+                    : "Setup details are unavailable. Refresh setup to reload your services."}
+              </p>
+            )}
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+              <Link
+                to="/user/dashboard"
+                className="text-primary hover:underline"
+              >
+                Buy phone time
+              </Link>
+              <Link
+                to="/user/settings"
+                className="text-primary hover:underline"
+              >
+                Agent access and ICP funding
+              </Link>
+              <Link to="/user/history" className="text-primary hover:underline">
+                View call history
+              </Link>
+            </div>
+          </div>
           <div className="grid gap-3 md:grid-cols-3">
             <div className="rounded-md border border-border p-3">
               <p className="text-xs font-medium uppercase text-muted-foreground">
@@ -866,7 +1045,7 @@ function AnsweringPresetCard({
                   preset.captureOptions.recordAudio ? "Audio" : "",
                 ]
                   .filter(Boolean)
-                  .join(" + ") || "Off"}
+                  .join(" + ") || "No saved transcript or audio"}
               </p>
             </div>
             <div className="rounded-md border border-border p-3">
@@ -913,18 +1092,23 @@ function AnsweringPresetCard({
                 variant="outline"
                 size="icon"
                 disabled={!url}
-                onClick={() => {
-                  void copyTextToClipboard(url);
-                  toast.success("Webhook URL copied");
-                }}
+                aria-label="Copy private Twilio webhook URL"
+                onClick={() => void copySetupText(url, "Webhook URL")}
               >
                 <Copy className="h-4 w-4" />
               </Button>
             </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              You or the app operator must open this supported number in its
+              Twilio account → Voice Configuration → “A call comes in” →
+              Webhook. Paste this private URL, choose HTTP POST, and save.
+            </p>
             {!isVerified && (
-              <p className="text-xs text-muted-foreground">
-                Set this URL as the number’s Voice webhook in Twilio, then call
-                the number once. The first webhook confirms the number.
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                Call the Twilio number once, then press Refresh setup. While the
+                preset is off, this first call may say the line is unavailable;
+                it still verifies the webhook. Then turn it on and make a second
+                call to hear and test the AI.
               </p>
             )}
           </div>
@@ -978,7 +1162,7 @@ function AnsweringPresetCard({
                   onChange={(event) =>
                     setDraftPreset({
                       ...draftPreset,
-                      phoneNumber: event.target.value.replace(/\s/g, ""),
+                      phoneNumber: event.target.value,
                     })
                   }
                   placeholder="+15551234567"
@@ -1038,31 +1222,33 @@ function AnsweringPresetCard({
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label>Voice</Label>
-              <VoiceIdSelector
-                value={{
-                  voice: draftPreset.voice,
-                  voiceId: draftPreset.voiceId,
-                }}
-                onChange={(next) =>
-                  setDraftPreset({
-                    ...draftPreset,
-                    voice: next.voice,
-                    voiceId: next.voiceId ?? "",
-                  })
-                }
-                dataOcidPrefix={`answering.preset.${preset.id.toString()}`}
-              />
-            </div>
+            <OptionalVoiceSettings>
+              <div className="space-y-2">
+                <Label>Voice</Label>
+                <VoiceIdSelector
+                  value={{
+                    voice: draftPreset.voice,
+                    voiceId: draftPreset.voiceId,
+                  }}
+                  onChange={(next) =>
+                    setDraftPreset({
+                      ...draftPreset,
+                      voice: next.voice,
+                      voiceId: next.voiceId ?? "",
+                    })
+                  }
+                  dataOcidPrefix={`answering.preset.${preset.id.toString()}`}
+                />
+              </div>
 
-            <TurnDetectionFields
-              value={draftPreset.turnDetection}
-              onChange={(turnDetection) =>
-                setDraftPreset({ ...draftPreset, turnDetection })
-              }
-              dataOcidPrefix={`answering.preset.${preset.id.toString()}.turn_detection`}
-            />
+              <TurnDetectionFields
+                value={draftPreset.turnDetection}
+                onChange={(turnDetection) =>
+                  setDraftPreset({ ...draftPreset, turnDetection })
+                }
+                dataOcidPrefix={`answering.preset.${preset.id.toString()}.turn_detection`}
+              />
+            </OptionalVoiceSettings>
 
             <div className="grid gap-3 md:grid-cols-2">
               <div className="flex items-center gap-3 rounded-md border border-border p-3">
@@ -1126,12 +1312,20 @@ function AnsweringPresetCard({
               </Label>
               <Switch
                 id={`answering-preset-enabled-${preset.id}`}
-                checked={draftPreset.enabled}
+                checked={canEnableDraft && draftPreset.enabled}
+                disabled={!canEnableDraft}
                 onCheckedChange={(enabled) =>
                   setDraftPreset({ ...draftPreset, enabled })
                 }
               />
             </div>
+            {!canEnableDraft && (
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                Verify this number with a call before turning the service on.
+                Changing the number keeps the service off until the new webhook
+                is verified.
+              </p>
+            )}
 
             <DialogFooter>
               <Button
@@ -1168,11 +1362,13 @@ function AnsweringPresetCard({
 
 export default function AnsweringServicePage() {
   const [baseUrl, setBaseUrl] = useState("");
+  const [createdPresetId, setCreatedPresetId] = useState<bigint | null>(null);
   const [input, setInput] = useState<AnsweringPresetInput>(() =>
     buildDefaultPreset(),
   );
   const presets = useListMyAnsweringPresets();
-  const liveSessions = useListMyAnsweringLiveSessions();
+  const queryClient = useQueryClient();
+  const liveSessions = useListMyAnsweringLiveSessions(!!presets.data?.length);
   const createPreset = useCreateAnsweringPreset();
   const pendingPreset = presets.data?.find(
     (preset) =>
@@ -1181,11 +1377,31 @@ export default function AnsweringServicePage() {
   const captureRequested =
     input.captureOptions.saveTranscript || input.captureOptions.recordAudio;
 
+  const refreshServices = async () => {
+    const [result] = await Promise.all([
+      presets.refetch(),
+      queryClient.invalidateQueries({ queryKey: ["answeringSetupStatus"] }),
+    ]);
+    if (result.isError) toast.error("Unable to refresh answering services");
+    else toast.success("Answering services refreshed");
+  };
+
   useEffect(() => {
     getVoiceServerUrl()
       .then(setBaseUrl)
       .catch(() => setBaseUrl(""));
   }, []);
+
+  useEffect(() => {
+    if (createdPresetId === null) return;
+    if (!presets.data?.some((preset) => preset.id === createdPresetId)) return;
+    const createdCard = document.getElementById(
+      `answering-preset-${createdPresetId}`,
+    );
+    if (!createdCard) return;
+    createdCard.scrollIntoView({ behavior: "smooth", block: "start" });
+    setCreatedPresetId(null);
+  }, [createdPresetId, presets.data]);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1202,8 +1418,10 @@ export default function AnsweringServicePage() {
       toast.error("AI instructions must be 8000 characters or fewer");
       return;
     }
-    if (!validateE164(cleanInput.phoneNumber)) {
-      toast.error("Enter the Twilio number in E.164 format");
+    if (!isValidAnsweringPhoneNumber(cleanInput.phoneNumber)) {
+      toast.error(
+        "Enter your Twilio number with its country code, for example +15551234567",
+      );
       return;
     }
     if (
@@ -1212,13 +1430,25 @@ export default function AnsweringServicePage() {
     ) {
       cleanInput.captureOptions.consentConfirmed = true;
     }
-    const result = await createPreset.mutateAsync(cleanInput);
-    if (result.__kind__ === "err") {
-      toast.error(result.err);
-      return;
+    try {
+      const result = await createPreset.mutateAsync({
+        ...cleanInput,
+        enabled: false,
+      });
+      if (result.__kind__ === "err") {
+        toast.error(result.err);
+        return;
+      }
+      toast.success("Preset saved — connect its webhook in Twilio next");
+      setInput(buildDefaultPreset());
+      setCreatedPresetId(result.ok.id);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Unable to create answering preset",
+      );
     }
-    toast.success("Answering preset created");
-    setInput(buildDefaultPreset());
   };
 
   const handleUseAgentTemplate = (template: AgentPresetTemplate) => {
@@ -1235,7 +1465,8 @@ export default function AnsweringServicePage() {
       sampleRate: draft.sampleRate,
     }));
     toast.success(`Loaded “${template.name}”`, {
-      description: "Add your Twilio number, then create the answering preset.",
+      description:
+        "Add your supported Twilio number, then save the answering service.",
     });
     document
       .querySelector('[data-ocid="answering.create_form"]')
@@ -1252,26 +1483,92 @@ export default function AnsweringServicePage() {
                 AI Answering
               </h1>
               <p className="mt-1 text-sm text-muted-foreground">
-                Connect a Twilio number to a Grok voice preset for incoming
-                calls.
+                Let an AI greet callers, answer your FAQs, or collect callback
+                and appointment requests on a supported Twilio number.
               </p>
             </div>
-            <a
-              href="https://console.twilio.com/us1/develop/phone-numbers/manage/incoming"
-              target="_blank"
-              rel="noreferrer"
-            >
-              <Button variant="outline" className="gap-2">
-                <PhoneCall className="h-4 w-4" />
-                Open Twilio
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-2"
+                disabled={presets.isFetching}
+                onClick={() => void refreshServices()}
+              >
+                <RefreshCw
+                  className={`h-4 w-4 ${presets.isFetching ? "animate-spin" : ""}`}
+                />
+                Refresh services
               </Button>
-            </a>
+              <Button variant="outline" className="gap-2" asChild>
+                <a
+                  href="https://console.twilio.com/us1/develop/phone-numbers/manage/incoming"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <PhoneCall className="h-4 w-4" />
+                  Open Twilio
+                </a>
+              </Button>
+            </div>
           </div>
+
+          <Card
+            className="border-primary/25 bg-primary/5"
+            data-ocid="answering.agent_help.card"
+          >
+            <CardContent className="space-y-3 p-4">
+              <div className="flex items-center gap-2 font-medium">
+                <Bot className="h-5 w-5 text-primary" />
+                Ask your AI agent to set this up for you
+              </div>
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                In ChatGPT, connect the Internet Computer Protocol plugin, or
+                use the ICP MCP connector in a compatible AI client. After you
+                sign in with Internet Identity and authorize actions, your agent
+                can create and edit the answering service, check setup, and
+                retrieve saved call results. You or the app operator connect the
+                Twilio webhook, and you configure your carrier’s forwarding; the
+                connector does not control Twilio or your carrier. Press Refresh
+                services here after your agent makes changes.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  className="gap-2"
+                  onClick={() =>
+                    void copySetupText(
+                      ANSWERING_AGENT_PROMPT,
+                      "Agent setup prompt",
+                    )
+                  }
+                  data-ocid="answering.agent_help.copy_prompt"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  Copy setup prompt
+                </Button>
+                <Button type="button" variant="outline" size="sm" asChild>
+                  <Link to="/user/settings">Connect an agent</Link>
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    void copySetupText(ICP_MCP_URL, "MCP connector URL")
+                  }
+                >
+                  Copy MCP URL
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
 
           <AgentPresetGallery
             kind="inbound"
             title="Answering agent presets"
-            description="Professional receptionists and playful themed greeters. Loads the create form — you still attach your Twilio number."
+            description="Professional receptionists and playful themed greeters. Loads the create form — you still need a supported Twilio number."
             actionLabel="Use this agent"
             onUseTemplate={handleUseAgentTemplate}
             dataOcidPrefix="answering.agent_gallery"
@@ -1284,17 +1581,44 @@ export default function AnsweringServicePage() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-lg">
                   <Plus className="h-5 w-5 text-primary" />
-                  New Answering Preset
+                  1. Describe your answering service
                 </CardTitle>
                 <CardDescription>
-                  Create one preset per Twilio phone number.
+                  Create one preset per supported Twilio number. Start with a
+                  template or write your own instructions; the default voice and
+                  timing are ready to use.
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {pendingPreset ? (
+                {presets.isLoading ? (
+                  <Skeleton className="h-36 w-full" />
+                ) : presets.isError ? (
+                  <div className="space-y-3 rounded-md border border-border p-3 text-sm text-muted-foreground">
+                    <p>
+                      We could not load your existing services. Reload them
+                      before adding another number.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void presets.refetch()}
+                      disabled={presets.isFetching}
+                    >
+                      Retry loading services
+                    </Button>
+                  </div>
+                ) : pendingPreset ? (
                   <div className="rounded-md border border-yellow-500/30 bg-yellow-500/10 p-3 text-sm text-yellow-200">
-                    Verify {pendingPreset.phoneNumber} before adding another
-                    answering preset.
+                    Finish connecting {pendingPreset.phoneNumber} before adding
+                    another number.
+                    <a
+                      href={`#answering-preset-${pendingPreset.id}`}
+                      className="ml-1 underline"
+                    >
+                      Open its setup steps and webhook
+                    </a>
+                    .
                   </div>
                 ) : (
                   <form
@@ -1305,8 +1629,9 @@ export default function AnsweringServicePage() {
                   >
                     <div className="grid gap-4 md:grid-cols-2">
                       <div className="space-y-2">
-                        <Label>Preset Name</Label>
+                        <Label htmlFor="answering-name">Service name</Label>
                         <Input
+                          id="answering-name"
                           value={input.name}
                           onChange={(event) =>
                             setInput({ ...input, name: event.target.value })
@@ -1316,22 +1641,72 @@ export default function AnsweringServicePage() {
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label>Twilio Number</Label>
+                        <Label htmlFor="answering-phone">
+                          Supported Twilio number
+                        </Label>
                         <Input
+                          id="answering-phone"
+                          type="tel"
                           value={input.phoneNumber}
                           onChange={(event) =>
                             setInput({
                               ...input,
-                              phoneNumber: event.target.value.replace(
-                                /\s/g,
-                                "",
-                              ),
+                              phoneNumber: event.target.value,
                             })
                           }
                           placeholder="+15551234567"
                           required
                         />
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                          Ask the app operator for a number supported by its
+                          voice bridge. Include the country code. Numbers in a
+                          separate Twilio account require operator setup.
+                          Forwarding uses this Twilio destination.
+                        </p>
                       </div>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium">
+                        Start with a common task
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {ANSWERING_STARTERS.map((starter) => (
+                          <Button
+                            key={starter.id}
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            title={starter.description}
+                            onClick={() => {
+                              if (
+                                input.systemPrompt.trim() &&
+                                !ANSWERING_STARTERS.some(
+                                  (item) =>
+                                    item.systemPrompt === input.systemPrompt,
+                                )
+                              ) {
+                                toast.info(
+                                  "Clear the instructions first to load a starter, or edit your current instructions.",
+                                );
+                                return;
+                              }
+                              setInput({
+                                ...input,
+                                name: input.name || starter.name,
+                                systemPrompt: starter.systemPrompt,
+                              });
+                            }}
+                            data-ocid={`answering.starter.${starter.id}`}
+                          >
+                            {starter.name}
+                          </Button>
+                        ))}
+                      </div>
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        For after-hours answering, use message taking and add
+                        your business hours. Appointment requests need a person
+                        to confirm the booking.
+                      </p>
                     </div>
                     <NaturalPromptBuilder
                       direction="inbound"
@@ -1349,14 +1724,19 @@ export default function AnsweringServicePage() {
                       dataOcidPrefix="answering.natural_prompt"
                     />
                     <div className="space-y-2">
-                      <Label>AI Instructions</Label>
+                      <Label htmlFor="answering-instructions">
+                        What should the AI say and do?
+                      </Label>
                       <p className="text-xs leading-relaxed text-muted-foreground">
                         Type a custom prompt here, or open the builder above to
                         generate a starting point and then edit it. Include the
-                        exact name or role the AI should use, plus the goal,
-                        facts, boundaries, and expected questions.
+                        business name, greeting, facts it may share, what to
+                        ask, and what to do when it cannot help. It cannot book
+                        appointments, transfer calls, or send messages to your
+                        other apps automatically.
                       </p>
                       <Textarea
+                        id="answering-instructions"
                         value={
                           stripVoiceSessionBlock(input.systemPrompt).cleanPrompt
                         }
@@ -1381,27 +1761,39 @@ export default function AnsweringServicePage() {
                         required
                       />
                     </div>
-                    <div className="space-y-2">
-                      <Label>Voice</Label>
-                      <VoiceIdSelector
-                        value={{ voice: input.voice, voiceId: input.voiceId }}
-                        onChange={(next) =>
-                          setInput({
-                            ...input,
-                            voice: next.voice,
-                            voiceId: next.voiceId ?? "",
-                          })
+                    <OptionalVoiceSettings>
+                      <div className="space-y-2">
+                        <Label>Voice</Label>
+                        <VoiceIdSelector
+                          value={{ voice: input.voice, voiceId: input.voiceId }}
+                          onChange={(next) =>
+                            setInput({
+                              ...input,
+                              voice: next.voice,
+                              voiceId: next.voiceId ?? "",
+                            })
+                          }
+                          dataOcidPrefix="answering"
+                        />
+                      </div>
+                      <TurnDetectionFields
+                        value={input.turnDetection}
+                        onChange={(turnDetection) =>
+                          setInput({ ...input, turnDetection })
                         }
-                        dataOcidPrefix="answering"
+                        dataOcidPrefix="answering.turn_detection"
                       />
+                    </OptionalVoiceSettings>
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium">
+                        Keep a record of calls?
+                      </p>
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        Choose Save transcripts if you want to read messages and
+                        callback details later in Call History. Both options
+                        start off.
+                      </p>
                     </div>
-                    <TurnDetectionFields
-                      value={input.turnDetection}
-                      onChange={(turnDetection) =>
-                        setInput({ ...input, turnDetection })
-                      }
-                      dataOcidPrefix="answering.turn_detection"
-                    />
                     <div className="grid gap-3 md:grid-cols-2">
                       <div className="flex items-center gap-3 rounded-md border border-border p-3">
                         <Checkbox
@@ -1453,18 +1845,11 @@ export default function AnsweringServicePage() {
                         transcript is saved. You are responsible for that rule.
                       </p>
                     )}
-                    <div className="flex items-center justify-between rounded-md border border-border p-3">
-                      <Label htmlFor="answering-enable" className="text-sm">
-                        Turn on after verification
-                      </Label>
-                      <Switch
-                        id="answering-enable"
-                        checked={input.enabled}
-                        onCheckedChange={(enabled) =>
-                          setInput({ ...input, enabled })
-                        }
-                      />
-                    </div>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      Your new service starts off. Connect and verify Twilio,
+                      then turn it on when you are ready. Creating a preset does
+                      not buy phone time.
+                    </p>
                     <Button
                       type="submit"
                       className="w-full gap-2"
@@ -1475,7 +1860,7 @@ export default function AnsweringServicePage() {
                       ) : (
                         <Plus className="h-4 w-4" />
                       )}
-                      Create Answering Preset
+                      Save and connect Twilio
                     </Button>
                   </form>
                 )}
@@ -1486,30 +1871,81 @@ export default function AnsweringServicePage() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-lg">
                   <CheckCircle2 className="h-5 w-5 text-primary" />
-                  Setup
+                  2. Connect · 3. Test and turn on
                 </CardTitle>
                 <CardDescription>
-                  Use Twilio’s phone-number Voice webhook.
+                  Your agent can prepare the preset. These final steps connect
+                  real calls.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4 text-sm text-muted-foreground">
-                <div className="space-y-2">
-                  <p>
-                    1. Create a Twilio account and buy a voice-capable number.
+                <ol className="list-decimal space-y-3 pl-4 leading-relaxed">
+                  <li>
+                    Ask the app operator for a supported voice-capable Twilio
+                    number, then save your answering service here with that
+                    exact number. The bridge uses its configured Twilio account;
+                    a number in a separate account will need operator setup.
+                    Saving a preset does not buy or provision a number.
+                  </li>
+                  <li>
+                    Open the saved preset below and copy its private webhook
+                    URL. You or the operator with access to the configured
+                    Twilio account must open the number → Voice Configuration →
+                    “A call comes in”, select Webhook, paste the URL, select
+                    HTTP POST, and save.
+                  </li>
+                  <li>
+                    Call the Twilio number once and press Refresh setup on your
+                    preset. The first call verifies routing. A service that is
+                    off may say it is unavailable during this verification call.
+                  </li>
+                  <li>
+                    Add prepaid phone time on the{" "}
+                    <Link
+                      to="/user/dashboard"
+                      className="text-primary hover:underline"
+                    >
+                      Dashboard
+                    </Link>
+                    , or ask your connected agent to show ICP phone-time
+                    packages. Incoming and outgoing calls share the same
+                    balance. Your Twilio number and carrier charges are billed
+                    separately by those providers.
+                  </li>
+                  <li>
+                    Turn your verified service on, then make another test call
+                    to hear the AI. Check its greeting, answers, and any saved
+                    transcript in
+                    <Link
+                      to="/user/history"
+                      className="ml-1 text-primary hover:underline"
+                    >
+                      Call History
+                    </Link>
+                    . A verified webhook alone does not confirm the AI
+                    conversation works.
+                  </li>
+                </ol>
+                <details className="rounded-md border border-border p-3">
+                  <summary className="cursor-pointer font-medium text-foreground">
+                    Use your existing business or mobile number
+                  </summary>
+                  <p className="mt-2 text-xs leading-relaxed">
+                    Configure call forwarding with your carrier or phone
+                    provider to send calls to the Twilio number. Choose
+                    unanswered, busy, or all calls if your provider supports it.
+                    Keep the Twilio destination in the preset. Test by calling
+                    your original number from another phone. Forwarding rules,
+                    schedules, and charges are controlled by your provider; the
+                    app does not switch forwarding on for you.
                   </p>
-                  <p>2. Create an answering preset here using that number.</p>
-                  <p>
-                    3. Copy the preset webhook URL into Twilio under Voice
-                    Configuration, “A call comes in”, Webhook, HTTP POST.
-                  </p>
-                  <p>
-                    4. Call the number once. The app verifies the number when
-                    Twilio reaches the webhook.
-                  </p>
-                </div>
+                </details>
                 <div className="rounded-md border border-border bg-muted/20 p-3">
-                  The app does not need your Twilio Auth Token for this setup.
-                  Turning a preset off rejects new calls before the AI answers.
+                  The operator configures Twilio credentials on the voice
+                  bridge; do not paste Auth Tokens into chat or preset
+                  instructions. Keep the webhook URL private. Turning a preset
+                  off rejects new calls before the AI answers; it does not
+                  restore your carrier’s voicemail.
                 </div>
                 <a
                   href="https://www.twilio.com/docs/voice/twiml/stream"
@@ -1530,7 +1966,9 @@ export default function AnsweringServicePage() {
                 Live Incoming Calls
               </CardTitle>
               <CardDescription>
-                Active calls appear here while Twilio is connected.
+                Active calls appear here while Twilio is connected. Listen in or
+                end a call; saved transcripts and audio appear in Call History
+                when enabled.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -1538,6 +1976,19 @@ export default function AnsweringServicePage() {
                 <div className="space-y-2">
                   <Skeleton className="h-12 w-full" />
                   <Skeleton className="h-12 w-full" />
+                </div>
+              ) : liveSessions.isError ? (
+                <div className="space-y-2 rounded-md border border-border p-4 text-sm text-muted-foreground">
+                  <p>Live calls could not be loaded.</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void liveSessions.refetch()}
+                    disabled={liveSessions.isFetching}
+                  >
+                    Retry live calls
+                  </Button>
                 </div>
               ) : liveSessions.data?.length ? (
                 <div className="space-y-3">
@@ -1591,6 +2042,20 @@ export default function AnsweringServicePage() {
                 <Skeleton className="h-36 w-full" />
                 <Skeleton className="h-36 w-full" />
               </div>
+            ) : presets.isError ? (
+              <Card>
+                <CardContent className="space-y-3 p-6 text-sm text-muted-foreground">
+                  <p>Your answering services could not be loaded.</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void presets.refetch()}
+                    disabled={presets.isFetching}
+                  >
+                    Retry loading services
+                  </Button>
+                </CardContent>
+              </Card>
             ) : presets.data?.length ? (
               <div className="space-y-3">
                 {presets.data.map((preset) => (
