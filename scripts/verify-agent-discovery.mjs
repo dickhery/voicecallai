@@ -72,6 +72,8 @@ function assertValid(relativePath, body, contentType = "") {
       !body.includes("Internet Computer Protocol plugin") ||
       !body.includes("createAnsweringPresetSimple") ||
       !body.includes("getAnsweringSetupStatus") ||
+      !body.includes("setMySchedule") ||
+      !body.includes("bookAppointment") ||
       !body.includes("Backend agent API canister"))
   ) {
     throw new Error("llms.txt is missing required discovery instructions.");
@@ -93,6 +95,9 @@ function assertValid(relativePath, body, contentType = "") {
       !body.includes("agentPreviewCall") ||
       !body.includes("createAnsweringPresetSimple") ||
       !body.includes("getAnsweringSetupStatus") ||
+      !body.includes("setMySchedule") ||
+      !body.includes("bookAppointment") ||
+      !body.includes("listOpenSlots") ||
       !body.includes("agentGetLiveCallLink"))
   ) {
     throw new Error(

@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { useCallStore } from "@/stores/call-store";
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
+  CalendarDays,
   LayoutDashboard,
   LogOut,
   Mic,
@@ -20,6 +21,7 @@ import {
 const userNav = [
   { label: "Dashboard", href: "/user/dashboard", icon: LayoutDashboard },
   { label: "AI Answering", href: "/user/answering", icon: PhoneCall },
+  { label: "Calendar", href: "/user/schedule", icon: CalendarDays },
   { label: "Call History", href: "/user/history", icon: Phone },
   { label: "Settings", href: "/user/settings", icon: Settings },
 ];

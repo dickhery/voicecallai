@@ -11,6 +11,7 @@
     "test:call-session": "node --test src/lib/call-session.test.mjs",
     "test:answering": "node --test src/lib/answering-setup.test.mjs",
     "test:bulk": "node --test src/lib/phone-list.test.mjs src/lib/batch-recovery.test.mjs",
+    "test:schedule": "node --test src/lib/schedule-time.test.mjs",
     "check": "biome check src",
     "fix": "biome check --write src"
   },

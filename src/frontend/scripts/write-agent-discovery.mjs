@@ -82,7 +82,7 @@ Human setup: ${productionOrigin}/guide.html
 ## Set up in the app or with an AI assistant
 
 VoiceCall AI supports both paths: sign in and open AI Answering, or ask an assistant using the Internet Computer Protocol plugin in ChatGPT (where available) or the official ICP MCP connector to configure the service with your approval. An inquiry about setup can start with these choices and a useful example: “Set up an after-hours receptionist that answers our FAQs and takes callback requests.” The assistant gathers the details, creates or edits the app preset, and returns its setup checklist. It cannot edit Twilio or a phone carrier through ICP MCP alone.
-Use cases: business front desk, after-hours message taking, FAQs, appointment request intake and personal call screening. Provide the actual business facts, opening hours/timezone, greeting and escalation instructions. Collecting an appointment request does not book a calendar; no built-in live transfer, SMS or email delivery is provided. Save transcripts if messages must remain available in History; capture off means no saved conversation. Do not promise automatic follow-up from spoken instructions alone.
+Use cases: business front desk, after-hours message taking, FAQs, custom instructions, appointment booking, and personal call screening. Provide the actual business facts, greeting, and escalation instructions. Appointment booking is a separate account calendar: save office hours with setMySchedule, then bookAppointment saves the caller's name, E.164 phone, time slot, and notes. A spoken request is not a reservation until that call returns ok. There is no live transfer, SMS, or email delivery. Save transcripts if messages must remain available in History; capture off means no saved conversation. Do not promise automatic follow-up from spoken instructions alone.
 The current bridge supports numbers provisioned in its operator-configured Twilio account. An unrelated customer Twilio account's webhook will not authenticate merely by pasting the URL. Users without a supported number need operator onboarding. Existing mobile/business lines can optionally forward to a supported Twilio number through their carrier; forwarding availability/cost and fallback are carrier settings. Avoid a forwarding loop.
 
 ## Discovery and authentication
@@ -140,6 +140,14 @@ Genesis prepares a script before payment. One buyer approval accepts the display
 4. Call the number from another phone to verify signed routing. A disabled preset may play “unavailable” while still verifying; this first call is not proof the AI conversation works. Refresh status on request after the test. Once verified, use setAnsweringPresetEnabled(id,true) with user authorization, then make a second test call to hear the AI and check capture in History if selected. Outbound app tests also spend phone time, with both outbound and inbound legs billed. Do not initiate them without authorization.
 5. readyForCalls means app prerequisites only, not live Twilio/provider health, spare bridge capacity or a successful end-to-end call. Verification is historical; after editing routing or forwarding, test again. Changing phoneNumber resets verification. Pause using setAnsweringPresetEnabled(id,false); this stops new answering calls but does not restore Twilio/carrier routing or end an existing call. Configure provider fallback separately. Keep credentials on the bridge and secrets/private URLs out of public outputs. Read readiness on demand, without timers or rapid polling.
 
+## Appointment calendar
+
+Booking is optional and separate from the answering preset. Ask before turning it on. Call suggestedSchedule for a Monday–Friday 09:00–17:00 UTC template, edit it with the user, and save with setMySchedule. weeklyHours has seven records, Sunday at index 0 through Saturday at index 6. timezoneOffsetMinutes is a fixed UTC offset, such as -300 or -240; daylight saving does not change it automatically. slotMinutes is 15, 30, 45, or 60. bookingWindowDays is 1–60. enabled true allows bookings.
+
+listOpenSlots(fromMs, toMs) and listMyAppointments(fromMs, toMs) are authenticated queries. Times are Unix milliseconds. Open-slot queries return at most 48 slots and scan at most 14 days. Appointment lists cover at most 62 days and 100 rows. bookAppointment saves callerName, E.164 callerPhone, startsAtMs from listOpenSlots, optional presetId, serviceLabel, and notes. cancelAppointment, rescheduleAppointment, and updateAppointmentDetails change a booking. An account stores at most 200 appointments. None of these calls uses the ledger, HTTP, a timer, or phone time.
+
+Tell the user to review bookings at ${productionOrigin}/user/schedule or by asking you to list them. Mention booking in the answering instructions. A live call can use list_open_times and book_appointment only after the Windows voice bridge running this release is restarted. Deploying this website does not update that bridge. Do not call getScheduleForServer, listOpenSlotsForServer, or bookAppointmentForServer.
+
 ## Failure diagnosis
 
 An assistant refusal before an API call is not a backend rejection. Use the returned API code or job.error to report an app failure. Preview reports INVALID_IDEMPOTENCY_KEY, INVALID_PHONE_NUMBER, EMERGENCY_NUMBER_BLOCKED, TERMS_ACCEPTANCE_REQUIRED, PRESET_NOT_FOUND, CALL_JOB_LIMIT or PHONE_TIME_REQUIRED as applicable. Bridge failures preserve codes such as SAFETY_BLOCKED, CAPTURE_AUTHORIZATION_REQUIRED and BRIDGE_CALL_FAILED in job.error after the Windows bridge is updated. Customer storage authorization is distinct from recipient permission.
@@ -168,7 +176,7 @@ The user's authorization is required for payments, preset edits, calling and ans
 `;
 
 const structuredGuide = {
-  schema_version: "1.3",
+  schema_version: "1.4",
   name: "VoiceCall AI",
   canonical_origin: productionOrigin,
   summary:
@@ -189,8 +197,8 @@ const structuredGuide = {
     external_steps: "ICP MCP changes app configuration only. Twilio webhook configuration and optional carrier forwarding require the user or a separately authorized tool.",
     number_requirement: "Number provisioned in the operator bridge's configured Twilio account. A separate customer Twilio account is not supported by webhook URL alone; contact the operator for onboarding.",
   },
-  answering_use_cases: ["Business front desk", "After-hours messages", "Business FAQs", "Appointment request intake", "Personal call screening"],
-  answering_limitations: "No built-in calendar booking, live transfer, SMS/email notifications or automatic follow-up. Messages remain in History only with selected saved capture; realtime audio still passes through Twilio/xAI. Bridge capacity and provider availability apply.",
+  answering_use_cases: ["Business front desk", "After-hours messages", "Business FAQs", "Custom answering instructions", "Appointment booking", "Personal call screening"],
+  answering_limitations: "No live transfer, SMS/email notifications, or automatic follow-up. Appointment booking uses the account calendar and does not spend phone time. A request is reserved only after bookAppointment succeeds. Messages remain in History only with selected saved capture; realtime audio still passes through Twilio/xAI. Bridge capacity and provider availability apply. Live in-call booking requires the updated voice bridge.",
   canisters: {
     frontend: {
       canister_id: canisters.frontend,
@@ -223,6 +231,7 @@ const structuredGuide = {
     "User calls the number to verify. Disabled verification may play unavailable. Recheck on demand; when verified, enable with user authorization, then make a second test call to hear the AI and inspect selected capture in History.",
     "readyForCalls reports app prerequisites only, not Twilio configuration/provider health or available bridge capacity. Do not equate it to successful end-to-end testing.",
     "Disabling stops new AI answering, not an ongoing call or carrier forwarding. Arrange fallback in the carrier/Twilio configuration.",
+    "For appointments, save office hours with setMySchedule, check listOpenSlots, and book with bookAppointment. Show the Calendar page for review. Booking is a local update and does not buy or spend phone time.",
   ],
   human_guide: `${productionOrigin}/guide.html`,
   stripe_workflow: [
@@ -280,6 +289,7 @@ const structuredGuide = {
     "Customer-selected transcript/recording flags; applicable notice and participant permissions remain required",
     "Random webhookSecret (32–160 URL-safe characters)",
     "Prepaid phone time on the shared account",
+    "Optional calendar: fixed UTC offset, seven weekday hours, slot length, notice, booking window, service label, and notes",
   ],
   primary_methods: [
     "getAgentGuide",
@@ -307,6 +317,15 @@ const structuredGuide = {
     "getAnsweringSetupStatus",
     "createAnsweringPreset",
     "setAnsweringPresetEnabled",
+    "suggestedSchedule",
+    "getMySchedule",
+    "setMySchedule",
+    "listOpenSlots",
+    "listMyAppointments",
+    "bookAppointment",
+    "cancelAppointment",
+    "rescheduleAppointment",
+    "updateAppointmentDetails",
     "updateAnsweringPreset",
     "deleteAnsweringPreset",
   ],

@@ -42,6 +42,11 @@ type ToolsEnabled =
    webSearch: bool;
    xSearch: bool;
  };
+type TimeSlot = 
+ record {
+   endsAtMs: int;
+   startsAtMs: int;
+ };
 type TermsStatus = 
  record {
    acceptedAt: opt int;
@@ -66,6 +71,22 @@ type StripeMode =
  variant {
    live;
    test;
+ };
+type ScheduleSettings = 
+ record {
+   bookingNotes: text;
+   bookingWindowDays: nat;
+   enabled: bool;
+   minNoticeMinutes: nat;
+   serviceLabel: text;
+   slotMinutes: nat;
+   timezoneOffsetMinutes: int;
+   weeklyHours: vec DayHours;
+ };
+type ScheduleMutationResult = 
+ variant {
+   err: text;
+   ok: ScheduleSettings;
  };
 type SampleRate = 
  variant {
@@ -116,6 +137,11 @@ type PendingCallEnd =
    requestedAt: int;
    reservationId: text;
    serverSessionId: opt text;
+ };
+type OpenSlotsResult = 
+ variant {
+   err: text;
+   ok: vec TimeSlot;
  };
 type NonAdminPhoneTimeSummary = 
  record {
@@ -213,6 +239,12 @@ type IcpPhoneTimePackage =
    name: text;
    priceE8s: nat;
    seconds: nat;
+ };
+type DayHours = 
+ record {
+   closeMinute: nat;
+   closed: bool;
+   openMinute: nat;
  };
 type CreatePurchaseIntentResult = 
  variant {
@@ -366,6 +398,15 @@ type CallAudioOutcome =
    playbackUnconfirmed;
    unknown;
  };
+type BookAppointmentInput = 
+ record {
+   callerName: text;
+   callerPhone: text;
+   notes: text;
+   presetId: opt nat;
+   serviceLabel: opt text;
+   startsAtMs: int;
+ };
 type BillingStatus = 
  record {
    availableSeconds: nat;
@@ -424,6 +465,11 @@ type Backend =
    agentTransferIcp: (to: IcrcAccount, amountE8s: nat, idempotencyKey:
     text) -> (IcpTransferResult);
    assignCallerUserRole: (user: principal, role: UserRole) -> ();
+   bookAppointment: (input: BookAppointmentInput) ->
+    (AppointmentMutationResult);
+   bookAppointmentForServer: (webhookSecret: text, phoneNumber: text, input:
+    BookAppointmentInput) -> (AppointmentMutationResult);
+   cancelAppointment: (id: nat) -> (AppointmentMutationResult);
    cancelCallReservation: (reservationId: text, reason: text) ->
     (BillingMutationResult);
    cancelCallReservationByCallSidForServer: (callSid: text, reason: text) ->
@@ -474,6 +520,7 @@ type Backend =
    getAnsweringSetupStatus: (id: PresetId) ->
     (opt AnsweringSetupStatus) query;
    getApiDoc: () -> (text) query;
+   getAppointment: (id: nat) -> (opt Appointment) query;
    getBillingPackages: () -> (vec BillingPackage) query;
    getCallDiagnostics: (id: CallId) -> (opt CallDiagnostics) query;
    getCallRecord: (id: CallId) -> (opt CallRecordPublic) query;
@@ -482,10 +529,13 @@ type Backend =
    getColonyCallOutcome: (id: nat) -> (opt CallStatus) query;
    getMyAccountIdentity: () -> (AccountIdentity) query;
    getMyBillingStatus: () -> (BillingStatus) query;
+   getMySchedule: () -> (opt ScheduleSettings) query;
    getPreset: (id: PresetId) -> (opt CallPreset) query;
    getPresetForServer: (id: PresetId) -> (opt CallPreset) query;
    getPurchaseIntentForServer: (purchaseIntentId: text) ->
     (opt PurchaseIntentPublic) query;
+   getScheduleForServer: (webhookSecret: text, phoneNumber: text) ->
+    (opt ScheduleSettings) query;
    getTwilioLineNumbersForServer: () -> (vec text) query;
    grantColonyCall: (recipientPhone: text, presetId: nat, captureOptions:
     AgentCallCaptureOptions, maxSeconds: nat, expiresAt: int, genesisJobId:
@@ -495,11 +545,16 @@ type Backend =
    listColonyWorkerGrants: () -> (vec ColonyCallGrant) query;
    listMyAnsweringLiveSessions: () -> (vec AnsweringLiveSession) query;
    listMyAnsweringPresets: () -> (vec AnsweringPreset) query;
+   listMyAppointments: (fromMs: int, toMs: int) ->
+    (AppointmentListResult) query;
    listMyCalls: () -> (vec CallRecordPublic) query;
    listMyColonyCallGrants: () -> (vec ColonyCallGrant) query;
    listMyPresets: () -> (vec CallPreset) query;
    listOpenCallReservationsForServer: (limit: nat) ->
     (vec CallReservationPublic) query;
+   listOpenSlots: (fromMs: int, toMs: int) -> (OpenSlotsResult) query;
+   listOpenSlotsForServer: (webhookSecret: text, phoneNumber: text, fromMs:
+    int, toMs: int) -> (OpenSlotsResult) query;
    listPendingAgentCallsForServer: (limit: nat) -> (vec AgentCallJob) query;
    listPendingCallEndsForServer: (limit: nat) -> (vec PendingCallEnd) query;
    markReservationStarted: (reservationId: text, callSid: text) ->
@@ -509,6 +564,8 @@ type Backend =
     (bool);
    removeTwilioLine: (phoneNumber: text) -> (TwilioLineMutationResult);
    requestEndActiveCall: (callId: CallId) -> (RequestCallEndResult);
+   rescheduleAppointment: (id: nat, startsAtMs: int) ->
+    (AppointmentMutationResult);
    reserveCall: (input: InitiateCallInput) -> (ReserveCallResult);
    reserveIncomingAnsweringCall: (webhookSecret: text, callerPhone: text,
     twilioToNumber: text, callSid: text) -> (ReserveCallResult);
@@ -517,14 +574,18 @@ type Backend =
     text, twilioFromNumber: text) -> ();
    setAnsweringPresetEnabled: (id: PresetId, enabled: bool) ->
     (AnsweringPresetMutationResult);
+   setMySchedule: (input: ScheduleSettings) -> (ScheduleMutationResult);
    setTwilioLine: (input: TwilioLineInput) -> (TwilioLineMutationResult);
    setTwilioLineEnabled: (phoneNumber: text, enabled: bool) ->
     (TwilioLineMutationResult);
+   suggestedSchedule: () -> (ScheduleSettings) query;
    twilioWebhook: (callSid: text, callStatus: text) -> (text);
    updateAnsweringPreset: (id: PresetId, input: AnsweringPresetInput) ->
     (AnsweringPresetMutationResult);
    updateAnsweringPresetInstructions: (id: PresetId, systemPrompt: text) ->
     (AnsweringPresetMutationResult);
+   updateAppointmentDetails: (id: nat, input: AppointmentDetailsInput) ->
+    (AppointmentMutationResult);
    updateCallStatus: (callId: CallId, status: CallStatus, transcript:
     opt text) -> (bool);
    updatePreset: (id: PresetId, input: CallPresetInput) -> (opt CallPreset);
@@ -541,7 +602,44 @@ type AudioFormat =
    pcma;
    pcmu;
  };
-type AnsweringSetupStatus =
+type AppointmentStatus = 
+ variant {
+   booked;
+   cancelled;
+ };
+type AppointmentMutationResult = 
+ variant {
+   err: text;
+   ok: Appointment;
+ };
+type AppointmentListResult = 
+ variant {
+   err: text;
+   ok: vec Appointment;
+ };
+type AppointmentDetailsInput = 
+ record {
+   callerName: text;
+   callerPhone: text;
+   notes: text;
+   serviceLabel: opt text;
+ };
+type Appointment = 
+ record {
+   callerName: text;
+   callerPhone: text;
+   createdAtMs: int;
+   endsAtMs: int;
+   id: nat;
+   notes: text;
+   ownerId: principal;
+   presetId: opt nat;
+   serviceLabel: text;
+   startsAtMs: int;
+   status: AppointmentStatus;
+   updatedAtMs: int;
+ };
+type AnsweringSetupStatus = 
  record {
    availablePhoneSeconds: nat;
    enabled: bool;
@@ -560,7 +658,7 @@ type AnsweringPresetStatus =
    pendingVerification;
    verified;
  };
-type AnsweringPresetSimpleInput =
+type AnsweringPresetSimpleInput = 
  record {
    captureOptions: AnsweringCaptureOptions;
    name: text;

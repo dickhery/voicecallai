@@ -3,6 +3,17 @@ import { normalizeCaptureOptions, callFailurePayload, dispatchFailureMessage, CA
 import "dotenv/config";
 import { KEYPAD_TOOL, KEYPAD_INSTRUCTIONS, createPhoneKeypad, extractSuppliedExtension } from "./phone-keypad.js";
 import { CALL_LIFECYCLE_TOOLS, CALL_LIFECYCLE_INSTRUCTIONS, CALL_LIFECYCLE_LIMITS, createCallLifecycle } from "./call-lifecycle.js";
+import {
+  BOOK_APPOINTMENT_TOOL,
+  LIST_OPEN_TIMES_TOOL,
+  bookingGuard,
+  buildScheduleInstructions,
+  clampOpenTimesRange,
+  formatBusinessLocal,
+  formatOpenTimes,
+  parseBookAppointmentArgs,
+  resolveCallerPhone,
+} from "./schedule-booking.js";
 import { createLineListener } from "./line-audio.js";
 import { createResponseDelivery } from "./response-delivery.js";
 import { renderLiveAudioPage } from "./live-audio-page.js";
@@ -26,9 +37,12 @@ import {
   getIcpServerPrincipalText,
   normalizeAgentCallJob,
   normalizeAnsweringPreset,
+  normalizeAppointment,
   normalizeCallPreset,
   normalizePurchaseIntent,
   normalizeReservation,
+  normalizeScheduleSettings,
+  normalizeTimeSlot,
   okOrThrow,
   principalFromText,
   stripeModeToCandid,
@@ -1265,6 +1279,7 @@ function buildXaiSessionUpdate(
     direction = CALL_DIRECTIONS.OUTBOUND,
     openingOnly = false,
     enableInputTranscription = false,
+    schedule = null,
   } = {},
 ) {
   const { cleanPrompt, options: voiceSession } = extractVoiceSessionOptions(
@@ -1282,6 +1297,11 @@ function buildXaiSessionUpdate(
   if (preset.toolsEnabled.xSearch) tools.push({ type: "x_search" });
   const callDirection = normalizeCallDirection(direction);
   if (callDirection === CALL_DIRECTIONS.OUTBOUND) tools.push(KEYPAD_TOOL, ...CALL_LIFECYCLE_TOOLS);
+  const scheduleBooking =
+    !openingOnly &&
+    callDirection === CALL_DIRECTIONS.INBOUND &&
+    schedule?.enabled === true;
+  if (scheduleBooking) tools.push(LIST_OPEN_TIMES_TOOL, BOOK_APPOINTMENT_TOOL);
   const openingLine =
     callDirection === CALL_DIRECTIONS.INBOUND
       ? normalizeInboundGreeting(preset.inboundGreeting) ||
@@ -1317,6 +1337,7 @@ function buildXaiSessionUpdate(
         }),
         callDirection === CALL_DIRECTIONS.OUTBOUND ? KEYPAD_INSTRUCTIONS : "",
         callDirection === CALL_DIRECTIONS.OUTBOUND ? CALL_LIFECYCLE_INSTRUCTIONS : "",
+        scheduleBooking ? buildScheduleInstructions(schedule) : "",
       );
 
   const idleTimeoutMs = normalizeIdleTimeoutMs(voiceSession.idleTimeoutMs);
@@ -4097,6 +4118,157 @@ app.post("/initiate-call", async (req, res) => {
   }
 });
 
+function queueScheduleToolOutput(session, callId, output, speak) {
+  if (!session) return;
+  if (!Array.isArray(session.pendingScheduleOutputs)) session.pendingScheduleOutputs = [];
+  const item = { callId, output, speak };
+  if (session.xaiResponseInProgress || !isWebSocketOpen(session.xaiWs)) {
+    session.pendingScheduleOutputs.push(item);
+    return;
+  }
+  sendScheduleToolOutput(session, item);
+}
+
+function sendScheduleToolOutput(session, item) {
+  if (!isWebSocketOpen(session?.xaiWs)) {
+    session.pendingScheduleOutputs.push(item);
+    return;
+  }
+  session.xaiWs.send(JSON.stringify({
+    type: "conversation.item.create",
+    item: {
+      type: "function_call_output",
+      call_id: item.callId,
+      output: JSON.stringify(item.output),
+    },
+  }));
+  if (item.speak) {
+    session.xaiWs.send(JSON.stringify({ type: "response.create" }));
+  }
+}
+
+function flushScheduleToolOutputs(session) {
+  if (!session?.pendingScheduleOutputs?.length) return;
+  if (session.xaiResponseInProgress || !isWebSocketOpen(session.xaiWs)) return;
+  const pending = session.pendingScheduleOutputs.splice(0);
+  for (const item of pending) sendScheduleToolOutput(session, item);
+}
+
+async function handleInboundScheduleTool(session, event) {
+  const callId = String(event?.call_id || "");
+  const name = String(event?.name || "");
+  let args = {};
+  try {
+    args = event?.arguments ? JSON.parse(event.arguments) : {};
+  } catch {
+    queueScheduleToolOutput(session, callId, {
+      status: "invalid",
+      instruction: "The booking request could not be read. Ask again. Do not say a time is reserved.",
+    }, true);
+    return;
+  }
+  if (!session?.schedule?.enabled) {
+    queueScheduleToolOutput(session, callId, {
+      status: "unavailable",
+      instruction: "Appointment booking is not turned on. Take a message and say the time is not reserved.",
+    }, true);
+    return;
+  }
+  try {
+    const actor = await getBackendActor();
+    if (name === LIST_OPEN_TIMES_TOOL.name) {
+      const range = clampOpenTimesRange(args, session.schedule, Date.now());
+      const slots = okOrThrow(
+        await actor.listOpenSlotsForServer(
+          session.scheduleWebhookSecret,
+          session.schedulePhone,
+          BigInt(range.fromMs),
+          BigInt(range.toMs),
+        ),
+        "Open times could not be checked.",
+      ).map(normalizeTimeSlot);
+      const offered = formatOpenTimes(slots, session.schedule, 12);
+      queueScheduleToolOutput(session, callId, {
+        status: "ok",
+        slots: offered,
+        instruction: offered.length
+          ? "Offer at most three of these exact times. Do not invent a time. To look later, call list_open_times again with fromMs one millisecond after the last startsAtMs."
+          : "No open times were returned. Say that and do not invent a time.",
+      }, true);
+      return;
+    }
+    if (name === BOOK_APPOINTMENT_TOOL.name) {
+      const guard = bookingGuard({
+        booked: session.scheduleBooked === true,
+        inFlight: session.scheduleBookInFlight === true,
+      });
+      if (!guard.allow) {
+        queueScheduleToolOutput(session, callId, {
+          status: guard.status,
+          instruction: guard.instruction,
+        }, true);
+        return;
+      }
+      const parsed = parseBookAppointmentArgs(args);
+      if (!parsed.ok) {
+        queueScheduleToolOutput(session, callId, {
+          status: "invalid",
+          instruction: parsed.instruction,
+        }, true);
+        return;
+      }
+      const phone = resolveCallerPhone(parsed.callerPhone, session.recipientPhone);
+      if (!phone.ok) {
+        queueScheduleToolOutput(session, callId, {
+          status: "need_phone",
+          instruction: "Ask for a callback number starting with + and the country code. Do not say a time is reserved.",
+        }, true);
+        return;
+      }
+      session.scheduleBookInFlight = true;
+      try {
+        const appointment = normalizeAppointment(okOrThrow(
+          await actor.bookAppointmentForServer(
+            session.scheduleWebhookSecret,
+            session.schedulePhone,
+            {
+              presetId: null,
+              callerName: parsed.callerName,
+              callerPhone: phone.phone,
+              startsAtMs: BigInt(parsed.startsAtMs),
+              serviceLabel: parsed.serviceLabel || null,
+              notes: parsed.notes,
+            },
+          ),
+          "The appointment was not booked.",
+        ));
+        session.scheduleBooked = true;
+        queueScheduleToolOutput(session, callId, {
+          status: "booked",
+          startsAtMs: appointment.startsAtMs,
+          localTime: formatBusinessLocal(appointment.startsAtMs, session.schedule.timezoneOffsetMinutes),
+          callerName: appointment.callerName,
+          instruction: "Confirm this saved appointment in one short sentence. Do not book another time on this call.",
+        }, true);
+      } finally {
+        session.scheduleBookInFlight = false;
+      }
+      return;
+    }
+  } catch (error) {
+    log("warn", "Schedule tool failed", {
+      sessionId: session?.id,
+      name,
+      error: error.message,
+    });
+    queueScheduleToolOutput(session, callId, {
+      status: "not_booked",
+      message: error.message,
+      instruction: "Tell the caller this time is not reserved. Offer another time from list_open_times or take a message.",
+    }, true);
+  }
+}
+
 app.post("/answering/incoming/:webhookSecret", async (req, res) => {
   res.type("text/xml");
   let session = null;
@@ -4174,6 +4346,17 @@ app.post("/answering/incoming/:webhookSecret", async (req, res) => {
 
     const preset = toPlainAnsweringPreset(answeringPreset);
     assertSafeInstructionText(preset.systemPrompt, "Answering preset instructions");
+    let schedule = null;
+    try {
+      schedule = normalizeScheduleSettings(unwrapOptional(
+        await actor.getScheduleForServer(webhookSecret, twilioToNumber),
+      ));
+    } catch (scheduleError) {
+      log("warn", "Continuing answering call without appointment booking", {
+        error: scheduleError.message,
+      });
+    }
+    const scheduleEnabled = schedule?.enabled === true;
 
     session = {
       id: sessionId,
@@ -4191,6 +4374,12 @@ app.post("/answering/incoming/:webhookSecret", async (req, res) => {
       direction: CALL_DIRECTIONS.INBOUND,
       shouldGreet: true,
       preset,
+      schedule: scheduleEnabled ? schedule : null,
+      scheduleWebhookSecret: scheduleEnabled ? webhookSecret : "",
+      schedulePhone: scheduleEnabled ? twilioToNumber : "",
+      scheduleBooked: false,
+      scheduleBookInFlight: false,
+      pendingScheduleOutputs: [],
       saveTranscript: preset.captureOptions.saveTranscript,
       recordAudio: preset.captureOptions.recordAudio,
       permissionConfirmed: preset.captureOptions.permissionConfirmed,
@@ -4911,6 +5100,7 @@ mediaWss.on("connection", (twilioWs, request) => {
           openingOnly: false,
           enableInputTranscription:
             session.saveTranscript && session.permissionConfirmed,
+          schedule: session.schedule ?? null,
         }),
       ),
     );
@@ -5035,6 +5225,7 @@ mediaWss.on("connection", (twilioWs, request) => {
             openingOnly: !outbound,
             enableInputTranscription:
               session.saveTranscript && session.permissionConfirmed,
+            schedule: session.schedule ?? null,
           }),
         ),
       );
@@ -5069,6 +5260,10 @@ mediaWss.on("connection", (twilioWs, request) => {
         if (event.name === KEYPAD_TOOL.name) {
           suppressKeypadResponseAudio = true;
           keypad.handle(event);
+          return;
+        }
+        if (event.name === LIST_OPEN_TIMES_TOOL.name || event.name === BOOK_APPOINTMENT_TOOL.name) {
+          void handleInboundScheduleTool(session, event);
         }
         return;
       }
@@ -5172,6 +5367,9 @@ mediaWss.on("connection", (twilioWs, request) => {
         lifecycle.responseDone(event.response?.status);
         if (completedOpening) {
           applyFullSessionInstructions("opening_response_done");
+        }
+        if (typeof flushScheduleToolOutputs === "function") {
+          flushScheduleToolOutputs(session);
         }
         return;
       }

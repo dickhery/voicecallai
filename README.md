@@ -955,8 +955,10 @@ moderation request is added, keeping cycle and per-call costs unchanged.
 Run `node --test src/server/call-safety.test.js` for the safety regression suite.
 Server changes require updating/restarting the separate Windows voice bridge via
 `scripts/update-voicecall-service.ps1`; deploying IC assets alone does not update
-that process. The safety policy is enforced locally without storing a new copy
-of call content on-chain.
+that process. This release's bridge can check open times and save one appointment
+during an inbound call when that account's calendar is enabled. The Calendar page
+and MCP booking methods work from the canister without that restart. The safety
+policy is enforced locally without storing a new copy of call content on-chain.
 
 ### Official ICP MCP opt-in
 

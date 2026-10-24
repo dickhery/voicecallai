@@ -5,6 +5,7 @@ import vm from "node:vm";
 import { EventEmitter } from "node:events";
 import { createPhoneKeypad, makeKeypadAudio, extractSuppliedExtension, KEYPAD_TOOL, KEYPAD_INSTRUCTIONS } from "./phone-keypad.js";
 import { createCallLifecycle, CALL_LIFECYCLE_TOOLS, CALL_LIFECYCLE_INSTRUCTIONS } from "./call-lifecycle.js";
+import { BOOK_APPOINTMENT_TOOL, LIST_OPEN_TIMES_TOOL } from "./schedule-booking.js";
 import { createResponseDelivery } from "./response-delivery.js";
 
 function harness(overrides = {}) {
@@ -210,6 +211,10 @@ test("real bridge event handlers navigate the first menu and protect tones from 
     getXaiResponseId: e => e.response?.id, getLatestTranscriptText: () => "", noteGoodbyeUtterance: noop,
     broadcastMonitorAudio: noop, broadcastMonitorEvent: noop, appendBridgeRecordingAudio: noop,
     scheduleFinishPaidSession: noop,
+    flushScheduleToolOutputs: noop,
+    LIST_OPEN_TIMES_TOOL,
+    BOOK_APPOINTMENT_TOOL,
+    handleInboundScheduleTool: noop,
     endSessionFromRemoteRequest: async (session, reason) => ended.push({ session, reason }),
   });
   vm.runInContext(source.slice(start, end), context);

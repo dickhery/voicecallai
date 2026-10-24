@@ -1483,8 +1483,8 @@ export default function AnsweringServicePage() {
                 AI Answering
               </h1>
               <p className="mt-1 text-sm text-muted-foreground">
-                Let an AI greet callers, answer your FAQs, or collect callback
-                and appointment requests on a supported Twilio number.
+                Let an AI greet callers, answer from your instructions, or book
+                open times on a supported Twilio number.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -1499,6 +1499,9 @@ export default function AnsweringServicePage() {
                   className={`h-4 w-4 ${presets.isFetching ? "animate-spin" : ""}`}
                 />
                 Refresh services
+              </Button>
+              <Button variant="outline" className="gap-2" asChild>
+                <Link to="/user/schedule">Calendar</Link>
               </Button>
               <Button variant="outline" className="gap-2" asChild>
                 <a
@@ -1526,11 +1529,12 @@ export default function AnsweringServicePage() {
                 In ChatGPT, connect the Internet Computer Protocol plugin, or
                 use the ICP MCP connector in a compatible AI client. After you
                 sign in with Internet Identity and authorize actions, your agent
-                can create and edit the answering service, check setup, and
-                retrieve saved call results. You or the app operator connect the
-                Twilio webhook, and you configure your carrier’s forwarding; the
-                connector does not control Twilio or your carrier. Press Refresh
-                services here after your agent makes changes.
+                can create and edit the answering service, set office hours,
+                book appointments, check setup, and retrieve saved call results.
+                You or the app operator connect the Twilio webhook, and you
+                configure your carrier’s forwarding; the connector does not
+                control Twilio or your carrier. Press Refresh services here
+                after your agent makes changes.
               </p>
               <div className="flex flex-wrap gap-2">
                 <Button
@@ -1704,8 +1708,8 @@ export default function AnsweringServicePage() {
                       </div>
                       <p className="text-xs leading-relaxed text-muted-foreground">
                         For after-hours answering, use message taking and add
-                        your business hours. Appointment requests need a person
-                        to confirm the booking.
+                        your facts. Appointment booking uses the saved Calendar
+                        and confirms a time only after it is saved.
                       </p>
                     </div>
                     <NaturalPromptBuilder

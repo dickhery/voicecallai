@@ -225,6 +225,67 @@ const PendingCallEnd = IDL.Record({
   reason: IDL.Text,
 });
 
+const DayHours = IDL.Record({
+  closed: IDL.Bool,
+  openMinute: IDL.Nat,
+  closeMinute: IDL.Nat,
+});
+
+const ScheduleSettings = IDL.Record({
+  enabled: IDL.Bool,
+  timezoneOffsetMinutes: IDL.Int,
+  slotMinutes: IDL.Nat,
+  minNoticeMinutes: IDL.Nat,
+  bookingWindowDays: IDL.Nat,
+  serviceLabel: IDL.Text,
+  bookingNotes: IDL.Text,
+  weeklyHours: IDL.Vec(DayHours),
+});
+
+const TimeSlot = IDL.Record({
+  startsAtMs: IDL.Int,
+  endsAtMs: IDL.Int,
+});
+
+const AppointmentStatus = IDL.Variant({
+  booked: IDL.Null,
+  cancelled: IDL.Null,
+});
+
+const Appointment = IDL.Record({
+  id: IDL.Nat,
+  ownerId: IDL.Principal,
+  presetId: IDL.Opt(IDL.Nat),
+  callerName: IDL.Text,
+  callerPhone: IDL.Text,
+  startsAtMs: IDL.Int,
+  endsAtMs: IDL.Int,
+  status: AppointmentStatus,
+  serviceLabel: IDL.Text,
+  notes: IDL.Text,
+  createdAtMs: IDL.Int,
+  updatedAtMs: IDL.Int,
+});
+
+const BookAppointmentInput = IDL.Record({
+  presetId: IDL.Opt(IDL.Nat),
+  callerName: IDL.Text,
+  callerPhone: IDL.Text,
+  startsAtMs: IDL.Int,
+  serviceLabel: IDL.Opt(IDL.Text),
+  notes: IDL.Text,
+});
+
+const OpenSlotsResult = IDL.Variant({
+  ok: IDL.Vec(TimeSlot),
+  err: IDL.Text,
+});
+
+const AppointmentMutationResult = IDL.Variant({
+  ok: Appointment,
+  err: IDL.Text,
+});
+
 const idlFactory = ({ IDL }) =>
   IDL.Service({
     getPurchaseIntentForServer: IDL.Func(
@@ -350,6 +411,21 @@ const idlFactory = ({ IDL }) =>
       ["query"],
     ),
     clearPendingCallEndForServer: IDL.Func([IDL.Text], [IDL.Bool], []),
+    getScheduleForServer: IDL.Func(
+      [IDL.Text, IDL.Text],
+      [IDL.Opt(ScheduleSettings)],
+      ["query"],
+    ),
+    listOpenSlotsForServer: IDL.Func(
+      [IDL.Text, IDL.Text, IDL.Int, IDL.Int],
+      [OpenSlotsResult],
+      ["query"],
+    ),
+    bookAppointmentForServer: IDL.Func(
+      [IDL.Text, IDL.Text, BookAppointmentInput],
+      [AppointmentMutationResult],
+      [],
+    ),
   });
 
 let identityCache = null;
@@ -608,6 +684,55 @@ export function normalizeAgentCallJob(job) {
     callSid: unwrapOptional(job.callSid),
     serverSessionId: unwrapOptional(job.serverSessionId),
     error: unwrapOptional(job.error),
+  };
+}
+
+function candidIntToNumber(value, fallback = 0) {
+  if (value === null || value === undefined) return fallback;
+  const numeric = typeof value === "bigint" ? Number(value) : Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+export function normalizeScheduleSettings(settings) {
+  if (!settings) return null;
+  return {
+    enabled: Boolean(settings.enabled),
+    timezoneOffsetMinutes: candidIntToNumber(settings.timezoneOffsetMinutes),
+    slotMinutes: candidIntToNumber(settings.slotMinutes),
+    minNoticeMinutes: candidIntToNumber(settings.minNoticeMinutes),
+    bookingWindowDays: candidIntToNumber(settings.bookingWindowDays, 1),
+    serviceLabel: String(settings.serviceLabel || "Appointment"),
+    bookingNotes: String(settings.bookingNotes || ""),
+    weeklyHours: Array.isArray(settings.weeklyHours)
+      ? settings.weeklyHours.map((day) => ({
+          closed: Boolean(day.closed),
+          openMinute: candidIntToNumber(day.openMinute),
+          closeMinute: candidIntToNumber(day.closeMinute),
+        }))
+      : [],
+  };
+}
+
+export function normalizeTimeSlot(slot) {
+  return {
+    startsAtMs: candidIntToNumber(slot?.startsAtMs),
+    endsAtMs: candidIntToNumber(slot?.endsAtMs),
+  };
+}
+
+export function normalizeAppointment(appointment) {
+  if (!appointment) return null;
+  const presetId = unwrapOptional(appointment.presetId);
+  return {
+    id: appointment.id?.toString?.() ?? String(appointment.id),
+    callerName: appointment.callerName,
+    callerPhone: appointment.callerPhone,
+    startsAtMs: candidIntToNumber(appointment.startsAtMs),
+    endsAtMs: candidIntToNumber(appointment.endsAtMs),
+    status: variantKey(appointment.status),
+    serviceLabel: appointment.serviceLabel,
+    notes: appointment.notes,
+    presetId: presetId === null ? null : presetId.toString(),
   };
 }
 

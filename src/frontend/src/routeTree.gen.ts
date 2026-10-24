@@ -17,6 +17,7 @@ import { Route as IndexImport } from "./routes/index";
 import { Route as UserAnsweringImport } from "./routes/user/answering";
 import { Route as UserDashboardImport } from "./routes/user/dashboard";
 import { Route as UserHistoryImport } from "./routes/user/history";
+import { Route as UserScheduleImport } from "./routes/user/schedule";
 import { Route as UserSettingsImport } from "./routes/user/settings";
 
 const IndexRoute = IndexImport.update({
@@ -49,6 +50,12 @@ const UserSettingsRoute = UserSettingsImport.update({
   getParentRoute: () => rootRoute,
 } as never);
 
+const UserScheduleRoute = UserScheduleImport.update({
+  id: "/user/schedule",
+  path: "/user/schedule",
+  getParentRoute: () => rootRoute,
+} as never);
+
 const AdminDashboardRoute = AdminDashboardImport.update({
   id: "/admin/dashboard",
   path: "/admin/dashboard",
@@ -73,6 +80,7 @@ export interface FileRoutesByFullPath {
   "/user/dashboard": typeof UserDashboardRoute;
   "/user/history": typeof UserHistoryRoute;
   "/user/settings": typeof UserSettingsRoute;
+  "/user/schedule": typeof UserScheduleRoute;
   "/admin/dashboard": typeof AdminDashboardRoute;
   "/admin/users": typeof AdminUsersRoute;
   "/admin/logs": typeof AdminLogsRoute;
@@ -84,6 +92,7 @@ export interface FileRoutesByTo {
   "/user/dashboard": typeof UserDashboardRoute;
   "/user/history": typeof UserHistoryRoute;
   "/user/settings": typeof UserSettingsRoute;
+  "/user/schedule": typeof UserScheduleRoute;
   "/admin/dashboard": typeof AdminDashboardRoute;
   "/admin/users": typeof AdminUsersRoute;
   "/admin/logs": typeof AdminLogsRoute;
@@ -96,6 +105,7 @@ export interface FileRoutesById {
   "/user/dashboard": typeof UserDashboardRoute;
   "/user/history": typeof UserHistoryRoute;
   "/user/settings": typeof UserSettingsRoute;
+  "/user/schedule": typeof UserScheduleRoute;
   "/admin/dashboard": typeof AdminDashboardRoute;
   "/admin/users": typeof AdminUsersRoute;
   "/admin/logs": typeof AdminLogsRoute;
@@ -109,6 +119,7 @@ export interface FileRouteTypes {
     | "/user/dashboard"
     | "/user/history"
     | "/user/settings"
+    | "/user/schedule"
     | "/admin/dashboard"
     | "/admin/users"
     | "/admin/logs";
@@ -119,6 +130,7 @@ export interface FileRouteTypes {
     | "/user/dashboard"
     | "/user/history"
     | "/user/settings"
+    | "/user/schedule"
     | "/admin/dashboard"
     | "/admin/users"
     | "/admin/logs";
@@ -129,6 +141,7 @@ export interface FileRouteTypes {
     | "/user/dashboard"
     | "/user/history"
     | "/user/settings"
+    | "/user/schedule"
     | "/admin/dashboard"
     | "/admin/users"
     | "/admin/logs";
@@ -141,6 +154,7 @@ export interface RootRouteChildren {
   UserDashboardRoute: typeof UserDashboardRoute;
   UserHistoryRoute: typeof UserHistoryRoute;
   UserSettingsRoute: typeof UserSettingsRoute;
+  UserScheduleRoute: typeof UserScheduleRoute;
   AdminDashboardRoute: typeof AdminDashboardRoute;
   AdminUsersRoute: typeof AdminUsersRoute;
   AdminLogsRoute: typeof AdminLogsRoute;
@@ -152,6 +166,7 @@ const rootRouteChildren: RootRouteChildren = {
   UserDashboardRoute,
   UserHistoryRoute,
   UserSettingsRoute,
+  UserScheduleRoute,
   AdminDashboardRoute,
   AdminUsersRoute,
   AdminLogsRoute,

@@ -12,6 +12,8 @@ import CallsApi "mixins/calls-api";
 import BillingApi "mixins/billing-api";
 import AgentApi "mixins/agent-api";
 import IdentityApi "mixins/identity-api";
+import ScheduleApi "mixins/schedule-api";
+import ScheduleLib "lib/schedule";
 import Principal "mo:core/Principal";
 
 shared ({ caller = installer }) persistent actor class Backend() = this {
@@ -62,9 +64,12 @@ shared ({ caller = installer }) persistent actor class Backend() = this {
   let colonyDelegationState = AgentLib.initColonyDelegationState();
   // Links web-app and MCP session principals that belong to the same human.
   let identityState = IdentityLib.initState();
+  // One office-hours calendar per account. Empty on upgrade; no timers or outcalls.
+  let scheduleState = ScheduleLib.initState();
 
   // Domain mixins
   include IdentityApi(accessControlState, identityState, billingState, bulkCallState);
+  include ScheduleApi(accessControlState, identityState, answeringState, answeringPresetVoiceIds, scheduleState);
   include ConfigApi(accessControlState, identityState, configState, callPresetVoiceIds, twilioLineState, answeringState, answeringPresetVoiceIds, termsState, billingState);
   include CallsApi(accessControlState, identityState, callsState, answeringLiveState, callEndState, configState, callPresetVoiceIds, billingState, callDiagnosticsState);
   include BillingApi(accessControlState, identityState, billingState, callsState, configState, callPresetVoiceIds, answeringState, answeringPresetVoiceIds, termsState, colonyDelegationState, callDiagnosticsState);

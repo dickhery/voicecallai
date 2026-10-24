@@ -4,8 +4,11 @@ import type {
   AgentAccountStatusResult,
   AnsweringPresetInput,
   AnsweringPresetMutationResult,
+  AppointmentListResult,
+  AppointmentMutationResult,
   BillingMutationResult,
   BillingStatus,
+  BookAppointmentInput,
   CallDiagnostics,
   CallId,
   CallPresetMutationResult,
@@ -14,9 +17,12 @@ import type {
   IcpPricingResult,
   InitiateCallInput,
   InitiateCallResult,
+  OpenSlotsResult,
   PresetId,
   RequestCallEndResult,
   ReserveCallResult,
+  ScheduleMutationResult,
+  ScheduleSettings,
   TwilioLineInput,
   TwilioLineMutationResult,
 } from "@/bindings/backend";
@@ -650,6 +656,151 @@ export function useUpdateCallStatus() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["myCalls"] });
       qc.invalidateQueries({ queryKey: ["adminAllCalls"] });
+    },
+  });
+}
+
+function useSchedulePrincipalKey() {
+  const { identity } = useInternetIdentity();
+  return identity?.getPrincipal().toText() ?? "anonymous";
+}
+
+export function useSuggestedSchedule() {
+  const { actor, isFetching } = useBackendActor();
+  return useQuery<ScheduleSettings>({
+    queryKey: ["suggestedSchedule"],
+    queryFn: async () => {
+      if (!actor) throw new Error("Actor not available");
+      return actor.suggestedSchedule();
+    },
+    enabled: !!actor && !isFetching,
+    staleTime: Number.POSITIVE_INFINITY,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useGetMySchedule() {
+  const { actor, isFetching } = useBackendActor();
+  const principal = useSchedulePrincipalKey();
+  return useQuery<ScheduleSettings | null>({
+    queryKey: ["mySchedule", principal],
+    queryFn: async () => {
+      if (!actor) return null;
+      return actor.getMySchedule();
+    },
+    enabled: !!actor && !isFetching,
+    staleTime: 20_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useSetMySchedule() {
+  const { actor } = useBackendActor();
+  const qc = useQueryClient();
+  return useMutation<ScheduleMutationResult, Error, ScheduleSettings>({
+    mutationFn: async (input) => {
+      if (!actor) throw new Error("Actor not available");
+      return actor.setMySchedule(input);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["mySchedule"] });
+      void qc.invalidateQueries({ queryKey: ["openSlots"] });
+    },
+  });
+}
+
+export function useListOpenSlots(
+  fromMs: bigint | null,
+  toMs: bigint | null,
+  enabled: boolean,
+) {
+  const { actor, isFetching } = useBackendActor();
+  const principal = useSchedulePrincipalKey();
+  return useQuery<OpenSlotsResult>({
+    queryKey: ["openSlots", principal, fromMs?.toString(), toMs?.toString()],
+    queryFn: async () => {
+      if (!actor || fromMs === null || toMs === null) {
+        throw new Error("Actor not available");
+      }
+      return actor.listOpenSlots(fromMs, toMs);
+    },
+    enabled:
+      !!actor && !isFetching && enabled && fromMs !== null && toMs !== null,
+    staleTime: 15_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useListMyAppointments(
+  fromMs: bigint | null,
+  toMs: bigint | null,
+) {
+  const { actor, isFetching } = useBackendActor();
+  const principal = useSchedulePrincipalKey();
+  return useQuery<AppointmentListResult>({
+    queryKey: [
+      "myAppointments",
+      principal,
+      fromMs?.toString(),
+      toMs?.toString(),
+    ],
+    queryFn: async () => {
+      if (!actor || fromMs === null || toMs === null) {
+        throw new Error("Actor not available");
+      }
+      return actor.listMyAppointments(fromMs, toMs);
+    },
+    enabled: !!actor && !isFetching && fromMs !== null && toMs !== null,
+    staleTime: 15_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useBookAppointment() {
+  const { actor } = useBackendActor();
+  const qc = useQueryClient();
+  return useMutation<AppointmentMutationResult, Error, BookAppointmentInput>({
+    mutationFn: async (input) => {
+      if (!actor) throw new Error("Actor not available");
+      return actor.bookAppointment(input);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["openSlots"] });
+      void qc.invalidateQueries({ queryKey: ["myAppointments"] });
+    },
+  });
+}
+
+export function useCancelAppointment() {
+  const { actor } = useBackendActor();
+  const qc = useQueryClient();
+  return useMutation<AppointmentMutationResult, Error, bigint>({
+    mutationFn: async (id) => {
+      if (!actor) throw new Error("Actor not available");
+      return actor.cancelAppointment(id);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["openSlots"] });
+      void qc.invalidateQueries({ queryKey: ["myAppointments"] });
+    },
+  });
+}
+
+export function useRescheduleAppointment() {
+  const { actor } = useBackendActor();
+  const qc = useQueryClient();
+  return useMutation<
+    AppointmentMutationResult,
+    Error,
+    { id: bigint; startsAtMs: bigint }
+  >({
+    mutationFn: async ({ id, startsAtMs }) => {
+      if (!actor) throw new Error("Actor not available");
+      return actor.rescheduleAppointment(id, startsAtMs);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["openSlots"] });
+      void qc.invalidateQueries({ queryKey: ["myAppointments"] });
     },
   });
 }

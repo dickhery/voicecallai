@@ -60,6 +60,22 @@ type AnsweringLiveSession__281546138 =
     userId : Principal
   };
 type AnsweringPresetStatus__939164445 = {#pendingVerification; #verified};
+type AppointmentStatus__187658902 = {#booked; #cancelled};
+type Appointment__900638573 =
+  {
+    callerName : Text;
+    callerPhone : Text;
+    createdAtMs : Int;
+    endsAtMs : Int;
+    id : Nat;
+    notes : Text;
+    ownerId : Principal;
+    presetId : ?Nat;
+    serviceLabel : Text;
+    startsAtMs : Int;
+    status : AppointmentStatus__187658902;
+    updatedAtMs : Int
+  };
 type AudioFormat__500525639 = {#pcm; #pcma; #pcmu};
 type CallAudioOutcome__412792305 =
   {
@@ -138,6 +154,8 @@ type ColonyCallGrant__1016669901 =
   };
 type Data__917616847<K, V> =
   {var count : Nat__1011761150; kvs : [var ?(K, V)]};
+type DayHours__984530917 =
+  {closeMinute : Nat; closed : Bool; openMinute : Nat};
 type IcpPurchaseStatus__378484762 = {#completed; #failed; #pending};
 type IcpTransferStatus__181614698 = {#completed; #failed; #pending};
 type IcrcAccount__824881519 = {owner : Principal; subaccount : ?Blob};
@@ -194,6 +212,17 @@ type PurchaseIntent__399492561 =
   };
 type SampleRate__591095646 =
   {#hz16000; #hz22050; #hz24000; #hz32000; #hz44100; #hz48000; #hz8000};
+type ScheduleSettings__722934941 =
+  {
+    bookingNotes : Text;
+    bookingWindowDays : Nat;
+    enabled : Bool;
+    minNoticeMinutes : Nat;
+    serviceLabel : Text;
+    slotMinutes : Nat;
+    timezoneOffsetMinutes : Int;
+    weeklyHours : [DayHours__984530917]
+  };
 type StoredAgentCallJob__521053772 =
   {
     callId : Nat;
@@ -421,6 +450,13 @@ actor {
       nextOfferNonce : {var value : Nat};
       secondariesByPrimary :
         Map__254296833<Principal, List__341252331<Principal>>
+    };
+  stable scheduleState :
+    {
+      appointmentIdsByOwner : Map__254296833<Principal, List__341252331<Nat>>;
+      appointments : Map__254296833<Nat, Appointment__900638573>;
+      nextAppointmentId : {var value : Nat};
+      schedules : Map__254296833<Principal, ScheduleSettings__722934941>
     };
   stable termsState :
     {acceptances : Map__254296833<Principal, TermsAcceptance__215543817>};

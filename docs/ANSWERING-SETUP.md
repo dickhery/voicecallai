@@ -31,10 +31,14 @@ a phone number, change Twilio settings or configure your phone carrier.
 
 Good starting services include a front desk that explains opening hours and
 directions, an after-hours receptionist that asks for a callback request, and
-support or appointment intake that gathers details for a person to review.
-The app has no built-in calendar booking, live call transfer, SMS or email
-notification integration. An appointment request is not a confirmed booking.
-Writing those abilities into the prompt does not install an integration.
+any custom instructions for a lawful answering role. Appointment booking is a
+separate calendar: save office hours, then the account owner or an authorized
+assistant can reserve an open time. After the Windows voice bridge is restarted
+on this release, a live call can also reserve one open time. The saved
+appointment stores the caller's name, phone number, time slot, and notes. A
+spoken request is not reserved until the booking call succeeds. The app has no
+live call transfer, SMS, or email notification integration. Writing those
+abilities into the prompt does not install them.
 
 ## Four steps in the app
 
@@ -55,7 +59,8 @@ Writing those abilities into the prompt does not install an integration.
    callback questions and fallback. Use **Live Incoming Calls** to listen while
    connected and **History** to review selected saved capture. The browser's
    audio control requires a click. A completed call or a transcript is not proof
-   that a booking or any other business task succeeded.
+   that a booking or any other business task succeeded. Confirm a booking in
+   **Calendar** or with `listMyAppointments`.
 
 Before replacing an existing Twilio route, record how to restore it. Turning a
 preset off rejects new calls; it does not restore that route. After the direct
@@ -79,7 +84,10 @@ Copy and complete this request:
 > Read https://voicecallai.online/llms.txt and use the Internet Computer Protocol
 > plugin or ICP MCP to set up my answering service. Reuse my existing preset if
 > appropriate. My operator-supported Twilio number is [number with country code].
-> The service should [purpose, greeting, hours, facts and callback questions].
+> The service should [purpose, greeting, facts and callback questions].
+> If I want appointment booking, ask for my fixed UTC offset, weekly hours,
+> slot length, notice, booking window, and service name, then save them with
+> setMySchedule before enabling the line. Show me how to review Calendar.
 > Save transcripts: [yes/no]. Record audio: [yes/no]. Check my account and phone
 > time, create the preset turned off, and give me the private Twilio webhook and
 > the next step. Ask before purchases or accepting terms. After I verify the
@@ -128,7 +136,16 @@ telephony. Ask for only the missing number, purpose, facts and capture choices.
    `nextSteps` if anything remains. `readyForCalls` means stored app prerequisites
    are satisfied; it does not probe the external bridge, guarantee capacity or
    prove an audible conversation. Ask the user to make the second test call.
-7. Use `updateAnsweringPresetInstructions` for an instructions-only edit,
+7. For appointment booking, call `suggestedSchedule`, edit the template with the
+   user, and save it with `setMySchedule`. `weeklyHours` has seven days, Sunday
+   at index 0. `timezoneOffsetMinutes` is a fixed UTC offset. `listOpenSlots`
+   and `listMyAppointments` are queries. `bookAppointment` saves the caller
+   only when `startsAtMs` is one of the open slots. Cancelling, rescheduling,
+   and detail edits are separate updates. These calls do not use the ledger,
+   HTTP, a timer, or phone time. Each account stores at most 200 appointments,
+   and one opening query returns at most 48 slots. The user reviews them on
+   the Calendar page.
+8. Use `updateAnsweringPresetInstructions` for an instructions-only edit,
    `updateAnsweringPreset` for other settings, and
    `setAnsweringPresetEnabled(id, false)` to stop accepting new calls. Changing
    the number resets verification and turns the line off. Deleting a preset
